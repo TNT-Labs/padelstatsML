@@ -1,6 +1,31 @@
 version: "3.9"
 
+# -------------------------------------------------------------------
+# Infrastructure services (postgres, redis, minio) + app services
+# (api, worker, flower).
+#
+# Quick start:
+#   docker-compose up -d postgres redis minio
+#   docker-compose run --rm migrate
+#   docker-compose up api worker
+# -------------------------------------------------------------------
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://padel:padel@postgres:5432/padel
+  SYNC_DATABASE_URL: postgresql://padel:padel@postgres:5432/padel
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  S3_ENDPOINT: http://minio:9000
+  S3_ACCESS_KEY: padel
+  S3_SECRET_KEY: padelpadel
+  S3_BUCKET_VIDEOS: padel-videos
+  ML_DEVICE: cpu         # set to "cuda" on a GPU host
+  YOLO_WEIGHTS: yolov8n.pt
+  TRACKNET_WEIGHTS: weights/tracknet_padel.pth
+
 services:
+  # ── Infrastructure ────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     environment:
@@ -9,10 +34,20 @@ services:
       POSTGRES_PASSWORD: padel
     ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U padel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:latest
@@ -24,6 +59,69 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── DB migration (one-shot, exits 0 when done) ───────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── FastAPI ───────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports: ["8000:8000"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Celery worker ─────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment: *app-env
+    volumes:
+      # Mount local weights dir so you don't rebuild image after each download
+      - ./weights:/app/weights:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Flower (Celery task monitor, optional) ────────────────────────
+  flower:
+    image: mher/flower:2.0
+    command: celery flower --broker=redis://redis:6379/1 --port=5555
+    ports: ["5555:5555"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
