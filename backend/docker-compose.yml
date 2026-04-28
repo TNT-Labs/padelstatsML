@@ -2,12 +2,15 @@ version: "3.9"
 
 # -------------------------------------------------------------------
 # Infrastructure services (postgres, redis, minio) + app services
-# (api, worker, flower).
+# (api, worker, flower) + web frontend (nginx).
 #
 # Quick start:
 #   docker-compose up -d postgres redis minio
 #   docker-compose run --rm migrate
-#   docker-compose up api worker
+#   docker-compose up api worker frontend
+#
+# Pi 5:
+#   docker-compose -f docker-compose.yml -f docker-compose.pi.yml up -d
 # -------------------------------------------------------------------
 
 x-app-env: &app-env
@@ -110,6 +113,17 @@ services:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Web frontend (nginx serving Vite build) ───────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports: ["80:80"]
+    depends_on:
+      api:
         condition: service_healthy
     restart: unless-stopped
 

@@ -1,0 +1,19 @@
+# Raspberry Pi 5 (ARM64) dependency overrides.
+# Install with: pip install -r requirements.txt -r requirements.pi.txt
+#
+# Key changes vs base requirements.txt:
+#  - onnxruntime replaces torch+torchvision for inference (3-5x faster on Cortex-A76)
+#  - torch kept but as a build dep for ultralytics tracker internals
+#  - lighter torch build (cpu-only wheel)
+#
+# Workflow:
+#  1. pip install -r requirements.txt -r requirements.pi.txt
+#  2. python scripts/export_onnx.py          # export yolov8n.pt -> yolov8n.onnx once
+#  3. Set YOLO_WEIGHTS=yolov8n.onnx in .env  # ultralytics uses onnxruntime automatically
+
+# Faster CPU inference engine
+onnxruntime==1.19.2
+
+# Pin lighter torch (CPU-only; avoids ~600MB CUDA libs)
+# On Pi 5 install with: pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+# (handled in Dockerfile.pi)

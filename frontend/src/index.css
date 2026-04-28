@@ -1,0 +1,103 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --green:    #16a34a;
+  --green-lt: #dcfce7;
+  --green-dk: #14532d;
+  --bg:       #f0fdf4;
+  --surface:  #ffffff;
+  --border:   #d1fae5;
+  --text:     #1a1a2e;
+  --muted:    #6b7280;
+  --danger:   #dc2626;
+  --p0: #ef4444; --p1: #3b82f6; --p2: #f59e0b; --p3: #8b5cf6;
+}
+
+html, body { height: 100%; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+
+#root { min-height: 100%; }
+
+h1 { font-size: 1.75rem; font-weight: 800; color: var(--green-dk); }
+h2 { font-size: 1.25rem; font-weight: 700; }
+h3 { font-size: 1rem; font-weight: 600; }
+
+/* Layout */
+.layout { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem; }
+.header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+.header h1 { display: flex; align-items: center; gap: .5rem; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+.card-sm { padding: .75rem 1rem; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+       padding: .65rem 1.25rem; border-radius: 8px; border: none; font-size: .9rem;
+       font-weight: 600; cursor: pointer; transition: opacity .15s; }
+.btn:hover { opacity: .88; }
+.btn:active { opacity: .75; }
+.btn-primary { background: var(--green); color: #fff; }
+.btn-ghost   { background: transparent; color: var(--green); border: 1.5px solid var(--green); }
+.btn-sm      { padding: .4rem .85rem; font-size: .8rem; }
+
+/* Form */
+.form-group { display: flex; flex-direction: column; gap: .4rem; margin-bottom: 1rem; }
+.form-group label { font-size: .85rem; font-weight: 600; color: var(--muted); }
+input[type="text"], input[type="number"] {
+  border: 1.5px solid #d1d5db; border-radius: 8px;
+  padding: .65rem .9rem; font-size: 1rem; width: 100%;
+  transition: border-color .15s;
+}
+input:focus { outline: none; border-color: var(--green); }
+
+/* Upload zone */
+.dropzone { border: 2.5px dashed #86efac; border-radius: 12px; padding: 2.5rem 1rem;
+            text-align: center; cursor: pointer; transition: background .15s; }
+.dropzone:hover, .dropzone.active { background: var(--green-lt); }
+.dropzone p { color: var(--muted); font-size: .9rem; margin-top: .4rem; }
+
+/* Progress */
+.progress-track { height: 10px; background: #e5e7eb; border-radius: 99px; overflow: hidden; margin: .5rem 0; }
+.progress-fill  { height: 100%; background: var(--green); border-radius: 99px; transition: width .4s ease; }
+
+/* Status badge */
+.badge { display: inline-block; padding: .2rem .65rem; border-radius: 99px; font-size: .75rem; font-weight: 600; }
+.badge-uploading  { background: #fef9c3; color: #854d0e; }
+.badge-queued     { background: #e0e7ff; color: #3730a3; }
+.badge-processing { background: #dbeafe; color: #1d4ed8; }
+.badge-completed  { background: #dcfce7; color: #15803d; }
+.badge-failed     { background: #fee2e2; color: #b91c1c; }
+
+/* Stats summary cards */
+.stat-card { text-align: center; }
+.stat-card .val { font-size: 2rem; font-weight: 800; color: var(--green); }
+.stat-card .lbl { font-size: .8rem; color: var(--muted); margin-top: .15rem; }
+
+/* Player section */
+.player-header { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.player-dot    { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+/* Match list */
+.match-row { display: flex; align-items: center; justify-content: space-between;
+             padding: .85rem 0; border-bottom: 1px solid var(--border); gap: 1rem; }
+.match-row:last-child { border-bottom: none; }
+
+/* Error */
+.error-msg { color: var(--danger); font-size: .9rem; font-weight: 600; }
+
+/* Tabs */
+.tabs { display: flex; gap: .25rem; border-bottom: 2px solid var(--border); margin-bottom: 1rem; }
+.tab  { padding: .5rem 1rem; border: none; background: transparent; cursor: pointer;
+        font-weight: 600; font-size: .9rem; color: var(--muted); border-bottom: 2.5px solid transparent;
+        margin-bottom: -2px; transition: color .15s; }
+.tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+/* Court heatmap */
+.heatmap-wrap { overflow: hidden; border-radius: 8px; }
+
+/* Responsive */
+@media (max-width: 600px) {
+  .grid-4 { grid-template-columns: 1fr 1fr; }
+}

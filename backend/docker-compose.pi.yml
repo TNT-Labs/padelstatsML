@@ -1,0 +1,88 @@
+# Raspberry Pi 5 (8 GB) overlay — use on top of docker-compose.yml:
+#
+#   docker-compose -f docker-compose.yml -f docker-compose.pi.yml up -d
+#
+# Memory budget:
+#   postgres  192 MB
+#   redis     160 MB
+#   minio     256 MB
+#   api       256 MB
+#   worker   3500 MB  (YOLOv8n ONNX ~50 MB, but torch overhead ~1.5 GB; leave headroom)
+#   frontend   64 MB
+#   ──────────────────
+#   Total    ~4.4 GB  (comfortable within 8 GB)
+#
+# Flower is excluded to save ~128 MB.
+
+version: "3.9"
+
+services:
+  postgres:
+    command: >
+      postgres
+        -c max_connections=20
+        -c shared_buffers=64MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=32MB
+        -c effective_cache_size=192MB
+        -c wal_buffers=4MB
+        -c checkpoint_completion_target=0.9
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  redis:
+    command: >
+      redis-server
+        --maxmemory 128mb
+        --maxmemory-policy allkeys-lru
+        --save ""
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+
+  minio:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  api:
+    build:
+      dockerfile: Dockerfile.pi
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    environment:
+      ML_DEVICE: cpu
+      TORCH_NUM_THREADS: "4"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  worker:
+    build:
+      dockerfile: Dockerfile.pi
+    environment:
+      ML_DEVICE: cpu
+      TORCH_NUM_THREADS: "4"
+      # Higher stride = fewer frames to process, proportional speedup
+      PLAYER_STRIDE: "3"
+      # Use ONNX model if exported (python scripts/export_onnx.py)
+      YOLO_WEIGHTS: weights/yolov8n.onnx
+    deploy:
+      resources:
+        limits:
+          memory: 3500M
+
+  # Disable flower on Pi (not essential, saves ~128 MB)
+  flower:
+    profiles:
+      - debug
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          memory: 64M
