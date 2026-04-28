@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type MatchStats } from './api'
+import { api, type Match, type MatchStats } from './api'
 import { HomeView }    from './components/HomeView'
 import { AnalyzeView } from './components/AnalyzeView'
 import { StatsView }   from './components/StatsView'
@@ -13,12 +13,20 @@ type View =
 export default function App() {
   const [view, setView] = useState<View>({ name: 'home' })
 
-  // Navigate to stats for a match that already exists (from HomeView)
+  // Load stats + player names for an already-completed match from HomeView
   useEffect(() => {
     if (view.name !== 'stats-loading') return
     const { matchId } = view
-    api.getStats(matchId)
-      .then(stats => setView({ name: 'stats', stats, playerNames: [] }))
+
+    // Fetch stats and match (for player names) in parallel
+    Promise.all([api.getStats(matchId), api.getMatch(matchId)])
+      .then(([stats, match]: [MatchStats, Match]) =>
+        setView({
+          name: 'stats',
+          stats,
+          playerNames: match.player_names ?? [],
+        })
+      )
       .catch(() => setView({ name: 'home' }))
   }, [view])
 
@@ -42,13 +50,12 @@ export default function App() {
 
   if (view.name === 'stats-loading') {
     return (
-      <div className="layout" style={{ textAlign: 'center', paddingTop: '4rem' }}>
-        <p style={{ color: 'var(--muted)' }}>Caricamento statistiche…</p>
+      <div className="layout" style={{ textAlign: 'center', paddingTop: '5rem' }}>
+        <p style={{ color: 'var(--muted)', fontSize: '1.1rem' }}>Caricamento statistiche…</p>
       </div>
     )
   }
 
-  // stats view
   return (
     <StatsView
       stats={view.stats}

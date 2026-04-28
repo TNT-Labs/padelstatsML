@@ -1,17 +1,17 @@
 """Shot type classification: smash, volée, bandeja, altro.
 
-Strategia MVP (rule-based su pose + ball context):
-- SMASH: braccio sopra la testa (wrist Y < shoulder Y - threshold) + palla alta
-        prima del colpo + alta velocità ball post-hit
-- VOLEE: palla colpita PRIMA del rimbalzo + giocatore vicino alla rete (Y court < 7m
-         o Y court > 13m a seconda del lato) + braccio frontale
-- BANDEJA: posizione tra smash e volée (braccio alto ma non sopra la testa) +
-           giocatore in fondo campo + traiettoria post-hit più piatta
-- ALTRO: drive, bandeja-rovescio, vibora, etc. (non classificati nel MVP)
+Classification hierarchy (most → least specific):
+  SMASH   — arm above head (pose) OR ball very high + high post-hit speed + back/net position
+  BANDEJA — arm high (pose) OR high ball + mid-court + moderate post-hit speed
+  VOLLEY  — near net + ball NOT high (set before bounce) + low-medium speed
+  OTHER   — drive, lob, globo, vibora
 
-In produzione: classificatore ML (XGBoost o piccolo MLP) su feature engineerate
-da pose temporal window (es. 1 secondo prima/dopo hit) + ball features.
-Dataset: sequenze annotate di colpi, anche pochi mila esempi sufficienti.
+Pose keypoints (COCO 17-point format) improve accuracy significantly when
+available from the YOLOv8-Pose stage.  When pose=None the classifier falls
+back to ball-trajectory + court-position features only.
+
+In production: replace decision tree with XGBoost/MLP trained on a few
+thousand annotated shots with temporal features.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ from app.ml.events import Event
 
 
 class ShotType(str, Enum):
-    SMASH = "smash"
-    VOLLEY = "volley"
+    SMASH   = "smash"
+    VOLLEY  = "volley"
     BANDEJA = "bandeja"
-    OTHER = "other"
+    OTHER   = "other"
 
 
 @dataclass
@@ -38,78 +38,111 @@ class ClassifiedShot:
     confidence: float
 
 
+# ── Court-position constants ─────────────────────────────────────────────────
+# Net is at 10 m.  A player is "at net" if within 3 m of it (7–13 m range).
+_NET_ZONE_LO = 7.0
+_NET_ZONE_HI = 13.0
+_BACK_THRESHOLD = 4.5   # < 4.5 m or > 15.5 m from baselines = back court
+
+
 def classify_shot(
     hit_event: Event,
-    pose_keypoints: dict[int, np.ndarray] | None,  # {frame_idx: 17x3 keypoints (x, y, conf)}
+    pose_keypoints: np.ndarray | None,   # 17×3 (x, y, conf) COCO, or None
     ball_track: list[BallDetection],
     player_court_pos: tuple[float, float] | None,
 ) -> ClassifiedShot:
-    """Classifica un singolo evento HIT.
+    """Classify a single HIT event into a shot type.
 
     Args:
-        hit_event: l'evento HIT
-        pose_keypoints: keypoints YOLOv8-pose per il giocatore al frame del hit
-        ball_track: trajectory della palla (per analizzare velocità pre/post hit)
-        player_court_pos: posizione giocatore in court coords (m)
+        hit_event:        the HIT Event to classify
+        pose_keypoints:   COCO 17-point keypoints for the hitting player at
+                          the hit frame (x, y, conf), or None
+        ball_track:       full ball trajectory for context
+        player_court_pos: (x_m, y_m) in court coordinates, or None
     """
     if hit_event.player_id is None:
         return ClassifiedShot(hit_event, ShotType.OTHER, 0.0)
 
-    # Estrai contesto: ball Y prima del hit (per detect altezza palla)
-    ball_y_before = _ball_y_window(ball_track, hit_event.frame_idx, before=10)
+    # ── Features from ball trajectory ────────────────────────────────────────
+    ball_y_before  = _ball_y_window(ball_track, hit_event.frame_idx, before=12)
+    hit_y          = hit_event.ball_pos_px[1]
+    # In image coords: smaller Y = higher up.  ball_was_high → ball was above hit point.
+    ball_was_high  = (ball_y_before < hit_y - 30) if ball_y_before else False
 
-    # Pose features se disponibili
+    post_speed     = _ball_speed_after(ball_track, hit_event.frame_idx, after=6)
+    high_speed     = post_speed > 20.0   # px/frame — smash threshold
+    medium_speed   = post_speed > 8.0
+
+    # ── Features from player court position ──────────────────────────────────
+    is_at_net  = False
+    is_at_back = False
+    if player_court_pos is not None:
+        y = player_court_pos[1]
+        is_at_net  = _NET_ZONE_LO < y < _NET_ZONE_HI
+        is_at_back = y < _BACK_THRESHOLD or y > (20.0 - _BACK_THRESHOLD)
+
+    # ── Features from pose keypoints (COCO) ──────────────────────────────────
     arm_above_head = False
-    arm_high = False
-    if pose_keypoints is not None and hit_event.frame_idx in pose_keypoints:
-        kpts = pose_keypoints[hit_event.frame_idx]
-        # COCO keypoints: 5=left_shoulder, 6=right_shoulder, 9=left_wrist, 10=right_wrist
-        # Y axis: smaller = higher in image
+    arm_high       = False
+    if pose_keypoints is not None:
         try:
-            r_shoulder_y = kpts[6, 1]
-            r_wrist_y = kpts[10, 1]
-            l_shoulder_y = kpts[5, 1]
-            l_wrist_y = kpts[9, 1]
-
-            min_wrist_y = min(r_wrist_y, l_wrist_y)
-            min_shoulder_y = min(r_shoulder_y, l_shoulder_y)
-
-            arm_above_head = min_wrist_y < min_shoulder_y - 30
-            arm_high = min_wrist_y < min_shoulder_y + 10
+            # COCO indices: 5=L-shoulder, 6=R-shoulder, 9=L-wrist, 10=R-wrist
+            ls_y = pose_keypoints[5, 1]
+            rs_y = pose_keypoints[6, 1]
+            lw_y = pose_keypoints[9, 1]
+            rw_y = pose_keypoints[10, 1]
+            min_wrist    = min(lw_y, rw_y)
+            min_shoulder = min(ls_y, rs_y)
+            arm_above_head = min_wrist < min_shoulder - 25   # wrist clearly above shoulder
+            arm_high       = min_wrist < min_shoulder + 15   # wrist near or above shoulder
         except (IndexError, ValueError):
             pass
 
-    # Court position: Y court = dove sta il giocatore lungo il campo (0..20m)
-    is_at_net = False
-    is_at_back = False
-    if player_court_pos is not None:
-        y_court = player_court_pos[1]
-        # Net is at 10m (mid). Player vicino rete: 7..10 oppure 10..13
-        is_at_net = 7.0 < y_court < 13.0
-        is_at_back = y_court < 4.0 or y_court > 16.0
+    # ── Decision tree (pose-aware when available) ────────────────────────────
+    if arm_above_head and ball_was_high:
+        return ClassifiedShot(hit_event, ShotType.SMASH, 0.82)
 
-    ball_was_high = ball_y_before < hit_event.ball_pos_px[1] - 50  # palla scendeva → era più alta
+    if ball_was_high and high_speed and (is_at_back or is_at_net):
+        return ClassifiedShot(hit_event, ShotType.SMASH, 0.62)
 
-    # Decision tree
-    if arm_above_head and ball_was_high and is_at_back:
-        return ClassifiedShot(hit_event, ShotType.SMASH, 0.75)
-    if arm_above_head and ball_was_high and is_at_net:
-        return ClassifiedShot(hit_event, ShotType.SMASH, 0.65)
     if arm_high and is_at_back and ball_was_high:
-        return ClassifiedShot(hit_event, ShotType.BANDEJA, 0.6)
-    if is_at_net and not arm_above_head:
-        return ClassifiedShot(hit_event, ShotType.VOLLEY, 0.55)
+        return ClassifiedShot(hit_event, ShotType.BANDEJA, 0.65)
 
-    return ClassifiedShot(hit_event, ShotType.OTHER, 0.4)
+    if ball_was_high and medium_speed and is_at_back:
+        return ClassifiedShot(hit_event, ShotType.BANDEJA, 0.50)
+
+    if is_at_net and not arm_above_head and not ball_was_high:
+        return ClassifiedShot(hit_event, ShotType.VOLLEY, 0.60)
+
+    if is_at_net and medium_speed:
+        return ClassifiedShot(hit_event, ShotType.VOLLEY, 0.45)
+
+    return ClassifiedShot(hit_event, ShotType.OTHER, 0.40)
 
 
-def _ball_y_window(ball_track: list[BallDetection], frame_idx: int, before: int) -> float:
-    """Mediana Y della palla nei `before` frame precedenti."""
-    relevant = [
+# ── Ball trajectory helpers ──────────────────────────────────────────────────
+
+def _ball_y_window(ball_track: list[BallDetection], frame_idx: int, before: int) -> float | None:
+    """Median Y position of ball in the `before` frames preceding hit."""
+    ys = [
         b.pos_px[1]
         for b in ball_track
         if b.pos_px is not None and frame_idx - before <= b.frame_idx < frame_idx
     ]
-    if not relevant:
+    return float(np.median(ys)) if ys else None
+
+
+def _ball_speed_after(ball_track: list[BallDetection], frame_idx: int, after: int) -> float:
+    """Mean ball speed (px/frame) for `after` frames following the hit."""
+    pts = [
+        b.pos_px
+        for b in ball_track
+        if b.pos_px is not None and frame_idx <= b.frame_idx <= frame_idx + after
+    ]
+    if len(pts) < 2:
         return 0.0
-    return float(np.median(relevant))
+    speeds = [
+        np.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+        for i in range(1, len(pts))
+    ]
+    return float(np.mean(speeds))

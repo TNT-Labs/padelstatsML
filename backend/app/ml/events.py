@@ -1,15 +1,15 @@
-"""Event detection da trajectory di palla + giocatori.
+"""Event detection from ball trajectory + player positions.
 
-Eventi rilevati (rule-based per MVP):
-- HIT: brusco cambio di direzione/velocità della palla in prossimità di un giocatore
-- BOUNCE: cambio segno della componente verticale (Y) della velocità palla
-- WALL_HIT: velocity reversal perpendicular to a court boundary when ball is near that wall
+Events detected (rule-based for MVP):
+  HIT      — sharp acceleration peak in ball trajectory near a player
+  BOUNCE   — Y-velocity sign change (ball changes vertical direction)
+  WALL_HIT — velocity reversal perpendicular to a court boundary
 
-Approccio: calcola velocità frame-by-frame, identifica picchi di accelerazione
-(z-score sulla magnitudo), classifica per contesto spaziale.
-
-In produzione: TCN o Transformer su sequenze di features (ball pos + 4 player
-poses) trainato su match annotati. Molto più accurato.
+Critical fix: player tracking runs with vid_stride > 1, so
+`players_by_frame` only contains entries for every Nth frame (0, 2, 4, …
+with stride=2).  Ball tracking runs on every frame.  Without
+`_get_players_near_frame`, most HIT events would have no player candidate
+because the ball's peak frame falls *between* two player frames.
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 
 
 class EventType(str, Enum):
-    HIT = "hit"
-    BOUNCE = "bounce"
+    HIT      = "hit"
+    BOUNCE   = "bounce"
     WALL_HIT = "wall_hit"
 
 
@@ -37,88 +37,109 @@ class Event:
     type: EventType
     frame_idx: int
     ball_pos_px: tuple[float, float]
-    player_id: int | None  # only for HIT
+    player_id: int | None  # only meaningful for HIT
     confidence: float
 
+
+# ── Frame-alignment helper ───────────────────────────────────────────────────
+
+def _get_players_near_frame(
+    players_by_frame: dict[int, list[PlayerDetection]],
+    frame_idx: int,
+    radius: int = 6,
+) -> list[PlayerDetection]:
+    """Return player detections from the closest available frame within `radius`.
+
+    This compensates for the vid_stride gap: with stride=2, player frames are
+    {0, 2, 4, …}. A ball event at frame 3 finds players at frame 2 or 4.
+    """
+    if frame_idx in players_by_frame:
+        return players_by_frame[frame_idx]
+    for delta in range(1, radius + 1):
+        for sign in (1, -1):
+            f = frame_idx + sign * delta
+            if f in players_by_frame:
+                return players_by_frame[f]
+    return []
+
+
+# ── Main entry point ─────────────────────────────────────────────────────────
 
 def detect_events(
     ball_track: list[BallDetection],
     players_by_frame: dict[int, list[PlayerDetection]],
-    proximity_threshold_px: float = 80.0,
-    min_velocity_change: float = 30.0,
+    proximity_threshold_px: float = 100.0,
+    min_velocity_change: float = 25.0,
     calibration: "CourtCalibration | None" = None,
     wall_margin_m: float = 0.8,
 ) -> list[Event]:
-    """Pipeline event detection.
+    """Detect HIT, BOUNCE, and WALL_HIT events from ball + player trajectories.
 
     Args:
-        ball_track: trajectory della palla (post smoothing)
-        players_by_frame: {frame_idx: [PlayerDetection, ...]}
-        proximity_threshold_px: distanza max ball-player per HIT
-        min_velocity_change: pixel/frame, soglia per detection cambio direzione
-        calibration: court homography; required for WALL_HIT detection
-        wall_margin_m: distance from court edge (meters) to classify as near-wall
+        ball_track: smoothed ball detections (output of smooth_trajectory)
+        players_by_frame: {frame_idx: [PlayerDetection, …]}
+        proximity_threshold_px: max ball-player pixel distance for a HIT
+        min_velocity_change: minimum acceleration magnitude (px/frame²)
+        calibration: court homography; enables WALL_HIT detection
+        wall_margin_m: metres from court edge that counts as "near wall"
     """
     valid = [(b.frame_idx, b.pos_px) for b in ball_track if b.pos_px is not None]
     if len(valid) < 5:
         return []
 
-    frames = np.array([f for f, _ in valid])
+    frames    = np.array([f for f, _ in valid])
     positions = np.array([p for _, p in valid])
-
     velocities = np.diff(positions, axis=0)
-    accels = np.linalg.norm(np.diff(velocities, axis=0), axis=1)
+    accels     = np.linalg.norm(np.diff(velocities, axis=0), axis=1)
 
     events: list[Event] = []
 
-    # 1. HIT: acceleration peak + nearest player within threshold
+    # ── 1. HIT: acceleration peak + nearby player ────────────────────────────
     for i, acc in enumerate(accels):
         if acc < min_velocity_change:
             continue
 
         peak_frame = int(frames[i + 1])
-        peak_pos = positions[i + 1]
+        peak_pos   = positions[i + 1]
 
-        nearest_player, nearest_dist = _find_nearest_player(
-            peak_pos, players_by_frame.get(peak_frame, [])
-        )
+        # Use nearest-frame lookup to handle stride gaps
+        nearby_players = _get_players_near_frame(players_by_frame, peak_frame)
+        nearest_pid, nearest_dist = _find_nearest_player(peak_pos, nearby_players)
 
-        if nearest_player is not None and nearest_dist < proximity_threshold_px:
+        if nearest_pid is not None and nearest_dist < proximity_threshold_px:
             conf = min(1.0, proximity_threshold_px / max(nearest_dist, 1.0)) * 0.5 + 0.3
-            events.append(
-                Event(
-                    type=EventType.HIT,
-                    frame_idx=peak_frame,
-                    ball_pos_px=(float(peak_pos[0]), float(peak_pos[1])),
-                    player_id=nearest_player,
-                    confidence=float(conf),
-                )
-            )
+            events.append(Event(
+                type=EventType.HIT,
+                frame_idx=peak_frame,
+                ball_pos_px=(float(peak_pos[0]), float(peak_pos[1])),
+                player_id=nearest_pid,
+                confidence=float(conf),
+            ))
 
-    # 2. BOUNCE: Y-velocity sign change (image coords: +Y = downward)
+    # ── 2. BOUNCE: Y-velocity sign change ────────────────────────────────────
+    # In image coords +Y is downward. Bounce: ball going down (vy > 0) then up (vy < 0)
     for i in range(1, len(velocities)):
-        if velocities[i - 1, 1] > 5 and velocities[i, 1] < -5:
-            events.append(
-                Event(
-                    type=EventType.BOUNCE,
-                    frame_idx=int(frames[i]),
-                    ball_pos_px=(float(positions[i, 0]), float(positions[i, 1])),
-                    player_id=None,
-                    confidence=0.6,
-                )
-            )
+        if velocities[i - 1, 1] > 4 and velocities[i, 1] < -4:
+            events.append(Event(
+                type=EventType.BOUNCE,
+                frame_idx=int(frames[i]),
+                ball_pos_px=(float(positions[i, 0]), float(positions[i, 1])),
+                player_id=None,
+                confidence=0.6,
+            ))
 
-    # 3. WALL_HIT: velocity reversal perpendicular to nearest court boundary
+    # ── 3. WALL_HIT: velocity reversal near court boundary ───────────────────
     if calibration is not None:
-        wall_events = _detect_wall_hits(
-            frames, positions, velocities, calibration, wall_margin_m
+        events.extend(
+            _detect_wall_hits(frames, positions, velocities, calibration, wall_margin_m)
         )
-        events.extend(wall_events)
 
     events = _dedup_events(events, min_gap_frames=5)
     events.sort(key=lambda e: e.frame_idx)
     return events
 
+
+# ── Wall-hit detection ───────────────────────────────────────────────────────
 
 def _detect_wall_hits(
     frames: np.ndarray,
@@ -127,80 +148,59 @@ def _detect_wall_hits(
     calibration: "CourtCalibration",
     wall_margin_m: float,
 ) -> list[Event]:
-    """Detect ball-wall contacts using court-coordinate velocity reversal.
-
-    A wall hit is identified when:
-    - The ball is within `wall_margin_m` of a court boundary in court coords
-    - The velocity component perpendicular to that boundary reverses sign
-      between consecutive frames
-
-    We check indices i in [1, len(velocities)-1] which correspond to position
-    index i+1 — the frame where the reversal occurs.
-    """
+    """Detect ball-wall contacts via court-coordinate proximity + velocity reversal."""
     from app.ml.court import COURT_WIDTH_M, COURT_LENGTH_M
 
-    court_pts = calibration.pixel_to_court(positions)  # Nx2 in metres
-
+    court_pts = calibration.pixel_to_court(positions)  # Nx2 metres
     wall_events: list[Event] = []
-    n = len(velocities)
 
-    for i in range(1, n):
-        pos_idx = i  # positions[i] is between velocities[i-1] and velocities[i]
-        cx, cy = court_pts[pos_idx]
+    for i in range(1, len(velocities)):
+        cx, cy = court_pts[i]
+        near_l = cx < wall_margin_m
+        near_r = cx > COURT_WIDTH_M  - wall_margin_m
+        near_b = cy < wall_margin_m
+        near_t = cy > COURT_LENGTH_M - wall_margin_m
 
-        near_left = cx < wall_margin_m
-        near_right = cx > COURT_WIDTH_M - wall_margin_m
-        near_bottom = cy < wall_margin_m
-        near_top = cy > COURT_LENGTH_M - wall_margin_m
-
-        if not (near_left or near_right or near_bottom or near_top):
+        if not (near_l or near_r or near_b or near_t):
             continue
 
-        # Velocity in court coords (approximate using pixel velocities scaled)
-        # We use pixel velocities directly since the sign relationship is preserved
-        # (assuming camera is roughly axis-aligned with the court)
-        vx_prev, vy_prev = velocities[i - 1]
-        vx_curr, vy_curr = velocities[i]
+        vx0, vy0 = velocities[i - 1]
+        vx1, vy1 = velocities[i]
 
-        x_reversal = (
-            (near_left and vx_prev < -3 and vx_curr > 3) or
-            (near_right and vx_prev > 3 and vx_curr < -3)
-        )
-        y_reversal = (
-            (near_bottom and vy_prev < -3 and vy_curr > 3) or
-            (near_top and vy_prev > 3 and vy_curr < -3)
-        )
+        x_rev = (near_l and vx0 < -3 and vx1 > 3) or (near_r and vx0 > 3 and vx1 < -3)
+        y_rev = (near_b and vy0 < -3 and vy1 > 3) or (near_t and vy0 > 3 and vy1 < -3)
 
-        if not (x_reversal or y_reversal):
+        if not (x_rev or y_rev):
             continue
 
-        wall_events.append(
-            Event(
-                type=EventType.WALL_HIT,
-                frame_idx=int(frames[pos_idx]),
-                ball_pos_px=(float(positions[pos_idx, 0]), float(positions[pos_idx, 1])),
-                player_id=None,
-                confidence=0.65,
-            )
-        )
+        wall_events.append(Event(
+            type=EventType.WALL_HIT,
+            frame_idx=int(frames[i]),
+            ball_pos_px=(float(positions[i, 0]), float(positions[i, 1])),
+            player_id=None,
+            confidence=0.65,
+        ))
 
     return wall_events
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
 def _find_nearest_player(
-    ball_pos: np.ndarray, players: list[PlayerDetection]
+    ball_pos: np.ndarray,
+    players: list[PlayerDetection],
 ) -> tuple[int | None, float]:
     if not players:
         return None, float("inf")
     distances = [
-        (p.track_id, float(np.linalg.norm(np.array(p.foot_px) - ball_pos))) for p in players
+        (p.track_id, float(np.linalg.norm(np.array(p.foot_px) - ball_pos)))
+        for p in players
     ]
-    nearest = min(distances, key=lambda x: x[1])
-    return nearest
+    return min(distances, key=lambda x: x[1])
 
 
 def _dedup_events(events: list[Event], min_gap_frames: int) -> list[Event]:
-    """Remove duplicate events of the same type within min_gap_frames."""
+    """Remove same-type events closer than min_gap_frames apart."""
     if not events:
         return events
     by_type: dict[EventType, list[Event]] = {}
@@ -210,9 +210,9 @@ def _dedup_events(events: list[Event], min_gap_frames: int) -> list[Event]:
     out: list[Event] = []
     for evs in by_type.values():
         evs.sort(key=lambda e: e.frame_idx)
-        last_kept_frame = -(10 ** 9)
+        last = -(10 ** 9)
         for e in evs:
-            if e.frame_idx - last_kept_frame >= min_gap_frames:
+            if e.frame_idx - last >= min_gap_frames:
                 out.append(e)
-                last_kept_frame = e.frame_idx
+                last = e.frame_idx
     return out

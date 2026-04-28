@@ -56,12 +56,18 @@ def analyze_match_task(self, match_id: str) -> dict:
         match.progress = 0
         session.commit()
 
+    _last_written_pct: list[int] = [-1]   # mutable cell to track last DB write
+
     def progress_cb(percent: int, message: str) -> None:
+        # Only write to DB when progress advances ≥5 points (or reaches 100)
+        if percent < 100 and percent - _last_written_pct[0] < 5:
+            return
         with SyncSession() as session:
             m = session.get(Match, match_id)
             if m:
                 m.progress = percent
                 session.commit()
+        _last_written_pct[0] = percent
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
