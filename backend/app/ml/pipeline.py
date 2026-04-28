@@ -88,7 +88,7 @@ class AnalysisPipeline:
 
         # 4. Event detection (70% -> 80%)
         report(72, "Detecting events...")
-        events = detect_events(ball_track, players_by_frame)
+        events = detect_events(ball_track, players_by_frame, calibration=calibration)
         report(80, f"Detected {len(events)} events")
 
         # 5. Shot classification (80% -> 90%)

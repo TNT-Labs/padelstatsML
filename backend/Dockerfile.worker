@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# OpenCV + torch runtime deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 libsm6 libxext6 libxrender1 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# App source only (no alembic — worker doesn't run migrations)
+COPY app/ ./app/
+
+# Model weights directory — mount or COPY in CI
+RUN mkdir -p weights
+
+# Single concurrency: ML inference is memory/GPU bound, parallelism via separate workers
+CMD ["celery", "-A", "app.workers.tasks.celery_app", "worker", \
+     "--loglevel=info", "-Q", "celery", "-c", "1"]
