@@ -28,12 +28,16 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
 
     # ML
-    ml_device: str = "cuda"  # "cpu" for fallback
+    ml_device: str = "cpu"   # "cuda" when a GPU is available
     yolo_weights: str = "yolov8n.pt"
     yolo_pose_weights: str = "yolov8n-pose.pt"
     tracknet_weights: str = "weights/tracknet_padel.pth"
     target_fps: int = 30
     max_video_size_mb: int = 2048
+    # Process every Nth frame for player tracking (higher = faster, lower accuracy)
+    # Recommended: 2 on GPU, 3-4 on Pi 5
+    player_stride: int = 2
+    torch_num_threads: int = 0  # 0 = auto (min(cpu_count, 4))
 
 
 @lru_cache

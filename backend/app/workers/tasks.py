@@ -8,8 +8,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.storage import download_to_path
+from app.ml.optimize import configure_for_cpu
 
 settings = get_settings()
+
+# Apply CPU optimizations at worker startup (no-op when CUDA is active)
+if settings.ml_device == "cpu":
+    configure_for_cpu(settings.torch_num_threads or None)
 
 celery_app = Celery(
     "padel",
@@ -73,6 +78,7 @@ def analyze_match_task(self, match_id: str) -> dict:
                 yolo_weights=settings.yolo_weights,
                 tracknet_weights=settings.tracknet_weights if Path(settings.tracknet_weights).exists() else None,
                 device=settings.ml_device,
+                player_stride=settings.player_stride,
             )
             pipeline = AnalysisPipeline(config)
             result = pipeline.run(local_path, progress_callback=progress_cb)
