@@ -253,11 +253,16 @@ class BallTracker:
             yield from _MOG2BallDetector().track_video(video_path)
             return
 
+        from collections import deque
+
         cap = cv2.VideoCapture(video_path)
         orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         sx, sy = orig_w / INPUT_W, orig_h / INPUT_H
-        buf: list[np.ndarray] = []
+
+        # Rolling buffer: oldest → newest, each entry is (H, W, 3) float32 RGB [0,1]
+        # deque(maxlen=3) automatically evicts the oldest when a 4th frame is added
+        buf: deque[np.ndarray] = deque(maxlen=3)
         frame_idx = -1
 
         while True:
@@ -266,20 +271,22 @@ class BallTracker:
             if not ok:
                 break
 
+            # Resize, convert BGR→RGB (TrackNetV2 was trained on RGB), normalise
             small = cv2.resize(frame, (INPUT_W, INPUT_H))
-            buf.append(small)
-            if len(buf) > 3:
-                buf.pop(0)
+            rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            buf.append(rgb)
 
+            # Must have a complete triplet [t-2, t-1, t] before running the model
             if len(buf) < 3:
                 yield BallDetection(frame_idx=frame_idx, pos_px=None, confidence=0.0)
                 continue
 
-            x = np.concatenate(buf, axis=2).astype(np.float32) / 255.0
-            t = torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0).to(self.device)
+            # Stack along channel axis: (H,W,3)×3 → (H,W,9) → (1,9,H,W)
+            x = np.concatenate(list(buf), axis=2)                               # (H, W, 9)
+            inp = torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0).to(self.device)  # (1, 9, H, W)
 
             with torch.no_grad():
-                heatmap = self._model(t)[0, 0].cpu().numpy()
+                heatmap = self._model(inp)[0, 0].cpu().numpy()  # (H, W)
 
             yp, xp = np.unravel_index(np.argmax(heatmap), heatmap.shape)
             conf = float(heatmap[yp, xp])
