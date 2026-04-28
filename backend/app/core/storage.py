@@ -27,10 +27,15 @@ def get_s3_client():
 def ensure_bucket() -> None:
     s = get_settings()
     client = get_s3_client()
+    from botocore.exceptions import ClientError
     try:
         client.head_bucket(Bucket=s.s3_bucket_videos)
-    except Exception:
-        client.create_bucket(Bucket=s.s3_bucket_videos)
+    except ClientError as exc:
+        code = exc.response["Error"]["Code"]
+        if code in ("404", "NoSuchBucket"):
+            client.create_bucket(Bucket=s.s3_bucket_videos)
+        else:
+            raise
 
 
 def generate_upload_url(s3_key: str, expires_in: int = 3600) -> str:

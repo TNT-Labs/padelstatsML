@@ -11,16 +11,23 @@ export interface AnalysisState {
   error: string | null
 }
 
-const POLL_MS = 5000
+const POLL_MS      = 5_000
+const MAX_POLL_MIN = 25            // abort after 25 minutes of processing
+const MAX_POLLS    = (MAX_POLL_MIN * 60_000) / POLL_MS
 
 export function useMatchAnalysis() {
   const [state, setState] = useState<AnalysisState>({
     phase: 'idle', progress: 0, match: null, stats: null, error: null,
   })
-  const pollRef = useRef<number | null>(null)
+  const pollRef   = useRef<number | null>(null)
+  const pollCount = useRef(0)
 
   const stopPoll = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    pollCount.current = 0
   }
 
   const analyze = useCallback(async (file: File, title: string, players?: string[]) => {
@@ -39,6 +46,19 @@ export function useMatchAnalysis() {
       setState(s => ({ ...s, phase: 'processing', progress: 0, match }))
 
       pollRef.current = window.setInterval(async () => {
+        pollCount.current += 1
+
+        // Safety timeout: abort after MAX_POLL_MIN minutes
+        if (pollCount.current > MAX_POLLS) {
+          stopPoll()
+          setState(s => ({
+            ...s,
+            phase: 'error',
+            error: `Timeout: l'analisi ha superato ${MAX_POLL_MIN} minuti`,
+          }))
+          return
+        }
+
         try {
           const m = await api.getMatch(init.match_id)
           setState(s => ({ ...s, match: m, progress: m.progress / 100 }))
@@ -49,10 +69,14 @@ export function useMatchAnalysis() {
             setState(s => ({ ...s, phase: 'done', stats, progress: 1 }))
           } else if (m.status === 'failed') {
             stopPoll()
-            setState(s => ({ ...s, phase: 'error', error: m.error_message ?? 'Processing failed' }))
+            setState(s => ({
+              ...s,
+              phase: 'error',
+              error: m.error_message ?? 'Analisi fallita',
+            }))
           }
         } catch {
-          // transient network glitch — keep polling
+          // Transient network glitch — keep polling; error counted against timeout
         }
       }, POLL_MS)
 
