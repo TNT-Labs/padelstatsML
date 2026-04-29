@@ -159,6 +159,22 @@ async def upload_video_local(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Upload failed: {exc}") from exc
 
 
+@router.delete("/{match_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_match(match_id: UUID, db: AsyncSession = Depends(get_db)) -> None:
+    match = await db.get(Match, match_id)
+    if not match:
+        raise HTTPException(404, "Match not found")
+
+    # Best-effort storage cleanup — don't let file errors block the DB delete
+    try:
+        from app.core.storage import delete_stored_files
+        delete_stored_files(str(match_id), match.video_s3_key)
+    except Exception:
+        pass
+
+    await db.delete(match)
+
+
 @router.get("", response_model=list[MatchRead])
 async def list_matches(db: AsyncSession = Depends(get_db), limit: int = 50) -> list[Match]:
     result = await db.execute(select(Match).order_by(Match.created_at.desc()).limit(limit))

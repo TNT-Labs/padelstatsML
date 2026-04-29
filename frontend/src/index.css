@@ -40,7 +40,10 @@ h3 { font-size: 1rem; font-weight: 600; }
 .btn:active { opacity: .75; }
 .btn-primary { background: var(--green); color: #fff; }
 .btn-ghost   { background: transparent; color: var(--green); border: 1.5px solid var(--green); }
+.btn-danger  { background: var(--danger); color: #fff; }
+.btn-danger-ghost { background: transparent; color: var(--danger); border: 1.5px solid var(--danger); }
 .btn-sm      { padding: .4rem .85rem; font-size: .8rem; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* Form */
 .form-group { display: flex; flex-direction: column; gap: .4rem; margin-bottom: 1rem; }
