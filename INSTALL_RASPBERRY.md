@@ -152,7 +152,7 @@ cd padelstatsML
 > ⚠️ **Cambia le password** prima di esporre il Pi sulla rete locale.
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 cp .env.example .env   # se non esiste, crealo da zero:
 nano .env
 ```
@@ -275,22 +275,20 @@ environment:
 
 #### 6d. Avvio SENZA MinIO
 
-Con lo storage locale MinIO non serve. Avvia solo i servizi necessari:
+Con lo storage locale MinIO non serve:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  up -d postgres redis api worker frontend
+docker compose -f docker-compose.pi.yml up -d
 ```
 
 ---
 
-### Opzione B — MinIO (comportamento predefinito)
+### Opzione B — MinIO (storage S3-compatibile)
 
-Nessuna modifica necessaria. Lascia `STORAGE_BACKEND=s3` nel `.env` (o non impostarlo) e includi `minio` nel comando di avvio:
+Nessuna modifica al codice necessaria. Attiva il profilo `minio`:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  up -d postgres redis minio api worker frontend
+docker compose -f docker-compose.pi.yml --profile minio up -d
 ```
 
 ---
@@ -301,17 +299,16 @@ docker compose -f docker-compose.yml -f docker-compose.pi.yml \
 > Con connessione 50 Mbit/s richiede circa **15–25 minuti**.
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
-# Build con overlay Pi (memory limits + CPU-only torch)
-docker compose -f docker-compose.yml -f docker-compose.pi.yml build
+# Build (CPU-only torch, memory limits Pi)
+docker compose -f docker-compose.pi.yml build
 
-# Avvia i servizi infrastrutturali per primi
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  up -d postgres redis minio
+# Avvia tutti i servizi
+docker compose -f docker-compose.pi.yml up -d
 
 # Attendi che siano healthy (~20 secondi)
-docker compose ps
+docker compose -f docker-compose.pi.yml ps
 ```
 
 Output atteso:
@@ -319,7 +316,9 @@ Output atteso:
 NAME       STATUS
 postgres   running (healthy)
 redis      running (healthy)
-minio      running (healthy)
+api        running (healthy)
+worker     running
+frontend   running
 ```
 
 ---
@@ -329,10 +328,9 @@ minio      running (healthy)
 Esegui **una sola volta** per creare lo schema:
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  run --rm migrate
+docker compose -f docker-compose.pi.yml run --rm migrate
 ```
 
 Output atteso:
@@ -347,10 +345,10 @@ INFO  [alembic.runtime.migration] Running upgrade -> 0001, initial schema
 YOLOv8 in formato ONNX è **3–5× più veloce** su ARM64 rispetto al formato PyTorch nativo. L'export si fa una volta sola.
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
 # Entra nel container worker (che ha ultralytics installato)
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
+docker compose -f docker-compose.pi.yml \
   run --rm --entrypoint bash worker
 
 # Dentro il container:
@@ -394,17 +392,16 @@ Il worker scaricherà il file automaticamente la prima volta che si avvia. Senza
 ## 10. Avvio completo del sistema
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  up -d postgres redis minio api worker frontend
+docker compose -f docker-compose.pi.yml up -d
 ```
 
 Attendi ~30 secondi poi verifica:
 
 ```bash
 # Stato di tutti i container
-docker compose -f docker-compose.yml -f docker-compose.pi.yml ps
+docker compose -f docker-compose.pi.yml ps
 ```
 
 Output atteso:
@@ -412,7 +409,6 @@ Output atteso:
 NAME       STATUS
 postgres   running (healthy)
 redis      running (healthy)
-minio      running (healthy)
 api        running (healthy)
 worker     running
 frontend   running
@@ -496,9 +492,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/pi/padelstatsML/backend
-ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d postgres redis minio api worker frontend
-ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.pi.yml down
+WorkingDirectory=/home/pi/padelstatsML
+ExecStart=/usr/bin/docker compose -f docker-compose.pi.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.pi.yml down
 StandardOutput=journal
 User=pi
 
@@ -522,30 +518,29 @@ sudo systemctl status padelstats.service
 ### Avvio / Arresto
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
 # Avvia tutto
-docker compose -f docker-compose.yml -f docker-compose.pi.yml \
-  up -d postgres redis minio api worker frontend
+docker compose -f docker-compose.pi.yml up -d
 
 # Arresta tutto (i dati sono preservati nei volumi)
-docker compose -f docker-compose.yml -f docker-compose.pi.yml down
+docker compose -f docker-compose.pi.yml down
 
 # Riavvia solo il worker (es. dopo cambio .env)
-docker compose -f docker-compose.yml -f docker-compose.pi.yml restart worker
+docker compose -f docker-compose.pi.yml restart worker
 ```
 
 ### Log in tempo reale
 
 ```bash
 # Tutti i servizi
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f
+docker compose -f docker-compose.pi.yml logs -f
 
 # Solo il worker ML
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f worker
+docker compose -f docker-compose.pi.yml logs -f worker
 
 # Solo l'API
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f api
+docker compose -f docker-compose.pi.yml logs -f api
 ```
 
 ### Monitoraggio risorse
@@ -567,10 +562,9 @@ free -h
 cd ~/padelstatsML
 git pull
 
-cd backend
-docker compose -f docker-compose.yml -f docker-compose.pi.yml build --no-cache
-docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.pi.yml run --rm migrate
+docker compose -f docker-compose.pi.yml build --no-cache
+docker compose -f docker-compose.pi.yml up -d
+docker compose -f docker-compose.pi.yml run --rm migrate
 ```
 
 ### Backup dati
@@ -593,7 +587,7 @@ docker run --rm -v padelstats_miniodata:/data \
 
 ```bash
 # Controlla i log di errore
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs --tail=50
+docker compose -f docker-compose.pi.yml logs --tail=50
 
 # Verifica spazio disco
 df -h
@@ -641,11 +635,11 @@ La camera non è posizionata correttamente. Requisiti:
 ### Errore `S3 connection refused`
 
 ```bash
-# Verifica che MinIO sia up
-docker compose -f docker-compose.yml -f docker-compose.pi.yml ps minio
+# Verifica che MinIO sia up (solo se avviato con --profile minio)
+docker compose -f docker-compose.pi.yml --profile minio ps minio
 
 # Se è "unhealthy", controlla i log
-docker compose logs minio
+docker compose -f docker-compose.pi.yml logs minio
 ```
 
 ### Frontend non risponde (porta 80)
@@ -662,10 +656,10 @@ CORS_ORIGINS=["http://192.168.1.42","http://padelpi.local"]
 ### Ripartire da zero (reset completo)
 
 ```bash
-cd ~/padelstatsML/backend
+cd ~/padelstatsML
 
 # ATTENZIONE: elimina tutti i dati (DB, video, code)
-docker compose -f docker-compose.yml -f docker-compose.pi.yml down -v --remove-orphans
+docker compose -f docker-compose.pi.yml down -v --remove-orphans
 docker system prune -af --volumes
 
 # Poi ripeti dalla build (step 6)
@@ -698,19 +692,19 @@ docker system prune -af --volumes
 
 ```bash
 # Avvia tutto
-docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d postgres redis minio api worker frontend
+docker compose -f docker-compose.pi.yml up -d
 
 # Controlla stato
-docker compose -f docker-compose.yml -f docker-compose.pi.yml ps
+docker compose -f docker-compose.pi.yml ps
 
 # Health check
 curl http://localhost/health
 
 # Log worker in tempo reale
-docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f worker
+docker compose -f docker-compose.pi.yml logs -f worker
 
 # Arresta tutto
-docker compose -f docker-compose.yml -f docker-compose.pi.yml down
+docker compose -f docker-compose.pi.yml down
 ```
 
 
@@ -727,9 +721,9 @@ Stampa a terminale ogni stage con percentuale e tempo. Se questo funziona, il gr
 
 Fase 2 — Stack completo su Pi
 Passo	Comando	Note
-1. Build	docker compose -f docker-compose.yml -f docker-compose.pi.yml build	~20 min prima volta
-2. Avvia infrastruttura	up -d postgres redis api worker frontend (+ minio se non usi SSD)	
-3. Migra DB	docker compose run --rm migrate	Una volta sola
+1. Build	docker compose -f docker-compose.pi.yml build	~20 min prima volta
+2. Avvia infrastruttura	docker compose -f docker-compose.pi.yml up -d	
+3. Migra DB	docker compose -f docker-compose.pi.yml run --rm migrate	Una volta sola
 4. Export ONNX	dentro il container worker: python scripts/export_onnx.py	Una volta sola, 3-5× più veloce
 5. Health check	curl http://localhost/health	Deve tornare {"status":"ok"}
 Fase 3 — Test con video reale
