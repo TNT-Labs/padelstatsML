@@ -13,15 +13,16 @@
 3. [Installazione Docker](#3-installazione-docker)
 4. [Clonare il repository](#4-clonare-il-repository)
 5. [Configurazione variabili d'ambiente](#5-configurazione-variabili-dambiente)
-6. [Prima build e avvio](#6-prima-build-e-avvio)
-7. [Migrazione database](#7-migrazione-database)
-8. [Ottimizzazione YOLO → ONNX (raccomandato)](#8-ottimizzazione-yolo--onnx-raccomandato)
-9. [Pesi TrackNet (opzionale)](#9-pesi-tracknet-opzionale)
-10. [Verifica installazione](#10-verifica-installazione)
-11. [Configurare l'app mobile](#11-configurare-lapp-mobile)
-12. [Avvio automatico al boot](#12-avvio-automatico-al-boot)
-13. [Comandi operativi](#13-comandi-operativi)
-14. [Risoluzione problemi](#14-risoluzione-problemi)
+6. [Storage: SSD locale vs MinIO](#6-storage-ssd-locale-vs-minio)
+7. [Prima build e avvio](#7-prima-build-e-avvio)
+8. [Migrazione database](#8-migrazione-database)
+9. [Ottimizzazione YOLO → ONNX (raccomandato)](#9-ottimizzazione-yolo--onnx-raccomandato)
+10. [Pesi TrackNet (opzionale)](#10-pesi-tracknet-opzionale)
+11. [Verifica installazione](#11-verifica-installazione)
+12. [Configurare l'app mobile](#12-configurare-lapp-mobile)
+13. [Avvio automatico al boot](#13-avvio-automatico-al-boot)
+14. [Comandi operativi](#14-comandi-operativi)
+15. [Risoluzione problemi](#15-risoluzione-problemi)
 
 ---
 
@@ -204,7 +205,97 @@ sed -i 's/POSTGRES_PASSWORD: padel/POSTGRES_PASSWORD: NUOVA_PASSWORD_PG/g' docke
 
 ---
 
-## 6. Prima build e avvio
+## 6. Storage: SSD locale vs MinIO
+
+Il sistema supporta due modalità di storage per i video:
+
+| | **SSD locale** (consigliato per Pi) | **MinIO** (default) |
+|---|---|---|
+| RAM usata | ~4.2 GB totali | ~4.4 GB (+256 MB) |
+| Semplicità | Nessun container extra | Richiede MinIO |
+| Upload | Passa per l'API (nginx → FastAPI) | Diretto da client a MinIO |
+| Backup | `cp` o `rsync` sulla directory | Snapshot volume Docker |
+
+### Opzione A — SSD locale (raccomandato)
+
+#### 6a. Montare l'SSD
+
+Collega l'SSD al Pi (via USB 3.0 o PCIe M.2 HAT), poi:
+
+```bash
+# Trova il dispositivo
+lsblk
+# Esempio: /dev/sda o /dev/nvme0n1
+
+# Formatta se è nuovo (attenzione: cancella tutto)
+sudo mkfs.ext4 /dev/sda1
+
+# Crea punto di mount
+sudo mkdir -p /mnt/ssd
+
+# Monta
+sudo mount /dev/sda1 /mnt/ssd
+
+# Rendi permanente (trova l'UUID del dispositivo)
+sudo blkid /dev/sda1
+# Copia l'UUID, poi:
+echo 'UUID=xxxx-xxxx  /mnt/ssd  ext4  defaults,noatime  0  2' | sudo tee -a /etc/fstab
+
+# Crea la directory dei video
+sudo mkdir -p /mnt/ssd/padel-videos
+sudo chown $USER:$USER /mnt/ssd/padel-videos
+```
+
+#### 6b. Configurare il .env per lo storage locale
+
+Aggiungi/modifica queste righe nel `.env`:
+
+```env
+STORAGE_BACKEND=local
+VIDEOS_DIR=/data/videos
+# L'IP del Pi — deve essere raggiungibile dal client mobile/web
+API_BASE_URL=http://192.168.1.42
+```
+
+#### 6c. Abilitare il volume nel docker-compose.pi.yml
+
+Apri `docker-compose.pi.yml` e decommenta le righe indicate per `api` e `worker`:
+
+```yaml
+# Nei servizi api e worker, decommenta:
+volumes:
+  - /mnt/ssd/padel-videos:/data/videos
+
+# Nelle variabili d'ambiente di api e worker, decommenta:
+environment:
+  STORAGE_BACKEND: local
+  VIDEOS_DIR: /data/videos
+  API_BASE_URL: "http://192.168.1.42"   # oppure http://padelpi.local
+```
+
+#### 6d. Avvio SENZA MinIO
+
+Con lo storage locale MinIO non serve. Avvia solo i servizi necessari:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pi.yml \
+  up -d postgres redis api worker frontend
+```
+
+---
+
+### Opzione B — MinIO (comportamento predefinito)
+
+Nessuna modifica necessaria. Lascia `STORAGE_BACKEND=s3` nel `.env` (o non impostarlo) e includi `minio` nel comando di avvio:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pi.yml \
+  up -d postgres redis minio api worker frontend
+```
+
+---
+
+## 7. Prima build e avvio
 
 > La prima build scarica ~3 GB di immagini Docker e compila PyTorch wheels ARM64.
 > Con connessione 50 Mbit/s richiede circa **15–25 minuti**.
@@ -233,7 +324,7 @@ minio      running (healthy)
 
 ---
 
-## 7. Migrazione database
+## 8. Migrazione database
 
 Esegui **una sola volta** per creare lo schema:
 
@@ -251,7 +342,7 @@ INFO  [alembic.runtime.migration] Running upgrade -> 0001, initial schema
 
 ---
 
-## 8. Ottimizzazione YOLO → ONNX (raccomandato)
+## 9. Ottimizzazione YOLO → ONNX (raccomandato)
 
 YOLOv8 in formato ONNX è **3–5× più veloce** su ARM64 rispetto al formato PyTorch nativo. L'export si fa una volta sola.
 
@@ -281,7 +372,7 @@ YOLO_WEIGHTS=weights/yolov8n.onnx
 
 ---
 
-## 9. Pesi TrackNet (opzionale)
+## 10. Pesi TrackNet (opzionale)
 
 Se hai a disposizione un file `.pth` di pesi TrackNetV2 addestrato su padel:
 
@@ -354,7 +445,7 @@ Dovresti vedere la schermata principale di Padel Stats.
 
 ---
 
-## 11. Configurare l'app mobile
+## 12. Configurare l'app mobile
 
 L'app mobile deve sapere l'indirizzo IP del Pi sulla rete locale.
 
@@ -387,7 +478,7 @@ npx expo start
 
 ---
 
-## 12. Avvio automatico al boot
+## 13. Avvio automatico al boot
 
 Crea un servizio systemd che avvia Docker Compose al riavvio del Pi:
 
@@ -426,7 +517,7 @@ sudo systemctl status padelstats.service
 
 ---
 
-## 13. Comandi operativi
+## 14. Comandi operativi
 
 ### Avvio / Arresto
 
@@ -496,7 +587,7 @@ docker run --rm -v padelstats_miniodata:/data \
 
 ---
 
-## 14. Risoluzione problemi
+## 15. Risoluzione problemi
 
 ### Container non si avviano
 

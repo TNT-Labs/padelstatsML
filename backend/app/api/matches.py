@@ -1,7 +1,7 @@
 """REST endpoints for match lifecycle: create -> upload -> queue -> poll -> stats."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +91,42 @@ async def get_stats(match_id: UUID, db: AsyncSession = Depends(get_db)) -> Match
         rallies_count=len(stats.rallies),
         total_shots=total_shots,
     )
+
+
+@router.put("/{match_id}/video", status_code=204)
+async def upload_video_local(
+    match_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Receive a raw video stream and write it to the local SSD.
+
+    Used only when STORAGE_BACKEND=local.  With the S3 backend this endpoint
+    is never called — clients upload directly to the presigned S3 URL instead.
+    """
+    settings = get_settings()
+    if settings.storage_backend != "local":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Endpoint only active with local storage backend")
+
+    match = await db.get(Match, match_id)
+    if not match:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Match not found")
+    if match.status != MatchStatus.UPLOADING:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot upload: status is {match.status}")
+
+    from app.core.storage import local_video_path
+    video_path = local_video_path(match.video_s3_key)
+    tmp_path = video_path.with_suffix(".tmp")
+
+    try:
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp_path, "wb") as fh:
+            async for chunk in request.stream():
+                fh.write(chunk)
+        tmp_path.rename(video_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Upload failed: {exc}") from exc
 
 
 @router.get("", response_model=list[MatchRead])
