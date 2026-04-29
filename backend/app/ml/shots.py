@@ -17,11 +17,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from app.ml.ball import BallDetection
 from app.ml.events import Event
+
+if TYPE_CHECKING:
+    from app.ml.court import CourtCalibration
 
 
 class ShotType(str, Enum):
@@ -47,9 +51,11 @@ _BACK_THRESHOLD = 4.5   # < 4.5 m or > 15.5 m from baselines = back court
 
 def classify_shot(
     hit_event: Event,
-    pose_keypoints: np.ndarray | None,   # 17×3 (x, y, conf) COCO, or None
+    pose_keypoints: np.ndarray | None,        # 17×3 (x, y, conf) COCO, or None
     ball_track: list[BallDetection],
     player_court_pos: tuple[float, float] | None,
+    fps: float = 30.0,
+    calibration: "CourtCalibration | None" = None,
 ) -> ClassifiedShot:
     """Classify a single HIT event into a shot type.
 
@@ -69,9 +75,17 @@ def classify_shot(
     # In image coords: smaller Y = higher up.  ball_was_high → ball was above hit point.
     ball_was_high  = (ball_y_before < hit_y - 30) if ball_y_before else False
 
-    post_speed     = _ball_speed_after(ball_track, hit_event.frame_idx, after=6)
-    high_speed     = post_speed > 20.0   # px/frame — smash threshold
-    medium_speed   = post_speed > 8.0
+    post_speed_px = _ball_speed_after(ball_track, hit_event.frame_idx, after=6)
+    if calibration is not None and fps > 0:
+        # Convert to m/s: resolution- and fps-independent thresholds
+        post_speed_ms = _ball_speed_after_ms(
+            ball_track, hit_event.frame_idx, after=6, calibration=calibration, fps=fps
+        )
+        high_speed   = post_speed_ms > 18.0   # m/s — padel smash
+        medium_speed = post_speed_ms > 6.0
+    else:
+        high_speed   = post_speed_px > 20.0
+        medium_speed = post_speed_px > 8.0
 
     # ── Features from player court position ──────────────────────────────────
     is_at_net  = False
@@ -82,19 +96,29 @@ def classify_shot(
         is_at_back = y < _BACK_THRESHOLD or y > (20.0 - _BACK_THRESHOLD)
 
     # ── Features from pose keypoints (COCO) ──────────────────────────────────
+    # Only trust keypoints whose detection confidence exceeds the threshold.
+    # Using low-confidence keypoints produces more misclassifications than
+    # ignoring them entirely.
     arm_above_head = False
     arm_high       = False
+    _KPT_CONF = 0.35
     if pose_keypoints is not None:
         try:
             # COCO indices: 5=L-shoulder, 6=R-shoulder, 9=L-wrist, 10=R-wrist
-            ls_y = pose_keypoints[5, 1]
-            rs_y = pose_keypoints[6, 1]
-            lw_y = pose_keypoints[9, 1]
-            rw_y = pose_keypoints[10, 1]
-            min_wrist    = min(lw_y, rw_y)
-            min_shoulder = min(ls_y, rs_y)
-            arm_above_head = min_wrist < min_shoulder - 25   # wrist clearly above shoulder
-            arm_high       = min_wrist < min_shoulder + 15   # wrist near or above shoulder
+            ls_y, ls_c = pose_keypoints[5, 1], pose_keypoints[5, 2]
+            rs_y, rs_c = pose_keypoints[6, 1], pose_keypoints[6, 2]
+            lw_y, lw_c = pose_keypoints[9, 1], pose_keypoints[9, 2]
+            rw_y, rw_c = pose_keypoints[10, 1], pose_keypoints[10, 2]
+            if max(lw_c, rw_c) > _KPT_CONF:
+                # Use the more confident wrist; ignore shoulder if uncertain
+                wrist_y    = lw_y if lw_c >= rw_c else rw_y
+                shoulder_y = (
+                    min(ls_y, rs_y)
+                    if min(ls_c, rs_c) > _KPT_CONF
+                    else wrist_y + 50   # conservative: assume shoulder is below
+                )
+                arm_above_head = wrist_y < shoulder_y - 25
+                arm_high       = wrist_y < shoulder_y + 15
         except (IndexError, ValueError):
             pass
 
@@ -146,3 +170,27 @@ def _ball_speed_after(ball_track: list[BallDetection], frame_idx: int, after: in
         for i in range(1, len(pts))
     ]
     return float(np.mean(speeds))
+
+
+def _ball_speed_after_ms(
+    ball_track: list[BallDetection],
+    frame_idx: int,
+    after: int,
+    calibration: "CourtCalibration",
+    fps: float,
+) -> float:
+    """Mean ball speed in m/s for `after` frames following the hit.
+
+    Converts pixel positions to court metres via the homography, then
+    multiplies by fps — gives a resolution- and zoom-independent value.
+    """
+    pts_px = np.array(
+        [b.pos_px for b in ball_track
+         if b.pos_px is not None and frame_idx <= b.frame_idx <= frame_idx + after],
+        dtype=np.float32,
+    )
+    if len(pts_px) < 2:
+        return 0.0
+    pts_m = calibration.pixel_to_court(pts_px)
+    dists = np.linalg.norm(np.diff(pts_m, axis=0), axis=1)
+    return float(dists.mean() * fps)

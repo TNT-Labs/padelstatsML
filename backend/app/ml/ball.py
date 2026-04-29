@@ -162,8 +162,7 @@ class _MOG2BallDetector:
                 break
             bg.apply(cv2.resize(frame, (proc_w, proc_h)))
 
-        cap.release()
-        cap = cv2.VideoCapture(video_path)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
         k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -289,15 +288,20 @@ class BallTracker:
             with torch.no_grad():
                 heatmap = self._model(inp)[0, 0].cpu().numpy()  # (H, W)
 
-            yp, xp = np.unravel_index(np.argmax(heatmap), heatmap.shape)
-            conf = float(heatmap[yp, xp])
-
+            conf = float(heatmap.max())
             if conf < 0.5:
                 yield BallDetection(frame_idx=frame_idx, pos_px=None, confidence=conf)
             else:
+                # Weighted center-of-mass over the hot region: more accurate than
+                # plain argmax when the ball is motion-blurred or partially occluded.
+                mask = heatmap > 0.3
+                ys, xs = np.where(mask)
+                w = heatmap[mask]
+                xp = float((xs * w).sum() / w.sum())
+                yp = float((ys * w).sum() / w.sum())
                 yield BallDetection(
                     frame_idx=frame_idx,
-                    pos_px=(float(xp * sx), float(yp * sy)),
+                    pos_px=(xp * sx, yp * sy),
                     confidence=conf,
                 )
 
@@ -305,7 +309,64 @@ class BallTracker:
 
 
 def smooth_trajectory(detections: list[BallDetection], max_gap: int = 5) -> list[BallDetection]:
-    """Linear interpolation for short gaps (≤ max_gap frames) in ball trajectory."""
+    """Kalman-filter smoothing + gap filling for ball trajectory.
+
+    State [x, y, vx, vy] with constant-velocity model.  Valid detections
+    update the filter; frames with no detection up to max_gap are filled
+    with the Kalman prediction (conf=0.3).  Falls back to linear
+    interpolation when filterpy is unavailable.
+    """
+    if not detections:
+        return detections
+
+    try:
+        from filterpy.kalman import KalmanFilter as KF
+    except ImportError:
+        return _linear_interpolate(detections, max_gap)
+
+    first = next((d for d in detections if d.pos_px is not None), None)
+    if first is None:
+        return detections
+
+    kf = KF(dim_x=4, dim_z=2)
+    dt = 1.0
+    kf.F = np.array([[1, 0, dt, 0],
+                     [0, 1, 0, dt],
+                     [0, 0, 1,  0],
+                     [0, 0, 0,  1]], dtype=np.float32)
+    kf.H  = np.array([[1, 0, 0, 0],
+                      [0, 1, 0, 0]], dtype=np.float32)
+    kf.R  = np.eye(2, dtype=np.float32) * 25.0   # measurement noise (~5 px std)
+    kf.Q  = np.eye(4, dtype=np.float32) * 0.8    # process noise
+    kf.P *= 100.0
+    kf.x  = np.array([first.pos_px[0], first.pos_px[1], 0.0, 0.0], dtype=np.float32)
+
+    out = list(detections)
+    misses = 0
+    for i, det in enumerate(out):
+        kf.predict()
+        if det.pos_px is not None:
+            kf.update(np.array([det.pos_px[0], det.pos_px[1]], dtype=np.float32))
+            misses = 0
+            out[i] = BallDetection(
+                frame_idx=det.frame_idx,
+                pos_px=(float(kf.x[0]), float(kf.x[1])),
+                confidence=det.confidence,
+            )
+        elif misses < max_gap:
+            misses += 1
+            out[i] = BallDetection(
+                frame_idx=det.frame_idx,
+                pos_px=(float(kf.x[0]), float(kf.x[1])),
+                confidence=0.3,
+            )
+        else:
+            misses += 1
+    return out
+
+
+def _linear_interpolate(detections: list[BallDetection], max_gap: int) -> list[BallDetection]:
+    """Fallback linear interpolation when filterpy is not installed."""
     out = list(detections)
     n, i = len(out), 0
     while i < n:

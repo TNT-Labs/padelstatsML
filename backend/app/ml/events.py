@@ -50,6 +50,7 @@ def detect_events(
     min_velocity_change: float = 25.0,
     calibration: "CourtCalibration | None" = None,
     wall_margin_m: float = 0.8,
+    fps: float = 30.0,
 ) -> list[Event]:
     """Detect HIT, BOUNCE, and WALL_HIT events from ball + player trajectories.
 
@@ -95,9 +96,11 @@ def detect_events(
             ))
 
     # ── 2. BOUNCE: Y-velocity sign change ────────────────────────────────────
-    # In image coords +Y is downward. Bounce: ball going down (vy > 0) then up (vy < 0)
+    # In image coords +Y is downward. Bounce: ball going down (vy > 0) then up (vy < 0).
+    # Scale threshold with fps so 60fps videos keep the same sensitivity as 30fps.
+    vy_thr = 4.0 * (fps / 30.0)
     for i in range(1, len(velocities)):
-        if velocities[i - 1, 1] > 4 and velocities[i, 1] < -4:
+        if velocities[i - 1, 1] > vy_thr and velocities[i, 1] < -vy_thr:
             events.append(Event(
                 type=EventType.BOUNCE,
                 frame_idx=int(frames[i]),
@@ -112,7 +115,7 @@ def detect_events(
             _detect_wall_hits(frames, positions, velocities, calibration, wall_margin_m)
         )
 
-    events = _dedup_events(events, min_gap_frames=5)
+    events = _dedup_events(events, min_gap_frames=8)
     events.sort(key=lambda e: e.frame_idx)
     return events
 
