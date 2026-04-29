@@ -9,12 +9,16 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import get_settings
 from app.core.storage import download_to_path
 from app.ml.optimize import configure_for_cpu
+from app.ml.weights import ensure_tracknet_weights
 
 settings = get_settings()
 
 # Apply CPU optimizations at worker startup (no-op when CUDA is active)
 if settings.ml_device == "cpu":
     configure_for_cpu(settings.torch_num_threads or None)
+
+# Download TrackNet weights on first startup if a URL is configured
+ensure_tracknet_weights(settings.tracknet_weights, settings.tracknet_weights_url)
 
 celery_app = Celery(
     "padel",

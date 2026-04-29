@@ -63,9 +63,14 @@ class PlayerTracker:
 
         court_polygon = calibration.corners_px
 
-        for frame_idx, r in enumerate(results):
+        # Explicit frame counter: ultralytics with vid_stride=N processes video
+        # frames 0, N, 2N, … so advancing by stride each result gives the actual
+        # video frame number — identical convention to cap.get(CAP_PROP_POS_FRAMES).
+        frame_num = 0
+        for r in results:
             if r.boxes is None or r.boxes.id is None:
                 yield []
+                frame_num += stride
                 continue
 
             boxes = r.boxes.xyxy.cpu().numpy()
@@ -85,7 +90,7 @@ class PlayerTracker:
 
                 detections.append(
                     PlayerDetection(
-                        frame_idx=frame_idx * stride,
+                        frame_idx=frame_num,
                         track_id=int(tid),
                         bbox_px=(float(x1), float(y1), float(x2), float(y2)),
                         foot_px=(float(foot_px[0]), float(foot_px[1])),
@@ -95,6 +100,28 @@ class PlayerTracker:
                 )
 
             yield detections
+            frame_num += stride
+
+
+def get_players_near_frame(
+    players_by_frame: dict[int, list["PlayerDetection"]],
+    frame_idx: int,
+    radius: int = 6,
+) -> list["PlayerDetection"]:
+    """Return player detections from the closest available frame within *radius*.
+
+    With vid_stride=N the player dict only has entries at multiples of N.
+    Ball events can fall on any frame, so we search outward from frame_idx
+    until we find player data.  radius=6 safely covers stride ≤ 6.
+    """
+    if frame_idx in players_by_frame:
+        return players_by_frame[frame_idx]
+    for delta in range(1, radius + 1):
+        for sign in (1, -1):
+            f = frame_idx + sign * delta
+            if f in players_by_frame:
+                return players_by_frame[f]
+    return []
 
 
 def _point_in_polygon_with_margin(point: tuple[float, float], polygon: np.ndarray, margin: float) -> bool:

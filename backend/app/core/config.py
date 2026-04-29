@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     yolo_weights: str = "yolov8n.pt"
     yolo_pose_weights: str = "yolov8n-pose.pt"
     tracknet_weights: str = "weights/tracknet_padel.pth"
+    # Set to a direct download URL to auto-fetch weights on first worker startup.
+    # Leave empty to use the MOG2 background-subtraction fallback instead.
+    # Example: https://github.com/<user>/<repo>/releases/download/v1.0/tracknet_padel.pth
+    tracknet_weights_url: str = ""
     target_fps: int = 30
     max_video_size_mb: int = 2048
     # Process every Nth frame for player tracking (higher = faster, lower accuracy)

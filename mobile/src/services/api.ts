@@ -54,10 +54,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createMatch: (title: string, players?: string[]) =>
+  createMatch: (title: string, players?: string[], fileSizeBytes?: number) =>
     request<UploadInit>('/matches', {
       method: 'POST',
-      body: JSON.stringify({ title, player_names: players }),
+      body: JSON.stringify({ title, player_names: players, file_size_bytes: fileSizeBytes }),
     }),
 
   startProcessing: (matchId: string) =>

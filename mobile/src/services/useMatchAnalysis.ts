@@ -2,6 +2,7 @@
  * Hook that manages the complete analysis flow: create → upload → start → poll.
  * Exposes unified state + progress (0..1).
  */
+import * as FileSystem from 'expo-file-system'
 import { useCallback, useRef, useState } from 'react'
 import { api, Match, MatchStats } from '../services/api'
 
@@ -39,8 +40,12 @@ export function useMatchAnalysis() {
     setState({ phase: 'creating', progress: 0, match: null, stats: null, error: null })
 
     try {
-      // 1. Create match + get presigned upload URL
-      const init = await api.createMatch(title, players)
+      // 1. Get file size for server-side validation before creating the match
+      const fileInfo = await FileSystem.getInfoAsync(videoUri, { size: true })
+      const fileSizeBytes = fileInfo.exists && 'size' in fileInfo ? fileInfo.size : undefined
+
+      // 2. Create match + get presigned upload URL (API rejects oversized videos here)
+      const init = await api.createMatch(title, players, fileSizeBytes)
 
       // 2. Upload directly to S3
       setState(s => ({ ...s, phase: 'uploading', progress: 0 }))

@@ -52,10 +52,14 @@ export const api = {
   getMatch:    (id: string) => req<Match>(`/matches/${id}`),
   getStats:    (id: string) => req<MatchStats>(`/matches/${id}/stats`),
 
-  createMatch: (title: string, players?: string[]) =>
+  createMatch: (title: string, players?: string[], fileSizeBytes?: number) =>
     req<UploadInit>('/matches', {
       method: 'POST',
-      body: JSON.stringify({ title, player_names: players?.length ? players : undefined }),
+      body: JSON.stringify({
+        title,
+        player_names: players?.length ? players : undefined,
+        file_size_bytes: fileSizeBytes,
+      }),
     }),
 
   startProcessing: (id: string) =>

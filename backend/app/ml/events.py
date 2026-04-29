@@ -8,7 +8,7 @@ Events detected (rule-based for MVP):
 Critical fix: player tracking runs with vid_stride > 1, so
 `players_by_frame` only contains entries for every Nth frame (0, 2, 4, …
 with stride=2).  Ball tracking runs on every frame.  Without
-`_get_players_near_frame`, most HIT events would have no player candidate
+`get_players_near_frame`, most HIT events would have no player candidate
 because the ball's peak frame falls *between* two player frames.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from app.ml.ball import BallDetection
-from app.ml.players import PlayerDetection
+from app.ml.players import PlayerDetection, get_players_near_frame
 
 if TYPE_CHECKING:
     from app.ml.court import CourtCalibration
@@ -39,28 +39,6 @@ class Event:
     ball_pos_px: tuple[float, float]
     player_id: int | None  # only meaningful for HIT
     confidence: float
-
-
-# ── Frame-alignment helper ───────────────────────────────────────────────────
-
-def _get_players_near_frame(
-    players_by_frame: dict[int, list[PlayerDetection]],
-    frame_idx: int,
-    radius: int = 6,
-) -> list[PlayerDetection]:
-    """Return player detections from the closest available frame within `radius`.
-
-    This compensates for the vid_stride gap: with stride=2, player frames are
-    {0, 2, 4, …}. A ball event at frame 3 finds players at frame 2 or 4.
-    """
-    if frame_idx in players_by_frame:
-        return players_by_frame[frame_idx]
-    for delta in range(1, radius + 1):
-        for sign in (1, -1):
-            f = frame_idx + sign * delta
-            if f in players_by_frame:
-                return players_by_frame[f]
-    return []
 
 
 # ── Main entry point ─────────────────────────────────────────────────────────
@@ -103,7 +81,7 @@ def detect_events(
         peak_pos   = positions[i + 1]
 
         # Use nearest-frame lookup to handle stride gaps
-        nearby_players = _get_players_near_frame(players_by_frame, peak_frame)
+        nearby_players = get_players_near_frame(players_by_frame, peak_frame)
         nearest_pid, nearest_dist = _find_nearest_player(peak_pos, nearby_players)
 
         if nearest_pid is not None and nearest_dist < proximity_threshold_px:

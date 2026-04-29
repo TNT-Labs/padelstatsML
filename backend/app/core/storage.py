@@ -38,12 +38,28 @@ def ensure_bucket() -> None:
             raise
 
 
-def generate_upload_url(s3_key: str, expires_in: int = 3600) -> str:
-    """Presigned PUT URL. Client uploads directly to S3."""
+def generate_upload_url(
+    s3_key: str,
+    expires_in: int = 3600,
+    file_size_bytes: int | None = None,
+) -> str:
+    """Presigned PUT URL. Client uploads directly to S3.
+
+    When *file_size_bytes* is provided it is embedded in the signature so S3
+    will reject any PUT whose Content-Length doesn't match — giving a second
+    line of defence after the API-level 413 check.
+    """
     s = get_settings()
+    params: dict = {
+        "Bucket": s.s3_bucket_videos,
+        "Key": s3_key,
+        "ContentType": "video/mp4",
+    }
+    if file_size_bytes is not None:
+        params["ContentLength"] = file_size_bytes
     return get_s3_client().generate_presigned_url(
         "put_object",
-        Params={"Bucket": s.s3_bucket_videos, "Key": s3_key, "ContentType": "video/mp4"},
+        Params=params,
         ExpiresIn=expires_in,
     )
 

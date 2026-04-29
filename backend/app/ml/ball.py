@@ -167,13 +167,12 @@ class _MOG2BallDetector:
 
         k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
         k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        frame_idx = -1
 
         while True:
             ok, frame = cap.read()
-            frame_idx += 1
             if not ok:
                 break
+            frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
 
             small = cv2.resize(frame, (proc_w, proc_h))
             fg    = bg.apply(small)
@@ -263,13 +262,15 @@ class BallTracker:
         # Rolling buffer: oldest → newest, each entry is (H, W, 3) float32 RGB [0,1]
         # deque(maxlen=3) automatically evicts the oldest when a 4th frame is added
         buf: deque[np.ndarray] = deque(maxlen=3)
-        frame_idx = -1
 
         while True:
             ok, frame = cap.read()
-            frame_idx += 1
             if not ok:
                 break
+            # cap.get(POS_FRAMES) after read() points at the *next* frame, so -1
+            # gives the index of the frame just decoded — same convention as
+            # PlayerTracker's explicit frame counter (0, stride, 2*stride, …).
+            frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
 
             # Resize, convert BGR→RGB (TrackNetV2 was trained on RGB), normalise
             small = cv2.resize(frame, (INPUT_W, INPUT_H))
