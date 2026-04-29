@@ -3,7 +3,7 @@ import { useMatchAnalysis } from '../hooks/useMatchAnalysis'
 import type { MatchStats } from '../api'
 
 interface Props {
-  onDone: (stats: MatchStats, playerNames: string[]) => void
+  onDone: (stats: MatchStats) => void
   onBack: () => void
 }
 
@@ -16,7 +16,6 @@ const PHASE_LABEL: Record<string, string> = {
 export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
   const { state, analyze, reset } = useMatchAnalysis()
   const [title, setTitle] = useState('Partita')
-  const [players, setPlayers] = useState(['', '', '', ''])
   const [dragOver, setDragOver] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -34,14 +33,8 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
     if (e.target.files?.[0]) handleFile(e.target.files[0])
   }
 
-  const start = () => {
-    if (!file) return
-    const names = players.filter(p => p.trim())
-    analyze(file, title, names.length ? names : undefined)
-  }
-
   if (state.phase === 'done' && state.stats) {
-    onDone(state.stats, players)
+    onDone(state.stats)
     return null
   }
 
@@ -56,7 +49,7 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
       {state.phase === 'idle' && (
         <>
           <div className="card" style={{ marginBottom: '1rem' }}>
-            <div className="form-group">
+            <div className="form-group" style={{ marginBottom: 0 }}>
               <label>Titolo partita</label>
               <input
                 type="text"
@@ -64,21 +57,6 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
                 onChange={e => setTitle(e.target.value)}
                 placeholder="es. Mercoledì sera"
               />
-            </div>
-
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label>Nomi giocatori (opzionale)</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.5rem' }}>
-                {players.map((p, i) => (
-                  <input
-                    key={i}
-                    type="text"
-                    value={p}
-                    placeholder={`Giocatore ${i + 1}`}
-                    onChange={e => setPlayers(ps => ps.map((v, j) => j === i ? e.target.value : v))}
-                  />
-                ))}
-              </div>
             </div>
           </div>
 
@@ -96,7 +74,7 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
             ) : (
               <>
                 <p style={{ fontWeight: 600 }}>Trascina il video qui o clicca per scegliere</p>
-                <p>MP4 / MOV · max 2GB · inquadratura fissa dall'alto</p>
+                <p>MP4 / MOV · max 2GB · inquadratura fissa dall&apos;alto</p>
               </>
             )}
             <input
@@ -112,7 +90,7 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
             className="btn btn-primary"
             style={{ width: '100%' }}
             disabled={!file || !title.trim()}
-            onClick={start}
+            onClick={() => file && analyze(file, title)}
           >
             Avvia analisi
           </button>

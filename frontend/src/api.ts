@@ -25,6 +25,7 @@ export interface PlayerStats {
   winners: number
   errors: number
   shots: { smash: number; volley: number; bandeja: number; other: number }
+  crop_url?: string
 }
 
 export interface MatchStats {

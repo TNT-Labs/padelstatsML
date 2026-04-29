@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.storage import generate_upload_url
+from app.core.storage import generate_upload_url, get_crop_url
 from app.models.match import Match, MatchStatus
 from app.schemas.match import MatchCreate, MatchRead, MatchStatsRead, UploadInitResponse
 from app.workers.tasks import analyze_match_task
@@ -84,13 +84,42 @@ async def get_stats(match_id: UUID, db: AsyncSession = Depends(get_db)) -> Match
         sum(p.get("shots", {}).values()) for p in stats.per_player.values()
     )
 
+    # Inject crop_url into each player's stats dict
+    per_player = {}
+    crop_keys: dict[str, str] = stats.player_crops or {}
+    for pid, pdata in stats.per_player.items():
+        entry = dict(pdata)
+        if pid in crop_keys:
+            entry["crop_url"] = get_crop_url(str(stats.match_id), int(pid))
+        per_player[pid] = entry
+
     return MatchStatsRead(
         match_id=stats.match_id,
-        per_player=stats.per_player,
+        per_player=per_player,
         heatmaps=stats.heatmaps,
         rallies_count=len(stats.rallies),
         total_shots=total_shots,
     )
+
+
+@router.get("/{match_id}/crops/{player_id}")
+async def serve_crop(
+    match_id: UUID,
+    player_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Serve a player crop image from local SSD (local storage backend only)."""
+    from fastapi.responses import FileResponse
+    from app.core.storage import _crop_local_path
+
+    settings = get_settings()
+    if settings.storage_backend != "local":
+        raise HTTPException(404, "Use presigned S3 URL for S3 backend")
+
+    path = _crop_local_path(str(match_id), player_id)
+    if not path.exists():
+        raise HTTPException(404, "Crop not found")
+    return FileResponse(str(path), media_type="image/jpeg")
 
 
 @router.put("/{match_id}/video", status_code=204)

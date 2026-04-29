@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api, type Match, type MatchStats } from './api'
-import { HomeView }    from './components/HomeView'
-import { AnalyzeView } from './components/AnalyzeView'
-import { StatsView }   from './components/StatsView'
+import { HomeView }                   from './components/HomeView'
+import { AnalyzeView }                from './components/AnalyzeView'
+import { PlayerIdentificationView }   from './components/PlayerIdentificationView'
+import { StatsView }                  from './components/StatsView'
 
 type View =
   | { name: 'home' }
   | { name: 'analyze' }
+  | { name: 'identify'; stats: MatchStats }
   | { name: 'stats'; stats: MatchStats; playerNames: string[] }
   | { name: 'stats-loading'; matchId: string }
 
@@ -18,15 +20,14 @@ export default function App() {
     if (view.name !== 'stats-loading') return
     const { matchId } = view
 
-    // Fetch stats and match (for player names) in parallel
     Promise.all([api.getStats(matchId), api.getMatch(matchId)])
-      .then(([stats, match]: [MatchStats, Match]) =>
-        setView({
-          name: 'stats',
-          stats,
-          playerNames: match.player_names ?? [],
-        })
-      )
+      .then(([stats, match]: [MatchStats, Match]) => {
+        if (match.player_names?.some(n => n)) {
+          setView({ name: 'stats', stats, playerNames: match.player_names ?? [] })
+        } else {
+          setView({ name: 'identify', stats })
+        }
+      })
       .catch(() => setView({ name: 'home' }))
   }, [view])
 
@@ -42,8 +43,17 @@ export default function App() {
   if (view.name === 'analyze') {
     return (
       <AnalyzeView
-        onDone={(stats, playerNames) => setView({ name: 'stats', stats, playerNames })}
+        onDone={stats => setView({ name: 'identify', stats })}
         onBack={() => setView({ name: 'home' })}
+      />
+    )
+  }
+
+  if (view.name === 'identify') {
+    return (
+      <PlayerIdentificationView
+        stats={view.stats}
+        onConfirm={names => setView({ name: 'stats', stats: view.stats, playerNames: names })}
       />
     )
   }

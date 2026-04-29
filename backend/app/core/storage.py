@@ -113,3 +113,46 @@ def download_to_path(s3_key: str, local_path: str) -> None:
         return
 
     get_s3_client().download_file(s.s3_bucket_videos, s3_key, local_path)
+
+
+# ── Player crop helpers ──────────────────────────────────────────────────────
+
+def _crop_local_path(match_id: str, player_id: int) -> Path:
+    path = _videos_dir() / "crops" / match_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path / f"player_{player_id}.jpg"
+
+
+def save_crop(match_id: str, player_id: int, image_bytes: bytes) -> str:
+    """Persist a player crop image; return the storage key."""
+    s = get_settings()
+    s3_key = f"crops/{match_id}/player_{player_id}.jpg"
+
+    if s.storage_backend == "local":
+        _crop_local_path(match_id, player_id).write_bytes(image_bytes)
+    else:
+        import io
+        get_s3_client().upload_fileobj(
+            io.BytesIO(image_bytes),
+            s.s3_bucket_videos,
+            s3_key,
+            ExtraArgs={"ContentType": "image/jpeg"},
+        )
+    return s3_key
+
+
+def get_crop_url(match_id: str, player_id: int, expires_in: int = 86400) -> str:
+    """Return a URL to serve the player crop image.
+
+    Local backend → API endpoint served by FastAPI.
+    S3 backend    → presigned GET URL (24 h default).
+    """
+    s = get_settings()
+    if s.storage_backend == "local":
+        return f"{s.api_base_url}/matches/{match_id}/crops/{player_id}"
+
+    return get_s3_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": s.s3_bucket_videos, "Key": f"crops/{match_id}/player_{player_id}.jpg"},
+        ExpiresIn=expires_in,
+    )

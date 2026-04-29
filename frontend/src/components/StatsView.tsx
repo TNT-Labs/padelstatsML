@@ -71,6 +71,19 @@ export const StatsView: FC<Props> = ({ stats, playerNames, onNewAnalysis }) => {
           return (
             <div key={pid} className="card">
               <div className="player-header">
+                {p.crop_url && (
+                  <img
+                    src={p.crop_url}
+                    alt={name}
+                    style={{
+                      width: 48, height: 72,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      marginRight: '.75rem',
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
                 <span className="player-dot" style={{ background: PLAYER_COLORS[idx % 4] }} />
                 <h3>{name}</h3>
               </div>

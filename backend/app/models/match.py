@@ -65,6 +65,9 @@ class MatchStats(Base):
     # Court calibration data (homography matrix etc) for replay overlay
     court_calibration: Mapped[dict] = mapped_column(JSON)
 
+    # Storage keys for per-player crop images: {"0": s3_key, "1": s3_key, ...}
+    player_crops: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     match: Mapped[Match] = relationship(back_populates="stats")
