@@ -172,7 +172,7 @@ services:
       # Usa ONNX dopo l'export (python scripts/export_onnx.py):
       YOLO_WEIGHTS: weights/yolov8n.onnx
     volumes:
-      - ./backend/weights:/app/weights:ro
+      - ./backend/weights:/app/weights
       - /mnt/usbssd/padel-videos:/data/videos
     depends_on:
       redis:
