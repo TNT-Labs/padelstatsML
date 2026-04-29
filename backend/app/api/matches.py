@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.storage import generate_upload_url
 from app.models.match import Match, MatchStatus
@@ -17,6 +18,17 @@ router = APIRouter(prefix="/matches", tags=["matches"])
 @router.post("", response_model=UploadInitResponse, status_code=status.HTTP_201_CREATED)
 async def create_match(payload: MatchCreate, db: AsyncSession = Depends(get_db)) -> UploadInitResponse:
     """Step 1: client crea match, riceve presigned URL per upload diretto S3."""
+    settings = get_settings()
+
+    if payload.file_size_bytes is not None:
+        max_bytes = settings.max_video_size_mb * 1024 * 1024
+        if payload.file_size_bytes > max_bytes:
+            size_mb = payload.file_size_bytes / 1_048_576
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                f"Video troppo grande: {size_mb:.0f} MB (limite {settings.max_video_size_mb} MB)",
+            )
+
     match = Match(
         title=payload.title,
         player_names=payload.player_names,
@@ -28,7 +40,7 @@ async def create_match(payload: MatchCreate, db: AsyncSession = Depends(get_db))
 
     s3_key = f"raw/{match.id}.mp4"
     match.video_s3_key = s3_key
-    upload_url = generate_upload_url(s3_key)
+    upload_url = generate_upload_url(s3_key, file_size_bytes=payload.file_size_bytes)
 
     return UploadInitResponse(match_id=match.id, upload_url=upload_url, s3_key=s3_key)
 

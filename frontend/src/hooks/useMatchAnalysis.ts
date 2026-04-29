@@ -35,7 +35,7 @@ export function useMatchAnalysis() {
     setState({ phase: 'creating', progress: 0, match: null, stats: null, error: null })
 
     try {
-      const init = await api.createMatch(title, players)
+      const init = await api.createMatch(title, players, file.size)
 
       setState(s => ({ ...s, phase: 'uploading', progress: 0 }))
       await api.uploadVideo(init.upload_url, file, p =>

@@ -10,6 +10,9 @@ from app.models.match import MatchStatus
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     player_names: list[str] | None = Field(default=None, max_length=4)
+    # Optional: client declares file size so the API can reject oversized videos
+    # before the upload starts, and sign the presigned URL with ContentLength.
+    file_size_bytes: int | None = Field(default=None, gt=0)
 
 
 class UploadInitResponse(BaseModel):
