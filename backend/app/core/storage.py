@@ -1,18 +1,44 @@
-"""S3/MinIO storage abstraction.
+"""Storage abstraction: S3/MinIO or local filesystem.
 
-Presigned URLs: il client carica DIRETTAMENTE su S3 senza passare dal nostro server.
-Questo è critico per video da 500MB-2GB: evita di saturare la banda dell'API.
+Set STORAGE_BACKEND=local in .env to use a mounted SSD instead of MinIO.
+
+S3 backend (default):
+  - Client uploads the video DIRECTLY to MinIO/S3 via a presigned PUT URL.
+  - API server is never in the upload path — no bandwidth bottleneck.
+
+Local backend:
+  - Client uploads the video to PUT /matches/{id}/video on the API.
+  - API streams the body to VIDEOS_DIR on the local filesystem.
+  - MinIO container is not needed; saves ~250 MB RAM on Raspberry Pi.
 """
-from functools import lru_cache
+from __future__ import annotations
 
-import boto3
-from botocore.client import Config
+import shutil
+from functools import lru_cache
+from pathlib import Path
 
 from app.core.config import get_settings
 
 
+# ── Local filesystem helpers ─────────────────────────────────────────────────
+
+def _videos_dir() -> Path:
+    path = Path(get_settings().videos_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def local_video_path(s3_key: str) -> Path:
+    """Map s3_key ('raw/{uuid}.mp4') to its absolute path on the local SSD."""
+    return _videos_dir() / Path(s3_key).name
+
+
+# ── S3/MinIO helpers ─────────────────────────────────────────────────────────
+
 @lru_cache
 def get_s3_client():
+    import boto3
+    from botocore.client import Config
     s = get_settings()
     return boto3.client(
         "s3",
@@ -24,18 +50,28 @@ def get_s3_client():
     )
 
 
-def ensure_bucket() -> None:
+# ── Public API (backend-agnostic) ────────────────────────────────────────────
+
+def ensure_storage() -> None:
+    """Create the S3 bucket (or local videos directory) on first startup."""
     s = get_settings()
-    client = get_s3_client()
+    if s.storage_backend == "local":
+        _videos_dir()
+        return
+
     from botocore.exceptions import ClientError
     try:
-        client.head_bucket(Bucket=s.s3_bucket_videos)
+        get_s3_client().head_bucket(Bucket=s.s3_bucket_videos)
     except ClientError as exc:
         code = exc.response["Error"]["Code"]
         if code in ("404", "NoSuchBucket"):
-            client.create_bucket(Bucket=s.s3_bucket_videos)
+            get_s3_client().create_bucket(Bucket=s.s3_bucket_videos)
         else:
             raise
+
+
+# Alias kept for the main.py lifespan import
+ensure_bucket = ensure_storage
 
 
 def generate_upload_url(
@@ -43,13 +79,18 @@ def generate_upload_url(
     expires_in: int = 3600,
     file_size_bytes: int | None = None,
 ) -> str:
-    """Presigned PUT URL. Client uploads directly to S3.
+    """Return the URL the client should PUT the video to.
 
-    When *file_size_bytes* is provided it is embedded in the signature so S3
-    will reject any PUT whose Content-Length doesn't match — giving a second
-    line of defence after the API-level 413 check.
+    S3 backend  → presigned PUT URL pointing directly at MinIO/S3.
+    Local backend → URL of the API's streaming upload endpoint
+                    (PUT /matches/{match_id}/video).
     """
     s = get_settings()
+
+    if s.storage_backend == "local":
+        match_id = Path(s3_key).stem      # "raw/{uuid}.mp4" → "{uuid}"
+        return f"{s.api_base_url}/matches/{match_id}/video"
+
     params: dict = {
         "Bucket": s.s3_bucket_videos,
         "Key": s3_key,
@@ -65,6 +106,10 @@ def generate_upload_url(
 
 
 def download_to_path(s3_key: str, local_path: str) -> None:
-    """Used by ML worker to fetch video for processing."""
+    """Copy/download the video into the worker's temp directory."""
     s = get_settings()
+    if s.storage_backend == "local":
+        shutil.copy2(str(local_video_path(s3_key)), local_path)
+        return
+
     get_s3_client().download_file(s.s3_bucket_videos, s3_key, local_path)

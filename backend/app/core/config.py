@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     s3_bucket_videos: str = "padel-videos"
     s3_region: str = "us-east-1"
 
+    # Storage backend: "s3" uses MinIO/AWS S3; "local" writes to a mounted SSD.
+    # On Raspberry Pi set to "local" to skip MinIO entirely.
+    storage_backend: str = "s3"
+    # Root directory for local video storage (used only when storage_backend="local").
+    # Mount your SSD at this path (e.g. /mnt/ssd) and set accordingly.
+    videos_dir: str = "/data/videos"
+    # External base URL of this API — used to build upload URLs for local storage.
+    # Must be reachable by mobile/web clients (e.g. http://192.168.1.42 or http://padelpi.local).
+    api_base_url: str = "http://localhost:8000"
+
     # ML
     ml_device: str = "cpu"   # "cuda" when a GPU is available
     yolo_weights: str = "yolov8n.pt"

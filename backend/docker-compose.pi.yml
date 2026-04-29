@@ -2,17 +2,32 @@
 #
 #   docker-compose -f docker-compose.yml -f docker-compose.pi.yml up -d
 #
-# Memory budget:
+# ── Storage backend ──────────────────────────────────────────────────────────
+# Two options; uncomment the one you want:
+#
+# Option A — Local SSD (recommended for Pi 5)
+#   Saves ~250 MB RAM (no MinIO). Videos are written to /mnt/ssd/padel-videos.
+#   Mount the SSD before starting: sudo mount /dev/sda1 /mnt/ssd
+#   Then start WITHOUT minio:
+#     docker compose -f docker-compose.yml -f docker-compose.pi.yml \
+#       up -d postgres redis api worker frontend
+#
+# Option B — MinIO (S3-compatible, same as non-Pi setup)
+#   Include minio in the up command as normal.
+#
+# ── Memory budget (Option A — local SSD) ────────────────────────────────────
 #   postgres  192 MB
 #   redis     160 MB
-#   minio     256 MB
 #   api       256 MB
-#   worker   3500 MB  (YOLOv8n ONNX ~50 MB, but torch overhead ~1.5 GB; leave headroom)
+#   worker   3500 MB
 #   frontend   64 MB
 #   ──────────────────
-#   Total    ~4.4 GB  (comfortable within 8 GB)
+#   Total    ~4.2 GB  (comfortable within 8 GB; ~250 MB saved vs MinIO)
 #
-# Flower is excluded to save ~128 MB.
+# ── Memory budget (Option B — MinIO) ────────────────────────────────────────
+#   + minio   256 MB  →  Total ~4.4 GB
+#
+# Flower is excluded on Pi to save ~128 MB.
 
 version: "3.9"
 
@@ -56,6 +71,18 @@ services:
     environment:
       ML_DEVICE: cpu
       TORCH_NUM_THREADS: "4"
+      # ── Local SSD storage (Option A) ─────────────────────
+      # Uncomment these three lines and remove minio from the up command.
+      # Replace the IP with your Pi's actual address.
+      # STORAGE_BACKEND: local
+      # VIDEOS_DIR: /data/videos
+      # API_BASE_URL: "http://192.168.1.42"
+    volumes:
+      # ── Local SSD volume (Option A) ──────────────────────
+      # Uncomment when using STORAGE_BACKEND=local.
+      # The SSD must be mounted at /mnt/ssd before starting Docker.
+      # - /mnt/ssd/padel-videos:/data/videos
+      []
     deploy:
       resources:
         limits:
@@ -71,6 +98,13 @@ services:
       PLAYER_STRIDE: "3"
       # Use ONNX model if exported (python scripts/export_onnx.py)
       YOLO_WEIGHTS: weights/yolov8n.onnx
+      # ── Local SSD storage (Option A) ─────────────────────
+      # STORAGE_BACKEND: local
+      # VIDEOS_DIR: /data/videos
+    volumes:
+      - ./weights:/app/weights:ro
+      # ── Local SSD volume (Option A) ──────────────────────
+      # - /mnt/ssd/padel-videos:/data/videos
     deploy:
       resources:
         limits:

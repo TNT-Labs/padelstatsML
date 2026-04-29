@@ -56,13 +56,23 @@ def create_app() -> FastAPI:
             status["redis"] = f"error: {exc}"
             ok = False
 
-        # S3 / MinIO
+        # Storage (S3/MinIO or local SSD)
         try:
-            from app.core.storage import get_s3_client
-            get_s3_client().head_bucket(Bucket=settings.s3_bucket_videos)
-            status["s3"] = "ok"
+            if settings.storage_backend == "local":
+                import shutil
+                from pathlib import Path
+                d = Path(settings.videos_dir)
+                d.mkdir(parents=True, exist_ok=True)
+                free_gb = shutil.disk_usage(d).free / 1_073_741_824
+                if free_gb < 1.0:
+                    raise RuntimeError(f"Low disk space: {free_gb:.1f} GB free")
+                status["storage"] = f"ok (local, {free_gb:.1f} GB free)"
+            else:
+                from app.core.storage import get_s3_client
+                get_s3_client().head_bucket(Bucket=settings.s3_bucket_videos)
+                status["storage"] = "ok (s3)"
         except Exception as exc:
-            status["s3"] = f"error: {exc}"
+            status["storage"] = f"error: {exc}"
             ok = False
 
         from fastapi.responses import JSONResponse
