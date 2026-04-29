@@ -40,6 +40,7 @@ class PlayerStats(BaseModel):
     winners: int
     errors: int
     shots: dict[str, int]  # {"smash": n, "volley": n, "bandeja": n, "other": n}
+    crop_url: str | None = None
 
 
 class MatchStatsRead(BaseModel):

@@ -21,6 +21,7 @@ import cv2
 
 from app.ml.ball import BallTracker, smooth_trajectory
 from app.ml.court import calibrate_from_video
+from app.ml.crops import extract_player_crops
 from app.ml.events import detect_events, EventType
 from app.ml.players import PlayerTracker, normalize_player_ids
 from app.ml.pose import PoseTracker
@@ -164,5 +165,12 @@ class AnalysisPipeline:
             fps=fps,
             ball_track=ball_track,
         )
+
+        # ── 8. Player crop extraction ────────────────────────────────────────
+        report(98, "Extracting player thumbnails…")
+        result["player_crops_data"] = extract_player_crops(
+            video_path, all_player_dets, id_mapping
+        )
+
         report(100, "Done")
         return result

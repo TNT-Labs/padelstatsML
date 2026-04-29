@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
-from app.core.storage import download_to_path
+from app.core.storage import download_to_path, save_crop
 from app.ml.optimize import configure_for_cpu
 from app.ml.weights import ensure_tracknet_weights
 
@@ -93,6 +93,15 @@ def analyze_match_task(self, match_id: str) -> dict:
             pipeline = AnalysisPipeline(config)
             result = pipeline.run(local_path, progress_callback=progress_cb)
 
+            # Salva crop images e raccogli le chiavi storage
+            player_crop_keys: dict[str, str] = {}
+            for pid, img_bytes in result.pop("player_crops_data", {}).items():
+                try:
+                    s3_key = save_crop(match_id, pid, img_bytes)
+                    player_crop_keys[str(pid)] = s3_key
+                except Exception as exc:  # non bloccare l'analisi per un crop
+                    print(f"[crops] Failed to save crop for player {pid}: {exc}")
+
             # Salva stats
             with SyncSession() as session:
                 m = session.get(Match, match_id)
@@ -102,6 +111,7 @@ def analyze_match_task(self, match_id: str) -> dict:
                     heatmaps=result["heatmaps"],
                     rallies=result["rallies"],
                     court_calibration=result["court_calibration"],
+                    player_crops=player_crop_keys or None,
                 )
                 session.add(stats)
                 m.status = MatchStatus.COMPLETED
