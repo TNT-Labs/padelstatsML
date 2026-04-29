@@ -4,6 +4,13 @@
 **OS consigliato:** Raspberry Pi OS Lite 64-bit (Bookworm, Debian 12)  
 **Tempo stimato:** 45–60 minuti (la build Docker richiede ~20 min la prima volta)
 
+> ⚠️ **Tutti i comandi `docker compose` vanno eseguiti dalla cartella `backend/`**, non dalla root del repository.
+> `docker-compose.pi.yml` è un overlay: va sempre affiancato al file base `docker-compose.yml`.
+> ```bash
+> cd ~/padelstatsML/backend   # ← sempre qui prima di qualsiasi comando docker compose
+> docker compose -f docker-compose.yml -f docker-compose.pi.yml <comando>
+> ```
+
 ---
 
 ## Indice
