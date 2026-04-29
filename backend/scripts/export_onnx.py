@@ -44,7 +44,9 @@ def main() -> None:
 
     print(f"Exporting to ONNX (imgsz={args.imgsz}) …")
     # Export returns path to .onnx file
-    exported = model.export(format="onnx", imgsz=args.imgsz, simplify=True, dynamic=False)
+    # simplify=False: skips onnxslim which rewrites the model with a newer ONNX
+    # IR version that onnxruntime 1.19.x cannot load (max IR version 10).
+    exported = model.export(format="onnx", imgsz=args.imgsz, simplify=False, dynamic=False)
 
     # Move to desired output location (shutil.move handles cross-device links,
     # e.g. when weights/ is a bind-mounted volume on a different filesystem)

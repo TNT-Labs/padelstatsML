@@ -169,8 +169,9 @@ services:
     environment:
       <<: *app-env
       PLAYER_STRIDE: "3"
-      # Usa ONNX dopo l'export (python scripts/export_onnx.py):
-      YOLO_WEIGHTS: weights/yolov8n.onnx
+      # Switch to weights/yolov8n.onnx after running scripts/export_onnx.py
+      # and rebuilding the image (requires onnx==1.16.1 for onnxruntime 1.19.x compat).
+      YOLO_WEIGHTS: weights/yolov8n.pt
     volumes:
       - ./backend/weights:/app/weights
       - /mnt/usbssd/padel-videos:/data/videos
