@@ -15,19 +15,25 @@ down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# create_type=False: SQLAlchemy non emette CREATE TYPE durante op.create_table;
+# lo gestiamo noi esplicitamente tramite DO block (idempotente).
 matchstatus = sa.Enum(
     "uploading", "queued", "processing", "completed", "failed",
     name="matchstatus",
-    create_type=False,  # gestito esplicitamente con checkfirst=True in upgrade()
+    create_type=False,
 )
 
 
 def upgrade() -> None:
-    # Crea il tipo prima, idempotente — non fallisce se esiste già
-    sa.Enum(
-        "uploading", "queued", "processing", "completed", "failed",
-        name="matchstatus",
-    ).create(op.get_bind(), checkfirst=True)
+    # CREATE TYPE IF NOT EXISTS via PL/pgSQL — idempotente al 100%
+    op.execute(sa.text(
+        "DO $$ BEGIN "
+        "  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'matchstatus') "
+        "  THEN CREATE TYPE matchstatus AS ENUM "
+        "    ('uploading', 'queued', 'processing', 'completed', 'failed'); "
+        "  END IF; "
+        "END $$"
+    ))
 
     op.create_table(
         "matches",
@@ -86,4 +92,4 @@ def downgrade() -> None:
     op.drop_index("ix_matches_created_at", table_name="matches")
     op.drop_index("ix_matches_status", table_name="matches")
     op.drop_table("matches")
-    matchstatus.drop(op.get_bind(), checkfirst=True)
+    op.execute(sa.text("DROP TYPE IF EXISTS matchstatus"))
