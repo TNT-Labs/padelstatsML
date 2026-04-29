@@ -45,6 +45,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const txt = await res.text().catch(() => String(res.status))
     throw new Error(`${res.status}: ${txt}`)
   }
+  if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
 
@@ -65,6 +66,9 @@ export const api = {
 
   startProcessing: (id: string) =>
     req<Match>(`/matches/${id}/start`, { method: 'POST' }),
+
+  deleteMatch: (id: string) =>
+    req<void>(`/matches/${id}`, { method: 'DELETE' }),
 
   async uploadVideo(
     uploadUrl: string,

@@ -141,6 +141,33 @@ def save_crop(match_id: str, player_id: int, image_bytes: bytes) -> str:
     return s3_key
 
 
+def delete_stored_files(match_id: str, video_s3_key: str) -> None:
+    """Remove the video and crop files for a deleted match."""
+    s = get_settings()
+    if s.storage_backend == "local":
+        video = local_video_path(video_s3_key)
+        video.unlink(missing_ok=True)
+        crop_dir = _videos_dir() / "crops" / match_id
+        if crop_dir.exists():
+            shutil.rmtree(crop_dir)
+        return
+
+    client = get_s3_client()
+    bucket = s.s3_bucket_videos
+    # Delete video
+    client.delete_object(Bucket=bucket, Key=video_s3_key)
+    # Delete crop objects (list then batch-delete)
+    prefix = f"crops/{match_id}/"
+    paginator = client.get_paginator("list_objects_v2")
+    objects = [
+        {"Key": obj["Key"]}
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
+        for obj in page.get("Contents", [])
+    ]
+    if objects:
+        client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+
+
 def get_crop_url(match_id: str, player_id: int, expires_in: int = 86400) -> str:
     """Return a URL to serve the player crop image.
 
