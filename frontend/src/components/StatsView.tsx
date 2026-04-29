@@ -1,5 +1,5 @@
 import type { FC } from 'react'
-import type { MatchStats, PlayerStats } from '../api'
+import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { ShotChart } from './ShotChart'
 
@@ -13,11 +13,6 @@ interface Props {
 
 export const StatsView: FC<Props> = ({ stats, playerNames, onNewAnalysis }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
-  const topShooter = players.reduce<[string, PlayerStats] | null>((best, cur) => {
-    const total = Object.values(cur[1].shots).reduce((s, v) => s + v, 0)
-    const bestTotal = best ? Object.values(best[1].shots).reduce((s, v) => s + v, 0) : -1
-    return total > bestTotal ? cur : best
-  }, null)
 
   return (
     <div className="layout">
