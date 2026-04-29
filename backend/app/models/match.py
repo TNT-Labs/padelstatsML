@@ -24,7 +24,9 @@ class Match(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(200))
     status: Mapped[MatchStatus] = mapped_column(
-        Enum(MatchStatus), default=MatchStatus.UPLOADING, index=True
+        Enum(MatchStatus, values_callable=lambda e: [x.value for x in e]),
+        default=MatchStatus.UPLOADING,
+        index=True,
     )
     progress: Mapped[int] = mapped_column(default=0)  # 0..100
     error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
