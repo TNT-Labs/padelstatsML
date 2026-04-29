@@ -57,6 +57,7 @@ async def start_processing(match_id: UUID, db: AsyncSession = Depends(get_db)) -
     match.status = MatchStatus.QUEUED
     match.progress = 0
     await db.flush()
+    await db.refresh(match)
 
     analyze_match_task.delay(str(match.id))
     return match
