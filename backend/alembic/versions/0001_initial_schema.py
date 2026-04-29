@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision: str = "0001"
@@ -15,9 +16,10 @@ down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# create_type=False: SQLAlchemy non emette CREATE TYPE durante op.create_table;
-# lo gestiamo noi esplicitamente tramite DO block (idempotente).
-matchstatus = sa.Enum(
+# PgEnum con create_type=False: il dialetto postgresql rispetta il flag
+# e non emette CREATE TYPE durante op.create_table.
+# Il tipo viene creato esplicitamente via DO block (idempotente).
+matchstatus = PgEnum(
     "uploading", "queued", "processing", "completed", "failed",
     name="matchstatus",
     create_type=False,
