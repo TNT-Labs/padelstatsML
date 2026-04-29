@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.ml.players import PlayerDetection
+from app.ml.players import PlayerDetection, get_players_near_frame
 
 
 # COCO keypoint indices used by shot classifier
@@ -75,13 +75,12 @@ class PoseTracker:
         result: dict[int, dict[int, np.ndarray]] = {}
 
         cap = cv2.VideoCapture(video_path)
-        frame_idx = -1
 
         while True:
             ok, frame = cap.read()
-            frame_idx += 1
             if not ok:
                 break
+            frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
             if frame_idx not in target:
                 continue
 
@@ -94,7 +93,9 @@ class PoseTracker:
             if boxes is None or len(kpts_all) == 0:
                 continue
 
-            players_here = players_by_frame.get(frame_idx, [])
+            # Use stride-aware lookup so pose detections match even when
+            # player data only exists at multiples of vid_stride.
+            players_here = get_players_near_frame(players_by_frame, frame_idx)
             frame_poses: dict[int, np.ndarray] = {}
 
             for i, kpts in enumerate(kpts_all):
