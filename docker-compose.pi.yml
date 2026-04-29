@@ -29,8 +29,6 @@
 #
 # Flower is excluded on Pi to save ~128 MB.
 
-version: "3.9"
-
 services:
   postgres:
     command: >
@@ -58,11 +56,11 @@ services:
         limits:
           memory: 160M
 
-  minio:
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+#  minio:
+#   deploy:
+#      resources:
+#        limits:
+#          memory: 256M
 
   api:
     build:
@@ -74,15 +72,15 @@ services:
       # ── Local SSD storage (Option A) ─────────────────────
       # Uncomment these three lines and remove minio from the up command.
       # Replace the IP with your Pi's actual address.
-      # STORAGE_BACKEND: local
-      # VIDEOS_DIR: /data/videos
-      # API_BASE_URL: "http://192.168.1.42"
+      STORAGE_BACKEND: local
+      VIDEOS_DIR: /data/videos
+      API_BASE_URL: "http://192.168.1.75"
     volumes:
       # ── Local SSD volume (Option A) ──────────────────────
       # Uncomment when using STORAGE_BACKEND=local.
       # The SSD must be mounted at /mnt/ssd before starting Docker.
-      # - /mnt/ssd/padel-videos:/data/videos
-      []
+      - /mnt/usbssd/padel-videos:/data/videos
+    
     deploy:
       resources:
         limits:
@@ -99,12 +97,12 @@ services:
       # Use ONNX model if exported (python scripts/export_onnx.py)
       YOLO_WEIGHTS: weights/yolov8n.onnx
       # ── Local SSD storage (Option A) ─────────────────────
-      # STORAGE_BACKEND: local
-      # VIDEOS_DIR: /data/videos
+      STORAGE_BACKEND: local
+      VIDEOS_DIR: /data/videos
     volumes:
       - ./weights:/app/weights:ro
       # ── Local SSD volume (Option A) ──────────────────────
-      # - /mnt/ssd/padel-videos:/data/videos
+      - /mnt/usbssd/padel-videos:/data/videos
     deploy:
       resources:
         limits:
