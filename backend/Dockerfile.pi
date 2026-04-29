@@ -13,13 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install CPU-only PyTorch first (separate index URL, ~250 MB vs ~750 MB with CUDA)
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --timeout 300 \
     torch==2.4.1 torchvision==0.19.1 \
     --index-url https://download.pytorch.org/whl/cpu
 
-# Remaining deps (no torch in requirements.txt re-install since already installed)
+# Lightweight deps (fast, stays cached on requirements.txt changes)
 COPY requirements.txt requirements.pi.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements.pi.txt \
+RUN pip install --no-cache-dir -r requirements.txt -r requirements.pi.txt
+
+# Remaining ML deps — torch/torchvision already satisfied, skipped by pip
+COPY requirements.ml.txt .
+RUN pip install --no-cache-dir --timeout 300 -r requirements.ml.txt \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY app/ ./app/
