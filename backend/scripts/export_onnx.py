@@ -16,6 +16,7 @@ giving 3-5x faster inference on ARM64 vs PyTorch.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -45,11 +46,12 @@ def main() -> None:
     # Export returns path to .onnx file
     exported = model.export(format="onnx", imgsz=args.imgsz, simplify=True, dynamic=False)
 
-    # Move to desired output location
+    # Move to desired output location (shutil.move handles cross-device links,
+    # e.g. when weights/ is a bind-mounted volume on a different filesystem)
     exported_path = Path(exported)
-    if str(exported_path) != str(out_path):
+    if exported_path.resolve() != out_path.resolve():
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        exported_path.rename(out_path)
+        shutil.move(str(exported_path), out_path)
 
     print(f"\nExported: {out_path} ({out_path.stat().st_size / 1e6:.1f} MB)")
     print("\nNext steps:")
