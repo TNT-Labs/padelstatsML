@@ -712,3 +712,43 @@ docker compose -f docker-compose.yml -f docker-compose.pi.yml logs -f worker
 # Arresta tutto
 docker compose -f docker-compose.yml -f docker-compose.pi.yml down
 ```
+
+
+
+Checklist primo test
+Fase 1 — Test pipeline ML standalone (senza Docker, 10 minuti)
+Questo è il modo più rapido per verificare che il codice ML funzioni con un video reale, prima di montare tutta l'infrastruttura:
+
+cd ~/padelstatsML/backend
+pip install -r requirements.txt           # una volta
+
+python scripts/test_pipeline.py video.mp4 --stride 2
+Stampa a terminale ogni stage con percentuale e tempo. Se questo funziona, il grosso è fatto.
+
+Fase 2 — Stack completo su Pi
+Passo	Comando	Note
+1. Build	docker compose -f docker-compose.yml -f docker-compose.pi.yml build	~20 min prima volta
+2. Avvia infrastruttura	up -d postgres redis api worker frontend (+ minio se non usi SSD)	
+3. Migra DB	docker compose run --rm migrate	Una volta sola
+4. Export ONNX	dentro il container worker: python scripts/export_onnx.py	Una volta sola, 3-5× più veloce
+5. Health check	curl http://localhost/health	Deve tornare {"status":"ok"}
+Fase 3 — Test con video reale
+Requisiti del video:
+
+Camera fissa su cavalletto o appoggio stabile
+Altezza ≥ 3 m (tribuna, balcone, vetro superiore)
+Tutto il campo visibile — 4 linee di fondo + 2 reti laterali
+Buona illuminazione, no controluce
+Almeno 5 secondi di campo vuoto all'inizio prima della battuta
+Formato MP4, < 2 GB
+Per un primo test usa un video corto: 5–10 minuti di gioco (non tutta la partita — elaborazione ~15–20 min su Pi, meno su PC).
+
+Fase 4 — App mobile
+cd ~/padelstatsML/mobile
+npx expo install          # installa async-storage e le altre dipendenze
+# configura EXPO_PUBLIC_API_URL=http://<IP-del-PI> in .env
+npx expo start
+Pesi TrackNet (opzionale ma migliora il tracciamento palla)
+Senza pesi il sistema usa il fallback MOG2 — funziona, ma rileva meno colpi veloci. Per il primo test va benissimo così; si aggiunge dopo se i risultati sul tracciamento palla sono scadenti.
+
+Ordine consigliato: testa prima con test_pipeline.py su un video da 5 minuti. Se le statistiche stampate hanno senso (rally contati, giocatori tracciati, colpi classificati) → avvia lo stack Docker e testa l'interfaccia.
