@@ -322,7 +322,7 @@ def smooth_trajectory(detections: list[BallDetection], max_gap: int = 5) -> list
     try:
         from filterpy.kalman import KalmanFilter as KF
     except ImportError:
-        return _linear_interpolate(detections, max_gap)
+        return _quadratic_interpolate(detections, max_gap)
 
     first = next((d for d in detections if d.pos_px is not None), None)
     if first is None:
@@ -365,8 +365,17 @@ def smooth_trajectory(detections: list[BallDetection], max_gap: int = 5) -> list
     return out
 
 
-def _linear_interpolate(detections: list[BallDetection], max_gap: int) -> list[BallDetection]:
-    """Fallback linear interpolation when filterpy is not installed."""
+def _quadratic_interpolate(detections: list[BallDetection], max_gap: int) -> list[BallDetection]:
+    """Quadratic (degree-2) gap filling when filterpy is unavailable.
+
+    For each gap fits separate polynomials x(t) and y(t) to the known
+    positions surrounding the gap (up to 5 frames on each side).  A
+    degree-2 polynomial follows the parabolic arc of a ball under gravity
+    far better than a straight line.  Falls back to linear if fewer than
+    3 surrounding points are available.
+    """
+    _CTX = 5   # context frames to use on each side of a gap
+
     out = list(detections)
     n, i = len(out), 0
     while i < n:
@@ -374,16 +383,45 @@ def _linear_interpolate(detections: list[BallDetection], max_gap: int) -> list[B
             j = i + 1
             while j < n and out[j].pos_px is None:
                 j += 1
-            if j < n and i > 0 and out[i - 1].pos_px is not None and (j - i) <= max_gap:
-                p0, p1 = out[i - 1].pos_px, out[j].pos_px
-                steps = j - i + 1
-                for k, idx in enumerate(range(i, j), start=1):
-                    t = k / steps
-                    out[idx] = BallDetection(
-                        frame_idx=out[idx].frame_idx,
-                        pos_px=(p0[0] * (1 - t) + p1[0] * t, p0[1] * (1 - t) + p1[1] * t),
-                        confidence=0.3,
-                    )
+            if (j - i) <= max_gap and i > 0 and j < n:
+                pre = [
+                    (out[k].frame_idx, out[k].pos_px)
+                    for k in range(max(0, i - _CTX), i)
+                    if out[k].pos_px is not None
+                ]
+                post = [
+                    (out[k].frame_idx, out[k].pos_px)
+                    for k in range(j, min(n, j + _CTX))
+                    if out[k].pos_px is not None
+                ]
+                known = pre + post
+                gap_frames = [out[idx].frame_idx for idx in range(i, j)]
+
+                if len(known) >= 3:
+                    ts = np.array([p[0] for p in known], dtype=np.float64)
+                    xs = np.array([p[1][0] for p in known], dtype=np.float64)
+                    ys = np.array([p[1][1] for p in known], dtype=np.float64)
+                    cx = np.polyfit(ts, xs, 2)
+                    cy = np.polyfit(ts, ys, 2)
+                    for idx, t in zip(range(i, j), gap_frames):
+                        out[idx] = BallDetection(
+                            frame_idx=out[idx].frame_idx,
+                            pos_px=(float(np.polyval(cx, t)), float(np.polyval(cy, t))),
+                            confidence=0.3,
+                        )
+                elif len(known) >= 2:
+                    # linear fallback when context is too sparse for quadratic
+                    t0, p0 = known[0]
+                    t1, p1 = known[-1]
+                    span = max(t1 - t0, 1)
+                    for idx, t in zip(range(i, j), gap_frames):
+                        r = (t - t0) / span
+                        out[idx] = BallDetection(
+                            frame_idx=out[idx].frame_idx,
+                            pos_px=(p0[0] * (1 - r) + p1[0] * r,
+                                    p0[1] * (1 - r) + p1[1] * r),
+                            confidence=0.3,
+                        )
             i = j
         else:
             i += 1

@@ -51,6 +51,7 @@ def detect_events(
     calibration: "CourtCalibration | None" = None,
     wall_margin_m: float = 0.8,
     fps: float = 30.0,
+    proximity_threshold_m: float = 2.5,
 ) -> list[Event]:
     """Detect HIT, BOUNCE, and WALL_HIT events from ball + player trajectories.
 
@@ -81,12 +82,20 @@ def detect_events(
         peak_frame = int(frames[i + 1])
         peak_pos   = positions[i + 1]
 
-        # Use nearest-frame lookup to handle stride gaps
         nearby_players = get_players_near_frame(players_by_frame, peak_frame)
-        nearest_pid, nearest_dist = _find_nearest_player(peak_pos, nearby_players)
 
-        if nearest_pid is not None and nearest_dist < proximity_threshold_px:
-            conf = min(1.0, proximity_threshold_px / max(nearest_dist, 1.0)) * 0.5 + 0.3
+        if calibration is not None:
+            # Court metres: resolution- and zoom-independent proximity test.
+            # foot_court is already in metres (computed during player tracking).
+            peak_court = calibration.pixel_to_court(peak_pos.reshape(1, 2))[0]
+            nearest_pid, nearest_dist = _find_nearest_player_m(peak_court, nearby_players)
+            threshold = proximity_threshold_m
+        else:
+            nearest_pid, nearest_dist = _find_nearest_player(peak_pos, nearby_players)
+            threshold = proximity_threshold_px
+
+        if nearest_pid is not None and nearest_dist < threshold:
+            conf = min(1.0, threshold / max(nearest_dist, 1e-3)) * 0.5 + 0.3
             events.append(Event(
                 type=EventType.HIT,
                 frame_idx=peak_frame,
@@ -175,6 +184,20 @@ def _find_nearest_player(
         return None, float("inf")
     distances = [
         (p.track_id, float(np.linalg.norm(np.array(p.foot_px) - ball_pos)))
+        for p in players
+    ]
+    return min(distances, key=lambda x: x[1])
+
+
+def _find_nearest_player_m(
+    ball_court: np.ndarray,   # shape (2,) in metres
+    players: list[PlayerDetection],
+) -> tuple[int | None, float]:
+    """Nearest-player lookup in court metres (scale-invariant)."""
+    if not players:
+        return None, float("inf")
+    distances = [
+        (p.track_id, float(np.linalg.norm(np.array(p.foot_court) - ball_court)))
         for p in players
     ]
     return min(distances, key=lambda x: x[1])
