@@ -18,11 +18,16 @@ depends_on: Union[str, Sequence[str], None] = None
 matchstatus = sa.Enum(
     "uploading", "queued", "processing", "completed", "failed",
     name="matchstatus",
+    create_type=False,  # gestito esplicitamente con checkfirst=True in upgrade()
 )
 
 
 def upgrade() -> None:
-    matchstatus.create(op.get_bind(), checkfirst=True)
+    # Crea il tipo prima, idempotente — non fallisce se esiste già
+    sa.Enum(
+        "uploading", "queued", "processing", "completed", "failed",
+        name="matchstatus",
+    ).create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "matches",
