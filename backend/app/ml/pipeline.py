@@ -126,7 +126,7 @@ class AnalysisPipeline:
 
         # ── 5. Event detection ───────────────────────────────────────────────
         report(73, "Detecting events…")
-        events = detect_events(ball_track, players_by_frame, calibration=calibration)
+        events = detect_events(ball_track, players_by_frame, calibration=calibration, fps=fps)
         report(80, f"Detected {len(events)} events")
 
         # ── 6. Shot classification ───────────────────────────────────────────
@@ -149,7 +149,8 @@ class AnalysisPipeline:
             if ev.player_id in frame_poses:
                 pose_kpts = frame_poses[ev.player_id]
 
-            cs = classify_shot(ev, pose_kpts, ball_track, player_court_pos)
+            cs = classify_shot(ev, pose_kpts, ball_track, player_court_pos,
+                               fps=fps, calibration=calibration)
             classified_shots.append(cs)
         report(90, f"Classified {len(classified_shots)} shots")
 
