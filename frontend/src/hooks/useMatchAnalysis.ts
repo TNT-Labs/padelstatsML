@@ -12,7 +12,7 @@ export interface AnalysisState {
 }
 
 const POLL_MS      = 5_000
-const MAX_POLL_MIN = 25            // abort after 25 minutes of processing
+const MAX_POLL_MIN = 90            // abort after 90 minutes of processing
 const MAX_POLLS    = (MAX_POLL_MIN * 60_000) / POLL_MS
 
 export function useMatchAnalysis() {

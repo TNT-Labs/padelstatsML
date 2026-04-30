@@ -89,6 +89,7 @@ def analyze_match_task(self, match_id: str) -> dict:
                 tracknet_weights=settings.tracknet_weights if Path(settings.tracknet_weights).exists() else None,
                 device=settings.ml_device,
                 player_stride=settings.player_stride,
+                ball_stride=settings.ball_stride,
             )
             pipeline = AnalysisPipeline(config)
             result = pipeline.run(local_path, progress_callback=progress_cb)
