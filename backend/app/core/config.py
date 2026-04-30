@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # Process every Nth frame for player tracking (higher = faster, lower accuracy)
     # Recommended: 2 on GPU, 3-4 on Pi 5
     player_stride: int = 2
+    # Ball tracking: run TrackNetV2 inference every Nth frame; Kalman fills the rest.
+    # Pi 5 recommendation: 2 (2× speed, minimal accuracy loss).
+    # GPU / fast CPU: 1 (every frame).
+    ball_stride: int = 2
     torch_num_threads: int = 0  # 0 = auto (min(cpu_count, 4))
 
 

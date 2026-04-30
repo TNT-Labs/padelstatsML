@@ -225,29 +225,56 @@ class BallTracker:
     def __init__(self, weights_path: str | None, device: str = "cpu"):
         self.device = device
         self._model: TrackNetV2 | None = None
+        self._ort_session = None
+        self._ort_input_name: str = "input"
 
-        if weights_path and Path(weights_path).exists():
+        if not (weights_path and Path(weights_path).exists()):
+            return
+
+        # Prefer ONNX: onnxruntime is 3-5× faster than PyTorch on ARM64 CPU.
+        # Export once with: python scripts/export_onnx.py --tracknet
+        onnx_path = Path(weights_path).with_suffix(".onnx")
+        if onnx_path.exists():
             try:
-                model = TrackNetV2().to(device)
-                state = torch.load(weights_path, map_location=device, weights_only=True)
-                # Some repos wrap state in 'model' or 'state_dict' keys
-                if isinstance(state, dict):
-                    for key in ("model", "state_dict", "net"):
-                        if key in state:
-                            state = state[key]
-                            break
-                model.load_state_dict(state, strict=False)
-                model.eval()
-                self._model = model
+                import onnxruntime as ort
+                self._ort_session = ort.InferenceSession(
+                    str(onnx_path), providers=["CPUExecutionProvider"]
+                )
+                self._ort_input_name = self._ort_session.get_inputs()[0].name
+                print(f"[BallTracker] ONNX runtime: {onnx_path.name}")
+                return
             except Exception as exc:
-                print(f"[BallTracker] Weight load failed: {exc} — using MOG2 fallback")
+                print(f"[BallTracker] ONNX load failed: {exc} — trying PyTorch")
+
+        try:
+            model = TrackNetV2().to(device)
+            state = torch.load(weights_path, map_location=device, weights_only=True)
+            if isinstance(state, dict):
+                for key in ("model", "state_dict", "net"):
+                    if key in state:
+                        state = state[key]
+                        break
+            model.load_state_dict(state, strict=False)
+            model.eval()
+            self._model = model
+            print(f"[BallTracker] PyTorch model loaded: {Path(weights_path).name}")
+        except Exception as exc:
+            print(f"[BallTracker] Weight load failed: {exc} — using MOG2 fallback")
 
     @property
     def using_neural_model(self) -> bool:
-        return self._model is not None
+        return self._model is not None or self._ort_session is not None
 
-    def track_video(self, video_path: str) -> Iterator[BallDetection]:
-        if self._model is None:
+    def track_video(self, video_path: str, stride: int = 1) -> Iterator[BallDetection]:
+        """Track ball across all frames.
+
+        Args:
+            stride: run neural inference every Nth frame; frames in between
+                    are emitted as (pos_px=None) and filled by the Kalman
+                    smoother.  stride=2 halves processing time with minimal
+                    accuracy loss on typical 25-30fps padel videos.
+        """
+        if not self.using_neural_model:
             yield from _MOG2BallDetector().track_video(video_path)
             return
 
@@ -258,42 +285,42 @@ class BallTracker:
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         sx, sy = orig_w / INPUT_W, orig_h / INPUT_H
 
-        # Rolling buffer: oldest → newest, each entry is (H, W, 3) float32 RGB [0,1]
-        # deque(maxlen=3) automatically evicts the oldest when a 4th frame is added
         buf: deque[np.ndarray] = deque(maxlen=3)
+        frame_num = 0
 
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
-            # cap.get(POS_FRAMES) after read() points at the *next* frame, so -1
-            # gives the index of the frame just decoded — same convention as
-            # PlayerTracker's explicit frame counter (0, stride, 2*stride, …).
             frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
 
-            # Resize, convert BGR→RGB (TrackNetV2 was trained on RGB), normalise
             small = cv2.resize(frame, (INPUT_W, INPUT_H))
             rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             buf.append(rgb)
 
-            # Must have a complete triplet [t-2, t-1, t] before running the model
-            if len(buf) < 3:
+            # Skip inference on non-stride frames or until buffer is full
+            if len(buf) < 3 or frame_num % stride != 0:
                 yield BallDetection(frame_idx=frame_idx, pos_px=None, confidence=0.0)
+                frame_num += 1
                 continue
 
-            # Stack along channel axis: (H,W,3)×3 → (H,W,9) → (1,9,H,W)
-            x = np.concatenate(list(buf), axis=2)                               # (H, W, 9)
-            inp = torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0).to(self.device)  # (1, 9, H, W)
+            # Stack: (H,W,3)×3 → (H,W,9)
+            x = np.concatenate(list(buf), axis=2)
 
-            with torch.no_grad():
-                heatmap = self._model(inp)[0, 0].cpu().numpy()  # (H, W)
+            if self._ort_session is not None:
+                inp = x.transpose(2, 0, 1)[np.newaxis].astype(np.float32)  # (1,9,H,W)
+                heatmap = self._ort_session.run(
+                    None, {self._ort_input_name: inp}
+                )[0][0, 0]
+            else:
+                inp_t = torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    heatmap = self._model(inp_t)[0, 0].cpu().numpy()  # type: ignore[union-attr]
 
             conf = float(heatmap.max())
             if conf < 0.5:
                 yield BallDetection(frame_idx=frame_idx, pos_px=None, confidence=conf)
             else:
-                # Weighted center-of-mass over the hot region: more accurate than
-                # plain argmax when the ball is motion-blurred or partially occluded.
                 mask = heatmap > 0.3
                 ys, xs = np.where(mask)
                 w = heatmap[mask]
@@ -304,6 +331,7 @@ class BallTracker:
                     pos_px=(xp * sx, yp * sy),
                     confidence=conf,
                 )
+            frame_num += 1
 
         cap.release()
 

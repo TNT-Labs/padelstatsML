@@ -35,6 +35,7 @@ class PipelineConfig:
     tracknet_weights:  str | None
     device:            str  = "cpu"
     player_stride:     int  = 2
+    ball_stride:       int  = 2
     # Optional: path to YOLOv8-pose weights for arm/wrist keypoints.
     # When the file is absent the pose stage is skipped gracefully.
     pose_weights:      str  = "yolov8n-pose.pt"
@@ -104,8 +105,8 @@ class AnalysisPipeline:
         ball_tracker = BallTracker(self.config.tracknet_weights, self.config.device)
         if not ball_tracker.using_neural_model:
             report(38, "Tracking ball (MOG2 fallback — no TrackNet weights)…")
-        ball_track = list(ball_tracker.track_video(video_path))
-        ball_track = smooth_trajectory(ball_track, max_gap=5)
+        ball_track = list(ball_tracker.track_video(video_path, stride=self.config.ball_stride))
+        ball_track = smooth_trajectory(ball_track, max_gap=self.config.ball_stride * 3)
         report(65, f"Ball track: {sum(1 for b in ball_track if b.pos_px)} detections")
 
         # ── 4. Pose extraction (optional) ────────────────────────────────────

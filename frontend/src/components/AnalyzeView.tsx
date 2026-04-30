@@ -107,7 +107,7 @@ export const AnalyzeView: FC<Props> = ({ onDone, onBack }) => {
           </div>
           <p style={{ color: 'var(--muted)', marginTop: '.5rem', fontSize: '.9rem' }}>
             {Math.round(state.progress * 100)}%
-            {state.phase === 'processing' && " — l'analisi richiede 5-20 min"}
+            {state.phase === 'processing' && " — l'analisi richiede 15-60 min sul Pi"}
           </p>
         </div>
       )}
