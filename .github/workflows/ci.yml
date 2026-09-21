@@ -4,10 +4,29 @@
 # to be an improvement. This workflow exists so that stops being true.
 name: CI
 
+# Triggers are split so that no commit is ever tested twice.
+#
+# Listening to `push` on every branch AND to `pull_request` meant that a push
+# to a branch with an open PR started two identical runs of every job: same
+# commit, same result, double the wall time and the runner minutes. `push` is
+# now limited to the default branch (which has no PR of its own), and every
+# branch is covered by `pull_request` from the moment its PR opens.
+#
+# The trade-off, accepted deliberately: a branch pushed without a PR gets no
+# CI until the PR is opened. Work here always goes through a PR, and the
+# pull_request trigger has the better semantics anyway — it tests the merge
+# result, not the branch in isolation.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# A second push supersedes a run still in flight for the same ref, so a quick
+# follow-up fix does not queue behind the commit it replaces. Runs on main are
+# never cancelled: that history is what every other result is compared against.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   backend:
