@@ -1,218 +1,63 @@
-# docker-compose.pi.yml — file UNICO per Raspberry Pi 5 (8 GB, ARM64)
+# Padel Stats on a Raspberry Pi 5 — two containers, no broker, no object store.
 #
-# Avvio completo (storage SSD locale — raccomandato):
-#   docker compose -f docker-compose.pi.yml up -d
+# Previously this file ran seven services (postgres, redis, minio, migrate,
+# api, worker, flower, nginx) on an 8 GB board serving one user. The queue is
+# now a SQLite table, storage is the SSD, and the API serves the web UI, so
+# what is left is the API and the analysis worker sharing one image.
 #
-# Avvio con MinIO (storage S3-compatibile):
-#   docker compose -f docker-compose.pi.yml --profile minio up -d
+#   docker compose -f docker-compose.pi.yml up -d --build
 #
-# Prima esecuzione — migrazione DB (una sola volta):
-#   docker compose -f docker-compose.pi.yml run --rm migrate
-#
-# ── Prerequisiti ─────────────────────────────────────────────────────────────
-# 1. SSD montato su /mnt/usbssd e directory video creata:
-#      sudo mkdir -p /mnt/usbssd/padel-videos
-# 2. Pesi YOLO in backend/weights/ (vedi INSTALL_RASPBERRY.md §9)
-# 3. Per cambiare l'IP del Pi: modifica API_BASE_URL in questo file
-#
-# ── Budget RAM (storage locale SSD, senza MinIO) ─────────────────────────────
-#   postgres  192 MB
-#   redis     160 MB
-#   api       256 MB
-#   worker   3500 MB
-#   frontend   64 MB
-#   ──────────────────
-#   Total    ~4.2 GB  (comodo entro 8 GB)
-#
-# ── Budget RAM (con MinIO, profilo minio) ────────────────────────────────────
-#   + minio   256 MB  →  Total ~4.4 GB
-#
-# Flower è escluso su Pi (non essenziale, risparmia ~128 MB).
-# Usa il profilo "debug" per abilitarlo: --profile debug
+# Both services need DATA_DIR to point at the same volume: the SQLite file and
+# the videos live there.
 
-x-app-env: &app-env
-  DATABASE_URL: postgresql+asyncpg://padel:padel@postgres:5432/padel
-  SYNC_DATABASE_URL: postgresql://padel:padel@postgres:5432/padel
-  REDIS_URL: redis://redis:6379/0
-  CELERY_BROKER_URL: redis://redis:6379/1
-  CELERY_RESULT_BACKEND: redis://redis:6379/2
-  ML_DEVICE: cpu
-  TORCH_NUM_THREADS: "4"
-  YOLO_WEIGHTS: weights/yolov8n.pt
-  TRACKNET_WEIGHTS: weights/tracknet_padel.pth
-  STORAGE_BACKEND: local
-  VIDEOS_DIR: /data/videos
-  API_BASE_URL: "http://192.168.1.75"   # ← sostituisci con l'IP del tuo Pi
+name: padelstats
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  image: padelstats:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DATA_DIR: /data
+    DETECTOR_MODEL: /srv/weights/yolov8n.onnx
+  volumes:
+    # Mount the SSD here. An SD card works but wears out quickly with WAL.
+    - ${DATA_VOLUME:-./data}:/data
+    - ./weights:/srv/weights
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
 
 services:
-  # ── Infrastruttura ────────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: padel
-      POSTGRES_USER: padel
-      POSTGRES_PASSWORD: padel
-    command: >
-      postgres
-        -c max_connections=20
-        -c shared_buffers=64MB
-        -c work_mem=4MB
-        -c maintenance_work_mem=32MB
-        -c effective_cache_size=192MB
-        -c wal_buffers=4MB
-        -c checkpoint_completion_target=0.9
-    ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U padel"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 192M
-
-  redis:
-    image: redis:7-alpine
-    command: >
-      redis-server
-        --maxmemory 128mb
-        --maxmemory-policy allkeys-lru
-        --save ""
-    ports: ["6379:6379"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 160M
-
-  # MinIO — storage S3-compatibile (opzionale, attiva con --profile minio)
-  # Usa questa opzione se non hai un SSD locale o vuoi lo stesso setup del server.
-  minio:
-    image: minio/minio:latest
-    profiles: [minio]
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: padel
-      MINIO_ROOT_PASSWORD: padelpadel
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes: [miniodata:/data]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-
-  # ── Migrazione DB (one-shot, termina con exit 0) ─────────────────
-  migrate:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: alembic upgrade head
-    environment: *app-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # ── FastAPI ───────────────────────────────────────────────────────
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.pi
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-    ports: ["8000:8000"]
-    environment:
-      <<: *app-env
-      # Per usare MinIO invece dell'SSD locale, sostituisci le righe seguenti:
-      #   STORAGE_BACKEND: s3
-      #   S3_ENDPOINT: http://minio:9000
-      #   S3_ACCESS_KEY: padel
-      #   S3_SECRET_KEY: padelpadel
-      #   S3_BUCKET_VIDEOS: padel-videos
-    volumes:
-      - /mnt/usbssd/padel-videos:/data/videos
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    <<: *common
+    container_name: padel-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+    ports:
+      - "8000:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 700M
 
-  # ── Celery worker ─────────────────────────────────────────────────
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.pi
-    environment:
-      <<: *app-env
-      PLAYER_STRIDE: "3"
-      # Switch to weights/yolov8n.onnx after running scripts/export_onnx.py
-      # and rebuilding the image (requires onnx==1.16.1 for onnxruntime 1.19.x compat).
-      YOLO_WEIGHTS: weights/yolov8n.pt
-    volumes:
-      - ./backend/weights:/app/weights
-      - /mnt/usbssd/padel-videos:/data/videos
+    <<: *common
+    container_name: padel-worker
+    command: python -m app.worker.runner
     depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+      - api
+    # The worker is the only heavy consumer on the board. Leaving it ~5 GB of
+    # the 8 GB keeps the page cache warm for video decode, which is where the
+    # analysis actually spends its time.
     deploy:
       resources:
         limits:
-          memory: 3500M
-
-  # ── Frontend web (nginx che serve il build Vite) ──────────────────
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports: ["80:80"]
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-
-  # ── Flower — monitor task Celery (disabilitato su Pi) ────────────
-  # Abilita con: docker compose -f docker-compose.pi.yml --profile debug up -d
-  flower:
-    image: mher/flower:2.0
-    profiles: [debug]
-    command: celery flower --broker=redis://redis:6379/1 --port=5555
-    ports: ["5555:5555"]
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-volumes:
-  pgdata:
-  miniodata:
+          memory: 5G

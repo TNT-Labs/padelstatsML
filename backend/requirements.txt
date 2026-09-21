@@ -1,16 +1,27 @@
+# Runtime dependencies for the Raspberry Pi 5 (ARM64, CPU only).
+#
+# Notably absent, and deliberately so:
+#   torch / torchvision / ultralytics  -> inference runs on onnxruntime; these
+#       are only needed once, off-device, to export the ONNX model.
+#       See requirements.export.txt.
+#   celery / redis                     -> the job queue is a SQLite table.
+#   boto3 / minio                      -> storage is the local filesystem.
+#   alembic                            -> schema is created with create_all.
+#   psycopg2 / asyncpg                 -> the database is SQLite.
+#
+# This keeps the Pi image around 600 MB instead of ~3 GB and cuts worker
+# start-up from ~25 s to ~3 s.
+
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
+python-multipart==0.0.12
 pydantic==2.9.2
 pydantic-settings==2.6.0
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-psycopg2-binary==2.9.10
-alembic==1.13.3
-celery[redis]==5.4.0
-redis==5.1.1
-boto3==1.35.40
-python-multipart==0.0.12
 
-# Utils
-loguru==0.7.2
-httpx==0.27.2
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+
+onnxruntime==1.19.2
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+scipy==1.14.1

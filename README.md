@@ -1,92 +1,203 @@
-# Padel Stats — Cloud Async MVP
+# Padel Stats — analisi partite su Raspberry Pi 5
 
-Sistema di analisi automatica di partite di padel tramite computer vision.
-L'app mobile registra/carica un video, il backend lo processa in modo asincrono
-e restituisce statistiche aggregate (heatmap, vincenti/errori, tipi di colpo).
+Sistema self-hosted che analizza il video di una partita di padel e produce
+statistiche di **posizione e movimento** dei quattro giocatori: distanza
+percorsa, occupazione del campo, zone, scambi.
 
-## Architettura
+Gira interamente su un Raspberry Pi 5. Nessun cloud, nessuna GPU, nessun
+acceleratore, nessun dato che esce di casa.
 
 ```
-┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│  React Native   │       │    FastAPI      │       │  Celery Worker  │
-│      App        │──────▶│     API         │──────▶│   ML Pipeline   │
-└─────────────────┘  HTTP └─────────────────┘ Redis └─────────────────┘
-        │                          │                          │
-        │                          ▼                          ▼
-        │                 ┌─────────────────┐       ┌─────────────────┐
-        └────────────────▶│   S3 / MinIO    │       │   PostgreSQL    │
-            (upload)      │  (video files)  │       │  (stats, jobs)  │
-                          └─────────────────┘       └─────────────────┘
+┌──────────────┐        ┌───────────────────────────────┐
+│   Browser    │◀──────▶│  Raspberry Pi 5 (2 container) │
+│ (PC o phone) │  HTTP  │                               │
+└──────────────┘        │  api      FastAPI + web UI    │
+                        │  worker   pipeline di analisi │
+                        │                               │
+                        │  SQLite  ·  SSD (video/foto)  │
+                        └───────────────────────────────┘
 ```
+
+---
+
+## Cosa misura, e cosa no
+
+Questa è la parte più importante del progetto. Ogni numero prodotto è
+espresso in metri e deriva da un'omografia **confermata da una persona**.
+Nulla viene stimato di nascosto.
+
+### Misurato
+
+| Metrica | Come |
+|---|---|
+| Distanza percorsa (totale e negli scambi) | somma dei passi in coordinate campo |
+| Velocità media e di punta | derivata dalle posizioni, 95° percentile per la punta |
+| Occupazione del campo (heatmap 0,5 m) | istogramma delle posizioni dei piedi |
+| Quota di tempo a rete / metà campo / fondo | distanza dalla linea di rete |
+| Area di campo coperta | celle occupate × 0,25 m² |
+| Numero, durata e distribuzione degli scambi | segmentazione dal movimento dei giocatori |
+| Tempo di gioco effettivo | rapporto scambi / durata |
+| Copertura del tracciamento per giocatore | quanto della partita ciascuno è stato seguito |
+
+### Non misurato — e perché
+
+Tipo di colpo (smash, bandeja, volée), vincenti ed errori, velocità della
+palla, punteggio.
+
+Tutte e quattro richiedono il **tracciamento della palla**. Un Pi 5 senza
+acceleratore non lo può fare a un frame rate utile: una pallina da padel a
+90 km/h percorre 80 cm per frame a 30 fps e occupa pochi pixel, quindi serve
+inferenza su ogni frame — ore di elaborazione per ogni partita, con modelli
+che pesano più del detector di persone.
+
+La versione precedente li riportava comunque, prodotti da euristiche
+(picchi di accelerazione su una traiettoria già filtrata, un albero
+decisionale a soglie fisse, "palla vicino al bordo = errore"). I numeri
+avevano l'aspetto di misure e non lo erano. Sono stati rimossi: **meglio
+sette metriche vere che venti plausibili.**
+
+Se in futuro si aggiunge un acceleratore (per esempio un Hailo-8L su HAT+),
+il tracciamento della palla torna alla portata e queste metriche possono
+rientrare — con un modello addestrato e delle metriche di validazione, non
+con delle soglie.
+
+---
+
+## Come funziona
+
+### 1. Calibrazione del campo — obbligatoria
+
+L'utente trascina quattro maniglie sugli angoli del campo in un fotogramma
+del video. Mentre trascina, l'interfaccia proietta il modello del campo
+(rete, linee di servizio, perimetro) sull'immagine: se la rete calcolata
+coincide con quella reale, la calibrazione è corretta. Serve mezzo minuto.
+
+La calibrazione si salva come **preset camera** e si riusa con un clic per
+ogni partita successiva ripresa dalla stessa posizione.
+
+Il rilevamento automatico esiste solo come *proposta* da correggere, mai
+come calibrazione. Su un campo da padel — vetri, rete metallica, poche linee
+dipinte, superfici riflettenti — non è affidabile, e senza conferma umana
+l'analisi non parte.
+
+### 2. Analisi — una sola decodifica del video
+
+```
+decode (una volta, con frame-skip)
+   └─▶ detector persone (ONNX, ritagliato sul campo)
+        └─▶ tracking in metri sul piano del campo
+             └─▶ ricostruzione identità: 4 giocatori, 2 coppie
+                  └─▶ segmentazione scambi dal movimento
+                       └─▶ metriche + qualità del dato
+```
+
+Punti chiave:
+
+- **Una sola passata.** Il video viene decodificato una volta sola. Sul Pi il
+  decode H.264 costa più della rete neurale alle frequenze di campionamento
+  sostenibili; i frame non campionati usano `grab()` invece di `read()`.
+- **Associazione in metri, non in pixel.** A 5 Hz due box consecutive di un
+  giocatore in corsa quasi non si sovrappongono, quindi l'IoU fallisce
+  proprio quando conta. Il gate è `velocità_max × Δt`, un vincolo fisico
+  uniforme su tutto il campo.
+- **Tracklet corte e ricucite dopo.** Le tracce muoiono e rinascono
+  liberamente; l'identità viene ricostruita a valle con l'istogramma colore
+  della maglia più la raggiungibilità fisica. Una persona occlusa per tre
+  secondi resta la stessa persona.
+- **Scambi dal movimento dei giocatori,** non dalla palla: durante il punto
+  tutti e quattro si muovono, fra un punto e l'altro no.
+
+### 3. Qualità del dato, sempre visibile
+
+Ogni risultato porta con sé `data_quality`: origine della calibrazione,
+scarto della rete, frequenza di campionamento, quanti giocatori sono stati
+trovati, per quanta parte della partita ciascuno è stato seguito, e la lista
+esplicita di cosa non è stato misurato. L'interfaccia mostra il pannello in
+cima alle statistiche.
+
+---
 
 ## Stack
 
-### Backend
-- **FastAPI** — API REST, validazione Pydantic
-- **Celery + Redis** — job queue async per analisi video
-- **PostgreSQL** — metadata, partite, statistiche
-- **MinIO/S3** — storage video raw + analizzati
-- **SQLAlchemy 2.0** — ORM async
+**Backend** — FastAPI, SQLAlchemy 2, SQLite (WAL), onnxruntime, OpenCV, NumPy,
+SciPy.
+Niente PyTorch, niente ultralytics, niente Celery, niente Redis, niente
+Postgres, niente MinIO, niente Alembic: l'immagine passa da ~3 GB a ~600 MB e
+l'avvio del worker da ~25 s a ~3 s.
 
-### ML Pipeline
-- **YOLOv8** (Ultralytics) — player detection + pose
-- **ByteTrack** — multi-object tracking robusto (4 giocatori)
-- **TrackNetV2** — ball tracking specifico padel
-- **OpenCV** — court detection via Hough lines + omografia
-- **PyTorch** — runtime modelli
+**Frontend** — React 18 + Vite, SVG puro per grafici e campo. Servito dalla
+stessa FastAPI: niente nginx.
 
-### Mobile
-- **React Native + Expo** — cross-platform
-- **expo-camera** — registrazione video
-- **expo-file-system** — gestione file locali
-- **TanStack Query** — fetching/caching API
+**Coda** — una tabella `jobs` su SQLite, drenata da un singolo processo
+worker. Il deployment esegue un'analisi alla volta su una macchina: un broker
+aggiungerebbe due servizi e ~200 MB di RAM per una concorrenza mai usata.
 
-## Pipeline di analisi (worker)
+---
 
-1. `download_video()` — pull da S3 in tmp locale
-2. `detect_court()` — Hough lines → 4 corner → omografia (coordinate reali in metri)
-3. `track_players()` — YOLOv8 per frame + ByteTrack per ID consistenti
-4. `track_ball()` — TrackNetV2 su finestra di 3 frame consecutivi
-5. `detect_events()` — rule-based su trajectory: rimbalzi (cambio direzione Y),
-   colpi (proximity ball↔player + cambio velocità), vetri (proximity ball↔muro)
-6. `classify_shots()` — pose keypoints + ball trajectory → smash/volée/bandeja
-7. `aggregate_stats()` — heatmap, distanza, vincenti/errori per player
-8. `persist()` — scrivi su DB + carica overlay video opzionale
+## Avvio rapido
 
-## Setup rapido
+```bash
+git clone <repo> && cd padelstatsML
+cp .env.example .env        # imposta DATA_VOLUME e API_BASE_URL
+
+# Esporta il detector una volta sola (anche da un PC, il file è portabile)
+pip install -r backend/requirements.export.txt
+python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+
+docker compose -f docker-compose.pi.yml up -d --build
+```
+
+Apri `http://padelpi.local:8000`.
+
+Guida completa passo per passo: [INSTALL_RASPBERRY.md](INSTALL_RASPBERRY.md).
+
+---
+
+## Ripresa del video
+
+L'accuratezza dipende quasi interamente dalla ripresa.
+
+- **Camera fissa** su treppiede. Se si muove, la calibrazione decade.
+- **In alto e dietro il fondo campo**, 3-4 m di altezza, tutto il campo nel
+  fotogramma compresi i quattro angoli.
+- **1080p a 30 fps** è sufficiente; il 4K non aggiunge nulla e rallenta il
+  decode.
+- **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva
+  fotogramma per fotogramma.
+- Maglie di colore diverso fra i due della stessa coppia aiutano molto la
+  ricostruzione dell'identità dopo le occlusioni.
+
+---
+
+## Tempi sul Pi 5
+
+A `SAMPLE_HZ=5` l'analisi procede all'incirca in tempo reale: una partita di
+60 minuti richiede circa 60 minuti. È un lavoro batch — si lancia e si guarda
+il risultato dopo. `SAMPLE_HZ=3` scende a ~35 minuti, al prezzo di una
+sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
+
+---
+
+## Sviluppo
 
 ```bash
 # Backend
 cd backend
-docker-compose up -d  # postgres + redis + minio
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload
+pip install -r requirements.dev.txt
+DATA_DIR=/tmp/padel python -m pytest        # 95 test
+DATA_DIR=/tmp/padel uvicorn app.main:app --reload
 
 # Worker
-celery -A app.workers.celery_app worker --loglevel=info
+DATA_DIR=/tmp/padel python -m app.worker.runner
 
-# Mobile
-cd mobile
+# Frontend
+cd frontend
 npm install
-npx expo start
+npm test          # 14 test sulla geometria del campo
+npm run dev       # richiede CORS_ORIGINS=http://localhost:5173 nel backend
 ```
 
-## Roadmap
-
-- [x] Fase 1 — Cloud async MVP (questo repo)
-- [ ] Fase 2 — On-device post-match analysis
-- [ ] Fase 3 — Real-time on-device
-
-## Note critiche di sviluppo
-
-**Inquadratura camera:** il modello assume camera fissa, elevata, dietro al campo,
-con tutto il campo visibile. L'app DEVE guidare l'utente nel posizionamento
-(setup wizard con overlay del campo) altrimenti la court detection fallisce e
-tutto il resto crolla.
-
-**Qualità video minima:** 1080p @ 30fps. Sotto questa soglia la palla diventa
-indistinguibile dal rumore.
-
-**Costi GPU:** un match di 60 minuti richiede ~10-15 min su RTX 3060.
-Per produzione: serverless GPU (RunPod, Modal, Replicate) a consumo.
+I test coprono calibrazione e validazione geometrica, campionamento video,
+geometria del detector, tracking, ricostruzione identità, segmentazione
+scambi, metriche, semantica della coda e il flusso API completo, più una
+prova end-to-end della pipeline su una partita sintetica.

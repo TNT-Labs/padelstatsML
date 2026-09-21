@@ -1,748 +1,371 @@
-# Installazione su Raspberry Pi 5 — Guida completa
+# Installazione su Raspberry Pi 5
 
-**Target:** Raspberry Pi 5 · 8 GB RAM · ARM64 (Cortex-A76)  
-**OS consigliato:** Raspberry Pi OS Lite 64-bit (Bookworm, Debian 12)  
-**Tempo stimato:** 45–60 minuti (la build Docker richiede ~20 min la prima volta)
+**Target:** Raspberry Pi 5 · 8 GB RAM · ARM64
+**OS:** Raspberry Pi OS Lite 64-bit (Bookworm)
+**Tempo:** ~40 minuti, di cui ~15 di build Docker
+
+Il sistema gira in **due container** (`api` e `worker`) che condividono una
+sola immagine, un file SQLite e una cartella sull'SSD. Non servono database
+server, broker, object store o reverse proxy.
 
 ---
 
 ## Indice
 
-1. [Requisiti](#1-requisiti)
-2. [Preparazione del sistema operativo](#2-preparazione-del-sistema-operativo)
-3. [Installazione Docker](#3-installazione-docker)
-4. [Clonare il repository](#4-clonare-il-repository)
-5. [Configurazione variabili d'ambiente](#5-configurazione-variabili-dambiente)
-6. [Storage: SSD locale vs MinIO](#6-storage-ssd-locale-vs-minio)
-7. [Prima build e avvio](#7-prima-build-e-avvio)
-8. [Migrazione database](#8-migrazione-database)
-9. [Ottimizzazione YOLO → ONNX (raccomandato)](#9-ottimizzazione-yolo--onnx-raccomandato)
-10. [Pesi TrackNet (opzionale)](#10-pesi-tracknet-opzionale)
-11. [Verifica installazione](#11-verifica-installazione)
-12. [Configurare l'app mobile](#12-configurare-lapp-mobile)
-13. [Avvio automatico al boot](#13-avvio-automatico-al-boot)
-14. [Comandi operativi](#14-comandi-operativi)
-15. [Risoluzione problemi](#15-risoluzione-problemi)
+1. [Hardware](#1-hardware)
+2. [Preparazione del sistema](#2-preparazione-del-sistema)
+3. [Docker](#3-docker)
+4. [SSD e cartella dati](#4-ssd-e-cartella-dati)
+5. [Configurazione](#5-configurazione)
+6. [Esportare il modello ONNX](#6-esportare-il-modello-onnx)
+7. [Build e avvio](#7-build-e-avvio)
+8. [Verifica](#8-verifica)
+9. [Prima analisi](#9-prima-analisi)
+10. [Avvio automatico al boot](#10-avvio-automatico-al-boot)
+11. [Comandi operativi](#11-comandi-operativi)
+12. [Taratura velocità/accuratezza](#12-taratura-velocitàaccuratezza)
+13. [Backup](#13-backup)
+14. [Risoluzione problemi](#14-risoluzione-problemi)
 
 ---
 
-## 1. Requisiti
+## 1. Hardware
 
-### Hardware
 | Componente | Minimo | Consigliato |
 |---|---|---|
-| Modello | Raspberry Pi 5 4 GB | **Raspberry Pi 5 8 GB** |
-| MicroSD | 32 GB Class 10 | **64 GB+ SSD via PCIe/USB** |
-| Alimentatore | USB-C 5V 3A | **USB-C 5V 5A ufficiale** |
-| Rete | Wi-Fi | **Ethernet** (upload video ~500 MB) |
-| Dissipatore | Qualsiasi | **Active Cooler ufficiale** (ML scalda la CPU) |
+| Scheda | Pi 5 4 GB | **Pi 5 8 GB** |
+| Storage | microSD 32 GB | **SSD NVMe o USB 3.0** |
+| Alimentazione | USB-C 5V 3A | **USB-C 5V 5A ufficiale** |
+| Rete | Wi-Fi | **Ethernet** (i video pesano centinaia di MB) |
+| Raffreddamento | qualsiasi | **Active Cooler ufficiale** |
 
-### Software richiesto sul Pi
-- Raspberry Pi OS Lite **64-bit** (ARM64 obbligatorio per PyTorch)
-- Docker Engine 26+
-- Docker Compose v2 (`docker compose`, non `docker-compose`)
-- Git
+Il raffreddamento non è opzionale: l'analisi tiene i quattro core al 100% per
+un'ora e senza dissipazione attiva il Pi riduce la frequenza, allungando i
+tempi del 30-40%.
+
+Un SSD è fortemente consigliato: il database usa il journal WAL, che su
+microSD provoca usura rapida, e la decodifica video legge in sequenza
+centinaia di MB.
 
 ---
 
-## 2. Preparazione del sistema operativo
+## 2. Preparazione del sistema
 
-### 2a. Flash della microSD
-
-Usa **Raspberry Pi Imager** (scaricabile da raspberrypi.com/software):
-
-1. **OS** → "Raspberry Pi OS (other)" → **"Raspberry Pi OS Lite (64-bit)"**
-2. Clicca l'icona ⚙️ (impostazioni avanzate) e configura:
-   - Nome host: `padelpi`
-   - Abilita SSH con chiave pubblica (o password)
-   - Wi-Fi (se non usi Ethernet)
-   - Fuso orario e lingua
-3. Scrivi sulla SD e inseriscila nel Pi
-
-### 2b. Primo accesso e aggiornamento
+Con **Raspberry Pi Imager**, scrivi *Raspberry Pi OS Lite (64-bit)* e
+configura hostname (`padelpi`), SSH e rete nelle impostazioni avanzate.
 
 ```bash
-# Connettiti via SSH
 ssh pi@padelpi.local
-
-# Aggiorna il sistema
 sudo apt update && sudo apt full-upgrade -y
 sudo reboot
 ```
 
-### 2c. Configurazione memoria swap
+### Swap
 
-Il worker ML può richiedere fino a 3.5 GB. Con swap si evitano OOM kill:
+Il worker può arrivare a ~3 GB di picco. Con 8 GB non serve, ma un po' di
+swap evita l'OOM killer durante la build Docker:
 
 ```bash
-# Disabilita il vecchio swap (troppo piccolo)
 sudo dphys-swapfile swapoff
-sudo systemctl disable dphys-swapfile
-
-# Crea un file di swap da 4 GB
-sudo fallocate -l 4G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-
-# Rendilo permanente
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-
-# Riduci la swappiness (usa RAM prima della swap)
-echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
+sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+sudo dphys-swapfile setup && sudo dphys-swapfile swapon
 ```
 
-### 2d. Abilitare cgroups v2 (richiesto da Docker)
+### Boot da NVMe (se usi un HAT PCIe)
 
 ```bash
-sudo nano /boot/firmware/cmdline.txt
-```
-
-Aggiungi alla fine della riga (tutto su una riga):
-```
-cgroup_enable=memory cgroup_memory=1 cgroup_enable=cpuset
-```
-
-```bash
-sudo reboot
-```
-
-### 2e. Aumentare i file descriptor aperti (opzionale ma consigliato)
-
-```bash
-echo '* soft nofile 65536' | sudo tee -a /etc/security/limits.conf
-echo '* hard nofile 65536' | sudo tee -a /etc/security/limits.conf
+sudo raspi-config     # Advanced Options → Boot Order → NVMe/USB
 ```
 
 ---
 
-## 3. Installazione Docker
+## 3. Docker
 
 ```bash
-# Script ufficiale Docker
 curl -fsSL https://get.docker.com | sudo sh
-
-# Aggiungi l'utente al gruppo docker (evita sudo ogni volta)
 sudo usermod -aG docker $USER
-
-# Riconnettiti per applicare il gruppo
-exit
-# poi: ssh pi@padelpi.local
-
-# Verifica installazione
-docker --version          # Docker Engine 26.x.x o superiore
-docker compose version    # Docker Compose v2.x.x
+newgrp docker
+docker --version && docker compose version
 ```
+
+Serve Docker Compose v2 (comando `docker compose`, non `docker-compose`).
 
 ---
 
-## 4. Clonare il repository
+## 4. SSD e cartella dati
+
+Monta l'SSD e crea la cartella dei dati:
 
 ```bash
-cd ~
-git clone https://github.com/tnt-labs/padelstatsML.git
-cd padelstatsML
+lsblk                               # individua il device, es. /dev/nvme0n1p1
+sudo mkdir -p /mnt/ssd
+sudo mount /dev/nvme0n1p1 /mnt/ssd
+
+# Montaggio permanente
+sudo blkid /dev/nvme0n1p1           # copia lo UUID
+echo 'UUID=<uuid>  /mnt/ssd  ext4  defaults,noatime  0  2' | sudo tee -a /etc/fstab
+
+sudo mkdir -p /mnt/ssd/padelstats
+sudo chown -R $USER:$USER /mnt/ssd/padelstats
 ```
+
+Dentro `/mnt/ssd/padelstats` finiranno database, video, keyframe e anteprime.
 
 ---
 
-## 5. Configurazione variabili d'ambiente
-
-> ⚠️ **Cambia le password** prima di esporre il Pi sulla rete locale.
+## 5. Configurazione
 
 ```bash
-cd ~/padelstatsML
-cp .env.example .env   # se non esiste, crealo da zero:
+git clone <repo> ~/padelstats
+cd ~/padelstats
+cp .env.example .env
 nano .env
 ```
 
-Contenuto minimo per il Pi:
+I due valori da impostare:
 
-```env
-# ── Database ─────────────────────────────────────────
-DATABASE_URL=postgresql+asyncpg://padel:CAMBIA_QUESTA_PASSWORD@postgres:5432/padel
-SYNC_DATABASE_URL=postgresql://padel:CAMBIA_QUESTA_PASSWORD@postgres:5432/padel
-
-# ── Redis ─────────────────────────────────────────────
-REDIS_URL=redis://redis:6379/0
-CELERY_BROKER_URL=redis://redis:6379/1
-CELERY_RESULT_BACKEND=redis://redis:6379/2
-
-# ── S3 / MinIO ────────────────────────────────────────
-S3_ENDPOINT=http://minio:9000
-S3_ACCESS_KEY=padel
-S3_SECRET_KEY=CAMBIA_QUESTA_PASSWORD
-S3_BUCKET_VIDEOS=padel-videos
-S3_REGION=us-east-1
-
-# ── ML ────────────────────────────────────────────────
-ML_DEVICE=cpu
-TORCH_NUM_THREADS=4
-PLAYER_STRIDE=3              # 3 su Pi (2 su GPU)
-YOLO_WEIGHTS=weights/yolov8n.onnx   # dopo export ONNX (step 8)
-TRACKNET_WEIGHTS=weights/tracknet_padel.pth
-
-# ── TrackNet auto-download (lascia vuoto per usare MOG2 fallback) ──
-# TRACKNET_WEIGHTS_URL=https://github.com/.../releases/download/v1.0/tracknet_padel.pth
-
-# ── Video ─────────────────────────────────────────────
-MAX_VIDEO_SIZE_MB=2048
-
-# ── API ───────────────────────────────────────────────
-CORS_ORIGINS=["*"]           # restringi in produzione
+```ini
+DATA_VOLUME=/mnt/ssd/padelstats
+API_BASE_URL=http://padelpi.local:8000
 ```
 
-Aggiorna le stesse password anche nel file docker-compose per i servizi interni:
-
-```bash
-# Sostituisci "padelpadel" con la tua password MinIO
-sed -i 's/padelpadel/NUOVA_PASSWORD_MINIO/g' docker-compose.yml docker-compose.pi.yml
-
-# Sostituisci la password postgres
-sed -i 's/POSTGRES_PASSWORD: padel/POSTGRES_PASSWORD: NUOVA_PASSWORD_PG/g' docker-compose.yml
-```
+`API_BASE_URL` deve essere raggiungibile dal telefono o dal PC: se
+`padelpi.local` non si risolve sulla tua rete, usa l'IP
+(`http://192.168.1.42:8000`).
 
 ---
 
-## 6. Storage: SSD locale vs MinIO
+## 6. Esportare il modello ONNX
 
-Il sistema supporta due modalità di storage per i video:
+Il Pi esegue l'inferenza con **onnxruntime** e non installa PyTorch. Il
+modello va esportato una volta sola; il file risultante è portabile.
 
-| | **SSD locale** (consigliato per Pi) | **MinIO** (default) |
-|---|---|---|
-| RAM usata | ~4.2 GB totali | ~4.4 GB (+256 MB) |
-| Semplicità | Nessun container extra | Richiede MinIO |
-| Upload | Passa per l'API (nginx → FastAPI) | Diretto da client a MinIO |
-| Backup | `cp` o `rsync` sulla directory | Snapshot volume Docker |
-
-### Opzione A — SSD locale (raccomandato)
-
-#### 6a. Montare l'SSD
-
-Collega l'SSD al Pi (via USB 3.0 o PCIe M.2 HAT), poi:
+### Opzione A — dal tuo PC (consigliata, più veloce)
 
 ```bash
-# Trova il dispositivo
-lsblk
-# Esempio: /dev/sda o /dev/nvme0n1
-
-# Formatta se è nuovo (attenzione: cancella tutto)
-sudo mkfs.ext4 /dev/sda1
-
-# Crea punto di mount
-sudo mkdir -p /mnt/ssd
-
-# Monta
-sudo mount /dev/sda1 /mnt/ssd
-
-# Rendi permanente (trova l'UUID del dispositivo)
-sudo blkid /dev/sda1
-# Copia l'UUID, poi:
-echo 'UUID=xxxx-xxxx  /mnt/ssd  ext4  defaults,noatime  0  2' | sudo tee -a /etc/fstab
-
-# Crea la directory dei video
-sudo mkdir -p /mnt/ssd/padel-videos
-sudo chown $USER:$USER /mnt/ssd/padel-videos
+pip install -r backend/requirements.export.txt
+python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+scp weights/yolov8n.onnx pi@padelpi.local:~/padelstats/weights/
 ```
 
-#### 6b. Configurare il .env per lo storage locale
-
-Aggiungi/modifica queste righe nel `.env`:
-
-```env
-STORAGE_BACKEND=local
-VIDEOS_DIR=/data/videos
-# L'IP del Pi — deve essere raggiungibile dal client mobile/web
-API_BASE_URL=http://192.168.1.42
-```
-
-#### 6c. Abilitare il volume nel docker-compose.pi.yml
-
-Apri `docker-compose.pi.yml` e decommenta le righe indicate per `api` e `worker`:
-
-```yaml
-# Nei servizi api e worker, decommenta:
-volumes:
-  - /mnt/ssd/padel-videos:/data/videos
-
-# Nelle variabili d'ambiente di api e worker, decommenta:
-environment:
-  STORAGE_BACKEND: local
-  VIDEOS_DIR: /data/videos
-  API_BASE_URL: "http://192.168.1.42"   # oppure http://padelpi.local
-```
-
-#### 6d. Avvio SENZA MinIO
-
-Con lo storage locale MinIO non serve:
+### Opzione B — sul Pi
 
 ```bash
-docker compose -f docker-compose.pi.yml up -d
+cd ~/padelstats
+python3 -m venv /tmp/export && source /tmp/export/bin/activate
+pip install -r backend/requirements.export.txt      # ~10 minuti, ~2 GB
+python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+deactivate && rm -rf /tmp/export                     # lo spazio torna libero
 ```
+
+Lo script verifica l'export ricaricandolo con onnxruntime, esattamente come
+farà il worker.
+
+> `--imgsz` deve coincidere con `DETECTOR_IMGSZ` nel `.env`. 480 è il
+> compromesso migliore sul Cortex-A76: circa 1,8× più veloce di 640 con una
+> perdita di recall contenuta sui giocatori di fondo campo.
 
 ---
 
-### Opzione B — MinIO (storage S3-compatibile)
-
-Nessuna modifica al codice necessaria. Attiva il profilo `minio`:
+## 7. Build e avvio
 
 ```bash
-docker compose -f docker-compose.pi.yml --profile minio up -d
+cd ~/padelstats
+docker compose -f docker-compose.pi.yml up -d --build
 ```
+
+La prima build richiede 10-15 minuti (npm install + pip install). Tutte le
+dipendenze Python hanno wheel precompilate per aarch64: non viene compilato
+nulla.
 
 ---
 
-## 7. Prima build e avvio
-
-> La prima build scarica ~3 GB di immagini Docker e compila PyTorch wheels ARM64.
-> Con connessione 50 Mbit/s richiede circa **15–25 minuti**.
+## 8. Verifica
 
 ```bash
-cd ~/padelstatsML
-
-# Build (CPU-only torch, memory limits Pi)
-docker compose -f docker-compose.pi.yml build
-
-# Avvia tutti i servizi
-docker compose -f docker-compose.pi.yml up -d
-
-# Attendi che siano healthy (~20 secondi)
 docker compose -f docker-compose.pi.yml ps
+curl -s http://localhost:8000/api/health | python3 -m json.tool
 ```
 
-Output atteso:
-```
-NAME       STATUS
-postgres   running (healthy)
-redis      running (healthy)
-api        running (healthy)
-worker     running
-frontend   running
-```
+Atteso:
 
----
-
-## 8. Migrazione database
-
-Esegui **una sola volta** per creare lo schema:
-
-```bash
-cd ~/padelstatsML
-
-docker compose -f docker-compose.pi.yml run --rm migrate
-```
-
-Output atteso:
-```
-INFO  [alembic.runtime.migration] Running upgrade -> 0001, initial schema
-```
-
----
-
-## 9. Ottimizzazione YOLO → ONNX (raccomandato)
-
-YOLOv8 in formato ONNX è **3–5× più veloce** su ARM64 rispetto al formato PyTorch nativo. L'export si fa una volta sola.
-
-```bash
-cd ~/padelstatsML
-
-# Entra nel container worker (che ha ultralytics installato)
-docker compose -f docker-compose.pi.yml \
-  run --rm --entrypoint bash worker
-
-# Dentro il container:
-python scripts/export_onnx.py --weights yolov8n.pt --out weights/yolov8n.onnx
-exit
-```
-
-Il file `weights/yolov8n.onnx` viene creato nella cartella `backend/weights/` (montata come volume nel container).
-
-Verifica:
-```bash
-ls -lh weights/yolov8n.onnx   # deve essere ~12 MB
-```
-
-Assicurati che nel `.env` sia impostato:
-```env
-YOLO_WEIGHTS=weights/yolov8n.onnx
-```
-
----
-
-## 10. Pesi TrackNet (opzionale)
-
-Se hai a disposizione un file `.pth` di pesi TrackNetV2 addestrato su padel:
-
-**Opzione A — copia manuale:**
-```bash
-# Dal tuo computer locale:
-scp tracknet_padel.pth pi@padelpi.local:~/padelstatsML/backend/weights/
-```
-
-**Opzione B — download automatico al primo avvio del worker:**
-```bash
-# Aggiungi al .env:
-TRACKNET_WEIGHTS_URL=https://INDIRIZZO_DEL_FILE/tracknet_padel.pth
-```
-Il worker scaricherà il file automaticamente la prima volta che si avvia. Senza pesi il sistema usa il fallback MOG2 (meno preciso ma funzionante).
-
----
-
-## 10. Avvio completo del sistema
-
-```bash
-cd ~/padelstatsML
-
-docker compose -f docker-compose.pi.yml up -d
-```
-
-Attendi ~30 secondi poi verifica:
-
-```bash
-# Stato di tutti i container
-docker compose -f docker-compose.pi.yml ps
-```
-
-Output atteso:
-```
-NAME       STATUS
-postgres   running (healthy)
-redis      running (healthy)
-api        running (healthy)
-worker     running
-frontend   running
-```
-
-### Health check dettagliato
-
-```bash
-curl http://localhost/health | python3 -m json.tool
-```
-
-Output atteso:
 ```json
 {
   "status": "ok",
-  "db": "ok",
-  "redis": "ok",
-  "s3": "ok"
+  "checks": {
+    "database": "ok",
+    "storage": "ok · 421.3 GB liberi",
+    "detector": "ok · yolov8n.onnx"
+  }
 }
 ```
 
-### Verifica interfaccia web
+Se `detector` riporta `mancante`, il file ONNX non è in `./weights/` oppure
+`DETECTOR_MODEL` non corrisponde. Lo stato `503` è voluto: senza modello il
+sistema non può analizzare nulla e lo dichiara invece di ripiegare in
+silenzio su un risultato inventato.
 
-Apri nel browser del Pi (o da qualsiasi PC sulla stessa rete):
-```
-http://padelpi.local
-```
+Log del worker:
 
-Dovresti vedere la schermata principale di Padel Stats.
+```bash
+docker compose -f docker-compose.pi.yml logs -f worker
+# Worker avviato · 4 thread di inferenza
+```
 
 ---
 
-## 12. Configurare l'app mobile
+## 9. Prima analisi
 
-L'app mobile deve sapere l'indirizzo IP del Pi sulla rete locale.
+Apri `http://padelpi.local:8000` dal browser.
 
-### Trova l'IP del Pi
+1. **Nuova partita** → titolo e video → *Carica video*.
+2. **Calibrazione**: trascina le quattro maniglie sugli angoli del campo,
+   partendo dal fondo a sinistra e proseguendo in senso orario. Le linee
+   bianche mostrano rete e linee di servizio calcolate: se coincidono con
+   quelle reali, la calibrazione è corretta.
+3. Dai un nome alla posizione camera (es. *Campo 2 — tripode angolo nord*) per
+   riusarla con un clic nelle partite successive.
+4. **Conferma calibrazione** → l'analisi parte. Puoi chiudere la pagina: il
+   lavoro prosegue sul Pi.
 
-```bash
-hostname -I | awk '{print $1}'
-# esempio: 192.168.1.42
-```
-
-### Configura l'URL nell'app
-
-Nel file `mobile/.env` (crea se non esiste):
-```env
-EXPO_PUBLIC_API_URL=http://192.168.1.42:8000
-```
-
-Oppure, se il frontend nginx è attivo sulla porta 80:
-```env
-EXPO_PUBLIC_API_URL=http://192.168.1.42
-```
-
-Ricompila l'app Expo dopo la modifica:
-```bash
-cd ~/padelstatsML/mobile
-npx expo start
-```
-
-> **Suggerimento:** Assegna un IP fisso al Pi dal router (DHCP reservation tramite MAC address) così l'URL non cambia mai.
+Consiglio: la prima volta, prova con una clip di 2-3 minuti. Il ciclo
+completo dura pochi minuti e ti permette di verificare calibrazione e
+tracciamento prima di impegnare un'ora su una partita intera.
 
 ---
 
-## 13. Avvio automatico al boot
+## 10. Avvio automatico al boot
 
-Crea un servizio systemd che avvia Docker Compose al riavvio del Pi:
+Docker Compose riavvia i container da solo (`restart: unless-stopped`).
+Perché avvengano anche dopo un reboot:
 
 ```bash
-sudo nano /etc/systemd/system/padelstats.service
+sudo systemctl enable docker
 ```
 
-```ini
+Per un controllo più esplicito:
+
+```bash
+sudo tee /etc/systemd/system/padelstats.service > /dev/null <<'UNIT'
 [Unit]
-Description=Padel Stats ML Stack
+Description=Padel Stats
 Requires=docker.service
 After=docker.service network-online.target
-Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/pi/padelstatsML
+WorkingDirectory=/home/pi/padelstats
 ExecStart=/usr/bin/docker compose -f docker-compose.pi.yml up -d
 ExecStop=/usr/bin/docker compose -f docker-compose.pi.yml down
-StandardOutput=journal
-User=pi
 
 [Install]
 WantedBy=multi-user.target
-```
+UNIT
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable padelstats.service
-sudo systemctl start padelstats.service
-
-# Verifica
-sudo systemctl status padelstats.service
+sudo systemctl daemon-reload && sudo systemctl enable padelstats
 ```
 
 ---
 
-## 14. Comandi operativi
-
-### Avvio / Arresto
+## 11. Comandi operativi
 
 ```bash
-cd ~/padelstatsML
+cd ~/padelstats
+C="docker compose -f docker-compose.pi.yml"
 
-# Avvia tutto
-docker compose -f docker-compose.pi.yml up -d
+$C ps                      # stato
+$C logs -f worker          # log dell'analisi
+$C restart worker          # riavvio del solo worker
+$C down && $C up -d        # riavvio completo
+$C up -d --build           # aggiornamento dopo un git pull
 
-# Arresta tutto (i dati sono preservati nei volumi)
-docker compose -f docker-compose.pi.yml down
-
-# Riavvia solo il worker (es. dopo cambio .env)
-docker compose -f docker-compose.pi.yml restart worker
+docker stats --no-stream   # RAM e CPU
+vcgencmd measure_temp      # temperatura (sotto 80°C sotto carico)
+df -h /mnt/ssd             # spazio disco
 ```
 
-### Log in tempo reale
-
-```bash
-# Tutti i servizi
-docker compose -f docker-compose.pi.yml logs -f
-
-# Solo il worker ML
-docker compose -f docker-compose.pi.yml logs -f worker
-
-# Solo l'API
-docker compose -f docker-compose.pi.yml logs -f api
-```
-
-### Monitoraggio risorse
-
-```bash
-# Uso RAM e CPU dei container
-docker stats
-
-# Temperatura CPU (importante durante l'analisi)
-watch -n2 vcgencmd measure_temp
-
-# Memoria disponibile
-free -h
-```
-
-### Aggiornamento applicazione
-
-```bash
-cd ~/padelstatsML
-git pull
-
-docker compose -f docker-compose.pi.yml build --no-cache
-docker compose -f docker-compose.pi.yml up -d
-docker compose -f docker-compose.pi.yml run --rm migrate
-```
-
-### Backup dati
-
-```bash
-# Backup database
-docker exec padelstats-postgres-1 pg_dump -U padel padel > backup_$(date +%Y%m%d).sql
-
-# Backup video su storage esterno
-docker run --rm -v padelstats_miniodata:/data \
-  -v /media/usb:/backup alpine \
-  tar czf /backup/minio_$(date +%Y%m%d).tar.gz /data
-```
+Un worker riavviato durante un'analisi rimette il job in coda da solo: il job
+viene recuperato dall'heartbeat scaduto e riprovato al successivo avvio.
 
 ---
 
-## 15. Risoluzione problemi
+## 12. Taratura velocità/accuratezza
 
-### Container non si avviano
+`SAMPLE_HZ` nel `.env` è la leva principale.
 
-```bash
-# Controlla i log di errore
-docker compose -f docker-compose.pi.yml logs --tail=50
-
-# Verifica spazio disco
-df -h
-```
-
-### `OOMKilled` — worker ucciso per memoria
-
-Il worker ha superato il limite di 3.5 GB. Soluzioni:
-
-```bash
-# 1. Aumenta PLAYER_STRIDE nel .env (meno frame = meno memoria)
-PLAYER_STRIDE=4
-
-# 2. Verifica che il file swap sia attivo
-swapon --show
-
-# 3. Se necessario, aumenta il limite nel docker-compose.pi.yml
-#    worker.deploy.resources.limits.memory: 4000M
-```
-
-### Analisi lenta (>30 minuti per partita)
-
-```bash
-# Verifica che ONNX sia usato (deve apparire "onnxruntime" nei log)
-docker compose logs worker | grep -i onnx
-
-# Se non esportato, esegui l'export (step 8)
-
-# Aumenta PLAYER_STRIDE per ridurre i frame processati
-PLAYER_STRIDE=4   # o 5 per video molto lunghi
-
-# Verifica temperatura — throttling termico rallenta la CPU
-vcgencmd measure_temp   # sopra 80°C → servono più ventilazione
-vcgencmd get_throttled  # 0x0 = ok, qualsiasi altro valore = problema
-```
-
-### Errore `court calibration failed`
-
-La camera non è posizionata correttamente. Requisiti:
-- Posizione fissa sopraelevata (almeno 3–4 m)
-- Tutto il campo visibile (4 linee + 2 reti laterali)
-- Nessun movimento durante la ripresa
-- Buona illuminazione
-
-### Errore `S3 connection refused`
-
-```bash
-# Verifica che MinIO sia up (solo se avviato con --profile minio)
-docker compose -f docker-compose.pi.yml --profile minio ps minio
-
-# Se è "unhealthy", controlla i log
-docker compose -f docker-compose.pi.yml logs minio
-```
-
-### Frontend non risponde (porta 80)
-
-```bash
-# Verifica che nginx sia up
-docker compose ps frontend
-
-# Controlla la configurazione CORS se usi l'IP invece di padelpi.local
-# Aggiungi l'IP al .env:
-CORS_ORIGINS=["http://192.168.1.42","http://padelpi.local"]
-```
-
-### Ripartire da zero (reset completo)
-
-```bash
-cd ~/padelstatsML
-
-# ATTENZIONE: elimina tutti i dati (DB, video, code)
-docker compose -f docker-compose.pi.yml down -v --remove-orphans
-docker system prune -af --volumes
-
-# Poi ripeti dalla build (step 6)
-```
-
----
-
-## Struttura porte esposte
-
-| Porta | Servizio | Note |
+| SAMPLE_HZ | Tempo per 60 min di video | Effetto |
 |---|---|---|
-| **80** | Frontend web (nginx) | Accesso principale |
-| **8000** | API FastAPI | Accessibile anche direttamente |
-| **5432** | PostgreSQL | Solo rete interna Docker |
-| **6379** | Redis | Solo rete interna Docker |
-| **9000** | MinIO API | Storage S3 |
-| **9001** | MinIO Console | Dashboard web MinIO |
+| 3.0 | ~35 min | distanza sottostimata ~15% (segnalata nei warning) |
+| **5.0** | **~60 min** | **default, buon compromesso** |
+| 8.0 | ~100 min | guadagno marginale |
 
-> Per sicurezza, blocca le porte 5432, 6379, 9000, 9001 con `ufw` se il Pi è accessibile da Internet:
-> ```bash
-> sudo ufw allow 22    # SSH
-> sudo ufw allow 80    # Frontend
-> sudo ufw allow 8000  # API (opzionale se usi solo il frontend)
-> sudo ufw enable
-> ```
+Altre leve:
+
+- `DETECTOR_IMGSZ=416` — ~25% più veloce, perde qualche giocatore sul fondo.
+- `DETECTOR_CONF=0.25` — più rilevazioni, più falsi positivi (filtrati poi
+  dal confine del campo).
+- `MAX_ANALYSIS_MINUTES` — tronca i video lunghi; la troncatura viene
+  dichiarata nel risultato.
+
+Dopo ogni modifica: `docker compose -f docker-compose.pi.yml up -d`.
 
 ---
 
-## Riepilogo comandi essenziali
+## 13. Backup
+
+Tutto lo stato sta in una cartella:
 
 ```bash
-# Avvia tutto
-docker compose -f docker-compose.pi.yml up -d
-
-# Controlla stato
-docker compose -f docker-compose.pi.yml ps
-
-# Health check
-curl http://localhost/health
-
-# Log worker in tempo reale
-docker compose -f docker-compose.pi.yml logs -f worker
-
-# Arresta tutto
-docker compose -f docker-compose.pi.yml down
+# A container fermi, per un backup coerente del database
+docker compose -f docker-compose.pi.yml stop
+tar czf padel-backup-$(date +%F).tar.gz -C /mnt/ssd padelstats
+docker compose -f docker-compose.pi.yml start
 ```
 
+Solo il database (i video pesano molto di più):
 
+```bash
+sqlite3 /mnt/ssd/padelstats/padel.db ".backup '/tmp/padel-$(date +%F).db'"
+```
 
-Checklist primo test
-Fase 1 — Test pipeline ML standalone (senza Docker, 10 minuti)
-Questo è il modo più rapido per verificare che il codice ML funzioni con un video reale, prima di montare tutta l'infrastruttura:
+---
 
-cd ~/padelstatsML/backend
-pip install -r requirements.txt           # una volta
+## 14. Risoluzione problemi
 
-python scripts/test_pipeline.py video.mp4 --stride 2
-Stampa a terminale ogni stage con percentuale e tempo. Se questo funziona, il grosso è fatto.
+**`/api/health` risponde 503 con `detector: mancante`**
+Il file ONNX non è in `./weights/`. Rifai il [passo 6](#6-esportare-il-modello-onnx)
+e verifica che `DETECTOR_MODEL` nel `.env` corrisponda al percorso montato.
 
-Fase 2 — Stack completo su Pi
-Passo	Comando	Note
-1. Build	docker compose -f docker-compose.pi.yml build	~20 min prima volta
-2. Avvia infrastruttura	docker compose -f docker-compose.pi.yml up -d	
-3. Migra DB	docker compose -f docker-compose.pi.yml run --rm migrate	Una volta sola
-4. Export ONNX	dentro il container worker: python scripts/export_onnx.py	Una volta sola, 3-5× più veloce
-5. Health check	curl http://localhost/health	Deve tornare {"status":"ok"}
-Fase 3 — Test con video reale
-Requisiti del video:
+**"Impossibile aprire il video" subito dopo il caricamento**
+Il contenitore non è leggibile da OpenCV (spesso HEVC di iPhone). Converti:
+`ffmpeg -i input.mov -c:v libx264 -preset fast -crf 23 output.mp4`.
 
-Camera fissa su cavalletto o appoggio stabile
-Altezza ≥ 3 m (tribuna, balcone, vetro superiore)
-Tutto il campo visibile — 4 linee di fondo + 2 reti laterali
-Buona illuminazione, no controluce
-Almeno 5 secondi di campo vuoto all'inizio prima della battuta
-Formato MP4, < 2 GB
-Per un primo test usa un video corto: 5–10 minuti di gioco (non tutta la partita — elaborazione ~15–20 min su Pi, meno su PC).
+**"Nessun giocatore rilevato"**
+Nel 90% dei casi la calibrazione non corrisponde al video: riapri la partita,
+ricalibra e controlla che la rete disegnata coincida con quella reale.
+Altrimenti il campo è troppo piccolo nel fotogramma o la ripresa è troppo
+bassa e i giocatori si coprono a vicenda.
 
-Fase 4 — App mobile
-cd ~/padelstatsML/mobile
-npx expo install          # installa async-storage e le altre dipendenze
-# configura EXPO_PUBLIC_API_URL=http://<IP-del-PI> in .env
-npx expo start
-Pesi TrackNet (opzionale ma migliora il tracciamento palla)
-Senza pesi il sistema usa il fallback MOG2 — funziona, ma rileva meno colpi veloci. Per il primo test va benissimo così; si aggiunge dopo se i risultati sul tracciamento palla sono scadenti.
+**"Rilevati solo N giocatori invece di 4"**
+Un angolo del campo è fuori inquadratura, oppure un giocatore resta occluso
+per gran parte della partita. Il pannello *Affidabilità dei dati* indica
+quali giocatori sono stati seguiti poco.
 
-Ordine consigliato: testa prima con test_pipeline.py su un video da 5 minuti. Se le statistiche stampate hanno senso (rally contati, giocatori tracciati, colpi classificati) → avvia lo stack Docker e testa l'interfaccia.
+**L'analisi è molto più lenta del previsto**
+Controlla la temperatura (`vcgencmd measure_temp`): sopra gli 80°C il Pi
+riduce la frequenza. Verifica anche di non aver messo i dati su microSD.
+
+**Il worker viene terminato (OOM)**
+Riduci `DETECTOR_IMGSZ` a 416, verifica lo swap del [passo 2](#swap) e che
+nessun altro servizio pesante giri sul Pi.
+
+**La pagina web non si apre dal telefono**
+`API_BASE_URL` deve contenere un hostname o IP raggiungibile dal telefono,
+non `localhost`. Verifica con `curl http://<ip-del-pi>:8000/api/health` da un
+altro dispositivo della rete.
+
+**Il database è bloccato**
+Solo il worker scrive a lungo; l'API usa un `busy_timeout` di 10 secondi. Se
+l'errore persiste, quasi sempre ci sono due worker attivi:
+`docker compose -f docker-compose.pi.yml ps` deve mostrarne uno solo.
