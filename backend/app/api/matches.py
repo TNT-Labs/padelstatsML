@@ -437,7 +437,17 @@ async def get_crop(
     return FileResponse(str(path), media_type="image/jpeg")
 
 
-@router.delete("/{match_id}", status_code=status.HTTP_204_NO_CONTENT)
+# A 204 route must declare `response_model=None`. These modules use
+# `from __future__ import annotations`, so FastAPI resolves the `-> None`
+# return annotation through `get_type_hints`, which normalises it to
+# `NoneType` — a truthy value. FastAPI then treats it as a response model and
+# asserts that a 204 cannot have a body, failing at import time. Saying so
+# explicitly is version-proof and keeps the annotation for readers.
+@router.delete(
+    "/{match_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
 async def delete_match(match_id: str, db: AsyncSession = Depends(get_db)) -> None:
     match = await _get_match(db, match_id)
     if match.status == MatchStatus.ANALYZING:

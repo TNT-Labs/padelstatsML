@@ -213,10 +213,12 @@ sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 ## Sviluppo
 
 ```bash
-# Backend
+# Backend — installa SEMPRE da requirements.dev.txt: le versioni sono
+# pinnate e la CI usa esattamente queste. Pacchetti non pinnati in locale
+# producono test verdi che falliscono in CI.
 cd backend
 pip install -r requirements.dev.txt
-DATA_DIR=/tmp/padel python -m pytest        # 115 test
+DATA_DIR=/tmp/padel python -m pytest        # 116 test
 DATA_DIR=/tmp/padel uvicorn app.main:app --reload
 
 # Worker
