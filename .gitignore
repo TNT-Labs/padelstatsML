@@ -1,45 +1,31 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
 .venv/
 venv/
-env/
+.pytest_cache/
+.ruff_cache/
 
 # Node
 node_modules/
 dist/
-.next/
 
-# Env / secrets
+# Secrets and local config
 .env
-.env.*
-!.env.example
+.env.local
 
-# ML weights (large binaries — store in S3/DVC, not git)
+# Data (videos, SQLite database, keyframes, thumbnails)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Model weights
+weights/
+*.onnx
 *.pt
 *.pth
-*.onnx
-*.weights
 
 # OS
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-
-# Docker
-.docker/
-
-# Logs
-*.log
-celerybeat-schedule

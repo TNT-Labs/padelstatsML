@@ -1,0 +1,61 @@
+# The previous version of this project had 67 commits, several titled
+# "improve: ball tracking accuracy", and zero tests. For a computer-vision
+# system that is the decisive defect: nothing that was changed could be shown
+# to be an improvement. This workflow exists so that stops being true.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.dev.txt
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATA_DIR: ${{ runner.temp }}/padel-data
+        run: python -m pytest -q
+
+  frontend:
+    name: Frontend (vitest + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build

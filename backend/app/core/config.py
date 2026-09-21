@@ -1,61 +1,119 @@
-"""Centralized configuration. All env-vars loaded once, type-validated."""
+"""Centralised configuration for the single-node Raspberry Pi 5 deployment.
+
+Design constraints (decided 2026-09, Pi-5-only target):
+  * No GPU, no external inference host, no NPU accelerator.
+  * One user, one concurrent analysis job.
+  * Everything on local disk: SQLite + filesystem. No Postgres/Redis/MinIO/S3.
+  * Inference runs on onnxruntime (CPU). torch/ultralytics are NOT installed
+    on the Pi — they are only needed once, off-device, to export the ONNX model.
+"""
+from __future__ import annotations
+
 from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # API
+    # ── API ──────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: list[str] = ["*"]  # restrict in prod
+    # Empty list = same-origin only (the API also serves the web UI).
+    cors_origins: list[str] = Field(default_factory=list)
+    # External base URL, used to build upload/crop URLs handed to the browser.
+    api_base_url: str = "http://padelpi.local:8000"
 
-    # Database
-    database_url: str = "postgresql+asyncpg://padel:padel@localhost:5432/padel"
-    sync_database_url: str = "postgresql://padel:padel@localhost:5432/padel"
+    # ── Storage ──────────────────────────────────────────────────────────────
+    # Mount the SSD here. Everything (DB, videos, crops) lives under this root.
+    data_dir: str = "/data"
+    max_video_size_mb: int = 4096
 
-    # Redis / Celery
-    redis_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    # ── Detector ─────────────────────────────────────────────────────────────
+    # Path to the exported YOLOv8 ONNX model (see scripts/export_yolo_onnx.py).
+    # The Pi never loads a .pt file — that would pull in torch.
+    detector_model: str = "weights/yolov8n.onnx"
+    # Inference input size. 480 is the sweet spot on a Cortex-A76: ~1.8x faster
+    # than 640 with a small recall loss on distant players.
+    detector_imgsz: int = 480
+    detector_conf: float = 0.30
+    detector_iou: float = 0.55
+    # onnxruntime intra-op threads. 0 = auto (physical cores, capped at 4).
+    inference_threads: int = 0
 
-    # S3 / MinIO
-    s3_endpoint: str = "http://localhost:9000"
-    s3_access_key: str = "padel"
-    s3_secret_key: str = "padelpadel"
-    s3_bucket_videos: str = "padel-videos"
-    s3_region: str = "us-east-1"
+    # ── Sampling ─────────────────────────────────────────────────────────────
+    # Player positions are sampled at this rate regardless of source fps.
+    # 5 Hz keeps path length within ~10% of ground truth for padel movement
+    # while costing 6x less than full-rate processing.
+    #   3 Hz  -> ~40 min for a 60 min match, distance underestimated ~15%
+    #   5 Hz  -> ~70 min for a 60 min match  (default)
+    #   8 Hz  -> ~110 min, marginal accuracy gain
+    sample_hz: float = 5.0
+    # Hard ceiling on analysed duration; longer videos are truncated.
+    max_analysis_minutes: int = 120
 
-    # Storage backend: "s3" uses MinIO/AWS S3; "local" writes to a mounted SSD.
-    # On Raspberry Pi set to "local" to skip MinIO entirely.
-    storage_backend: str = "s3"
-    # Root directory for local video storage (used only when storage_backend="local").
-    # Mount your SSD at this path (e.g. /mnt/ssd) and set accordingly.
-    videos_dir: str = "/data/videos"
-    # External base URL of this API — used to build upload URLs for local storage.
-    # Must be reachable by mobile/web clients (e.g. http://192.168.1.42 or http://padelpi.local).
-    api_base_url: str = "http://localhost:8000"
+    # ── Tracking ─────────────────────────────────────────────────────────────
+    # Maximum plausible player speed (m/s). Used to gate association and to
+    # reject teleport artefacts when integrating distance.
+    max_player_speed_ms: float = 8.0
+    # A track is dropped after this many seconds without a matching detection.
+    track_max_age_s: float = 1.2
 
-    # ML
-    ml_device: str = "cpu"   # "cuda" when a GPU is available
-    yolo_weights: str = "yolov8n.pt"
-    yolo_pose_weights: str = "yolov8n-pose.pt"
-    tracknet_weights: str = "weights/tracknet_padel.pth"
-    # Set to a direct download URL to auto-fetch weights on first worker startup.
-    # Leave empty to use the MOG2 background-subtraction fallback instead.
-    # Example: https://github.com/<user>/<repo>/releases/download/v1.0/tracknet_padel.pth
-    tracknet_weights_url: str = ""
-    target_fps: int = 30
-    max_video_size_mb: int = 2048
-    # Process every Nth frame for player tracking (higher = faster, lower accuracy)
-    # Recommended: 2 on GPU, 3-4 on Pi 5
-    player_stride: int = 2
-    # Ball tracking: run TrackNetV2 inference every Nth frame; Kalman fills the rest.
-    # Pi 5 recommendation: 2 (2× speed, minimal accuracy loss).
-    # GPU / fast CPU: 1 (every frame).
-    ball_stride: int = 2
-    torch_num_threads: int = 0  # 0 = auto (min(cpu_count, 4))
+    # ── Rally segmentation ───────────────────────────────────────────────────
+    rally_speed_threshold_ms: float = 1.1
+    rally_min_duration_s: float = 3.0
+    rally_merge_gap_s: float = 1.5
+
+    # ── Worker ───────────────────────────────────────────────────────────────
+    worker_poll_seconds: float = 2.0
+    job_max_attempts: int = 2
+    # A running job whose heartbeat is older than this is considered dead and
+    # is requeued on worker startup.
+    job_heartbeat_timeout_s: float = 300.0
+
+    # ── Derived paths ────────────────────────────────────────────────────────
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, v: object) -> object:
+        # Accept both JSON arrays and comma-separated strings in .env
+        if isinstance(v, str) and not v.strip().startswith("["):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+    @property
+    def data_path(self) -> Path:
+        return Path(self.data_dir)
+
+    @property
+    def videos_path(self) -> Path:
+        return self.data_path / "videos"
+
+    @property
+    def crops_path(self) -> Path:
+        return self.data_path / "crops"
+
+    @property
+    def keyframes_path(self) -> Path:
+        return self.data_path / "keyframes"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_path / "padel.db"
+
+    @property
+    def database_url(self) -> str:
+        return f"sqlite+aiosqlite:///{self.db_path}"
+
+    @property
+    def sync_database_url(self) -> str:
+        return f"sqlite:///{self.db_path}"
+
+    def ensure_dirs(self) -> None:
+        for p in (self.data_path, self.videos_path, self.crops_path, self.keyframes_path):
+            p.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

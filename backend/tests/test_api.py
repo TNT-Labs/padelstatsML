@@ -1,0 +1,269 @@
+"""End-to-end API flow: create -> upload -> calibrate -> queue."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+pytestmark = pytest.mark.asyncio
+
+W, H = 640, 360
+GOOD_CORNERS = [[200, 100], [440, 100], [600, 330], [40, 330]]
+
+
+def _make_video(path: Path) -> Path:
+    import cv2
+
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30, (W, H))
+    if not writer.isOpened():
+        pytest.skip("Questa build di OpenCV non sa scrivere file MP4")
+    for i in range(60):
+        writer.write(np.full((H, W, 3), (i * 3) % 255, dtype=np.uint8))
+    writer.release()
+    return path
+
+
+@pytest_asyncio.fixture
+async def client():
+    from app.core.database import init_schema
+    from app.main import app
+
+    init_schema()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        yield c
+
+
+@pytest_asyncio.fixture
+async def uploaded_match(client, tmp_path):
+    response = await client.post("/api/matches", json={"title": "Test"})
+    assert response.status_code == 201
+    match_id = response.json()["match_id"]
+
+    video = _make_video(tmp_path / "clip.mp4")
+    response = await client.put(
+        f"/api/matches/{match_id}/video", content=video.read_bytes()
+    )
+    assert response.status_code == 200, response.text
+    return match_id, response.json()
+
+
+async def test_upload_records_video_properties(uploaded_match):
+    _, match = uploaded_match
+    assert match["status"] == "needs_calibration"
+    assert match["width"] == W and match["height"] == H
+    assert match["fps"] == pytest.approx(30.0, abs=0.5)
+    assert match["duration_seconds"] == pytest.approx(2.0, abs=0.3)
+    assert match["calibrated"] is False
+
+
+async def test_unreadable_upload_is_rejected(client):
+    match_id = (await client.post("/api/matches", json={"title": "Rotto"})).json()["match_id"]
+    response = await client.put(f"/api/matches/{match_id}/video", content=b"not a video")
+    assert response.status_code == 422
+    # And the match must not be left claiming it has a video.
+    assert (await client.get(f"/api/matches/{match_id}")).json()["status"] == "uploading"
+
+
+async def test_analysis_cannot_start_without_calibration(uploaded_match, client):
+    """The central guarantee of the rewrite: no homography, no metrics."""
+    match_id, _ = uploaded_match
+    response = await client.post(f"/api/matches/{match_id}/start")
+    assert response.status_code == 409
+    assert "alibra" in response.json()["detail"]
+
+
+async def test_suggestion_is_returned_for_the_calibration_ui(uploaded_match, client):
+    match_id, _ = uploaded_match
+    response = await client.get(f"/api/matches/{match_id}/calibration/suggestion")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["corners_px"]) == 4
+    assert len(body["corner_labels"]) == 4
+    assert body["frame_size"] == [W, H]
+
+
+async def test_invalid_corners_are_refused_with_a_reason(uploaded_match, client):
+    match_id, _ = uploaded_match
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration",
+        # 60x50 px on a 640x360 frame: well under the 2% minimum court area.
+        json={"corners_px": [[100, 100], [160, 100], [160, 150], [100, 150]]},
+    )
+    assert response.status_code == 422
+    assert "piccolo" in response.json()["detail"]
+
+
+async def test_mirrored_corner_order_is_refused(uploaded_match, client):
+    match_id, _ = uploaded_match
+    mirrored = [GOOD_CORNERS[0], GOOD_CORNERS[3], GOOD_CORNERS[2], GOOD_CORNERS[1]]
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration", json={"corners_px": mirrored}
+    )
+    assert response.status_code == 422
+    assert "specchiato" in response.json()["detail"]
+
+
+async def test_full_flow_to_queued(uploaded_match, client):
+    match_id, _ = uploaded_match
+
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+    match = (await client.get(f"/api/matches/{match_id}")).json()
+    assert match["status"] == "ready"
+    assert match["calibrated"] is True
+
+    response = await client.post(f"/api/matches/{match_id}/start")
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+
+    # A job row is what the worker picks up; there must be exactly one.
+    from sqlalchemy import select
+
+    from app.core.database import sync_session
+    from app.models import Job
+
+    with sync_session() as session:
+        jobs = session.scalars(select(Job).where(Job.match_id == match_id)).all()
+    assert len(jobs) == 1
+
+
+async def test_starting_twice_does_not_queue_two_jobs(uploaded_match, client):
+    match_id, _ = uploaded_match
+    await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS})
+    await client.post(f"/api/matches/{match_id}/start")
+    await client.post(f"/api/matches/{match_id}/start")
+
+    from sqlalchemy import select
+
+    from app.core.database import sync_session
+    from app.models import Job
+
+    with sync_session() as session:
+        jobs = session.scalars(select(Job).where(Job.match_id == match_id)).all()
+    assert len(jobs) == 1
+
+
+async def test_net_marker_reports_its_own_error(uploaded_match, client):
+    match_id, _ = uploaded_match
+    # Net drawn halfway up the quad: close to, but not exactly, Y = 10 m.
+    net = [[120, 215], [520, 215]]
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration",
+        json={"corners_px": GOOD_CORNERS, "net_px": net},
+    )
+    assert response.status_code == 200
+    assert response.json()["net_error_m"] is not None
+
+
+async def test_player_names_are_persisted(uploaded_match, client):
+    """They used to live only in browser state and were lost on reload."""
+    match_id, _ = uploaded_match
+    response = await client.patch(
+        f"/api/matches/{match_id}", json={"player_names": ["Ana", "Bea", "Carlo", "Dino"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["player_names"] == ["Ana", "Bea", "Carlo", "Dino"]
+    assert (await client.get(f"/api/matches/{match_id}")).json()["player_names"][0] == "Ana"
+
+
+async def test_stats_are_absent_until_the_analysis_runs(uploaded_match, client):
+    match_id, _ = uploaded_match
+    assert (await client.get(f"/api/matches/{match_id}/stats")).status_code == 404
+
+
+async def test_delete_removes_the_match_and_its_files(uploaded_match, client):
+    from app.core.storage import keyframe_path, video_path
+
+    match_id, _ = uploaded_match
+    assert video_path(match_id).exists()
+
+    assert (await client.delete(f"/api/matches/{match_id}")).status_code == 204
+    assert (await client.get(f"/api/matches/{match_id}")).status_code == 404
+    assert not video_path(match_id).exists()
+    assert not keyframe_path(match_id).exists()
+
+
+async def test_camera_preset_round_trip(uploaded_match, client):
+    """Calibrate once, reuse on every later match from the same camera."""
+    match_id, _ = uploaded_match
+
+    response = await client.post(
+        "/api/presets",
+        json={
+            "name": "Campo 1 - tripode angolo",
+            "corners_px": GOOD_CORNERS,
+            "frame_width": W,
+            "frame_height": H,
+        },
+    )
+    assert response.status_code == 201, response.text
+    preset_id = response.json()["id"]
+
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration", json={"preset_id": preset_id}
+    )
+    assert response.status_code == 200
+    assert response.json()["corners_px"] == [list(map(float, c)) for c in GOOD_CORNERS]
+
+    presets = (await client.get("/api/presets")).json()
+    assert presets[0]["times_used"] == 1
+
+
+async def test_preset_from_a_different_resolution_is_rescaled(uploaded_match, client):
+    match_id, _ = uploaded_match
+    response = await client.post(
+        "/api/presets",
+        json={
+            "name": "Camera 4K",
+            "corners_px": [[c[0] * 3, c[1] * 3] for c in GOOD_CORNERS],
+            "frame_width": W * 3,
+            "frame_height": H * 3,
+        },
+    )
+    preset_id = response.json()["id"]
+
+    response = await client.post(
+        f"/api/matches/{match_id}/calibration", json={"preset_id": preset_id}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["corners_px"][0] == pytest.approx(GOOD_CORNERS[0], abs=0.5)
+    assert "riscalato" in body["message"]
+
+
+async def test_invalid_preset_is_refused_at_creation(client):
+    response = await client.post(
+        "/api/presets",
+        json={
+            "name": "Rotto",
+            "corners_px": [[100, 100], [160, 100], [160, 150], [100, 150]],
+            "frame_width": W,
+            "frame_height": H,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_health_reports_the_missing_detector(client):
+    """The Pi cannot analyse anything without the exported ONNX model, so a
+    missing model is a degraded service, not a silent fallback."""
+    response = await client.get("/api/health")
+    assert response.status_code == 503
+    assert "mancante" in response.json()["checks"]["detector"]
+
+
+async def test_unknown_api_path_returns_json_404(client):
+    """The SPA fallback must not swallow API mistakes: returning index.html
+    for /api/typo surfaces as an HTML parse error in the browser instead of
+    the actual problem."""
+    response = await client.get("/api/does-not-exist")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
