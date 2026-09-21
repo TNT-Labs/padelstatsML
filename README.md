@@ -107,7 +107,39 @@ Punti chiave:
 - **Scambi dal movimento dei giocatori,** non dalla palla: durante il punto
   tutti e quattro si muovono, fra un punto e l'altro no.
 
-### 3. Qualità del dato, sempre visibile
+### 3. Verifica e taratura
+
+I numeri hanno sempre un aspetto plausibile: una distanza di 2 480 m e una
+heatmap sbilanciata verso la rete sono indistinguibili da quelle giuste,
+anche se due giocatori sono stati scambiati per metà partita. L'unico modo
+per saperlo è **guardare i fotogrammi**.
+
+Ogni analisi salva le osservazioni grezze (~17 MB per ora di video). Da quelle:
+
+```bash
+# Guarda cosa ha visto la pipeline: campo proiettato, ID giocatori,
+# velocità, mini-mappa dall'alto, scambi sulla timeline
+python scripts/overlay.py <match-id> --out check.mp4
+python scripts/overlay.py <match-id> --stills /tmp/frames --from 120 --to 180
+
+# Ri-tara una soglia in un secondo, senza rifare l'inferenza
+python scripts/retune.py <match-id> --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
+```
+
+L'inferenza è l'unico stadio costoso: tutto ciò che viene dopo gira sulle
+osservazioni salvate in millisecondi. È la differenza fra tarare una soglia
+in un secondo e pagare un'ora di rianalisi per ogni tentativo — cioè fra
+misurare un miglioramento e sperarci.
+
+Cosa guardare nell'overlay, in ordine:
+1. Il campo disegnato sta sul campo vero, e la linea gialla sulla rete vera?
+   Se no, ricalibra: ogni numero in metri è sbagliato.
+2. Ogni giocatore mantiene lo stesso colore per tutta la partita? Un colore
+   che salta fra due persone è un errore di identità — sulla mini-mappa è
+   evidente.
+3. I segmenti verdi sulla timeline coincidono con i punti reali?
+
+### 4. Qualità del dato, sempre visibile
 
 Ogni risultato porta con sé `data_quality`: origine della calibrazione,
 scarto della rete, frequenza di campionamento, quanti giocatori sono stati
@@ -181,10 +213,12 @@ sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 ## Sviluppo
 
 ```bash
-# Backend
+# Backend — installa SEMPRE da requirements.dev.txt: le versioni sono
+# pinnate e la CI usa esattamente queste. Pacchetti non pinnati in locale
+# producono test verdi che falliscono in CI.
 cd backend
 pip install -r requirements.dev.txt
-DATA_DIR=/tmp/padel python -m pytest        # 95 test
+DATA_DIR=/tmp/padel python -m pytest        # 116 test
 DATA_DIR=/tmp/padel uvicorn app.main:app --reload
 
 # Worker
@@ -199,5 +233,8 @@ npm run dev       # richiede CORS_ORIGINS=http://localhost:5173 nel backend
 
 I test coprono calibrazione e validazione geometrica, campionamento video,
 geometria del detector, tracking, ricostruzione identità, segmentazione
-scambi, metriche, semantica della coda e il flusso API completo, più una
-prova end-to-end della pipeline su una partita sintetica.
+scambi, metriche, semantica della coda, round-trip degli artefatti e il
+flusso API completo, più una prova end-to-end della pipeline su una partita
+sintetica — inclusa la verifica che **il replay dagli artefatti riproduca
+l'analisi originale**, senza la quale ogni soglia tarata con `retune.py`
+sarebbe tarata su un sistema che non esiste.

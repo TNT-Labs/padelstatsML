@@ -140,7 +140,7 @@ def _requeue_stale_jobs() -> None:
 
 def _run_job(job_id: str) -> None:
     from app.core.database import sync_session
-    from app.core.storage import save_crop, video_path
+    from app.core.storage import artifacts_dir, save_crop, video_path
     from app.ml.court import calibration_from_dict
     from app.ml.pipeline import AnalysisPipeline, PipelineConfig
     from app.models import Job, JobState, Match, MatchStats, MatchStatus
@@ -190,6 +190,7 @@ def _run_job(job_id: str) -> None:
             video_path(match_id),
             calibration=calibration,
             progress=_progress_writer(job_id, match_id),
+            artifacts_dir=artifacts_dir(match_id) if settings.keep_artifacts else None,
         )
 
         crop_keys: dict[str, str] = {}

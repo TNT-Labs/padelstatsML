@@ -121,19 +121,28 @@ class _BlobDetector:
         return out
 
 
+PIPELINE_CONFIG = PipelineConfig(detector_model="stub.onnx", sample_hz=5.0)
+
+
 @pytest.fixture(scope="module")
-def result(synthetic_match, calibration):
+def artifacts_dir(tmp_path_factory) -> Path:
+    return tmp_path_factory.mktemp("artifacts") / "match"
+
+
+@pytest.fixture(scope="module")
+def result(synthetic_match, calibration, artifacts_dir):
     import app.ml.pipeline as pipeline_module
 
     original = pipeline_module.PersonDetector
     pipeline_module.PersonDetector = _BlobDetector
     try:
-        pipeline = AnalysisPipeline(
-            PipelineConfig(detector_model="stub.onnx", sample_hz=5.0)
-        )
+        pipeline = AnalysisPipeline(PIPELINE_CONFIG)
         events: list[tuple[int, str]] = []
         output = pipeline.run(
-            synthetic_match, calibration=calibration, progress=lambda p, m: events.append((p, m))
+            synthetic_match,
+            calibration=calibration,
+            progress=lambda p, m: events.append((p, m)),
+            artifacts_dir=artifacts_dir,
         )
         output["_progress"] = events
         return output
@@ -209,3 +218,226 @@ def test_progress_is_monotonic_and_reaches_one_hundred(result):
     percents = [p for p, _ in result["_progress"]]
     assert percents == sorted(percents)
     assert percents[-1] == 100
+
+
+# ── Artifacts and replay ─────────────────────────────────────────────────────
+
+
+def test_artifacts_are_written_during_the_run(result, artifacts_dir):
+    assert (artifacts_dir / "meta.json").exists()
+    assert (artifacts_dir / "tracks.jsonl").exists()
+    assert (artifacts_dir / "result.json").exists()
+
+    lines = (artifacts_dir / "tracks.jsonl").read_text().splitlines()
+    total_samples = sum(p["samples"] for p in result["per_player"].values())
+    # Every observation is recorded, including those from tracklets that the
+    # identity stage later discarded.
+    assert len(lines) >= total_samples
+
+
+def test_meta_records_what_the_run_was_configured_with(result, artifacts_dir):
+    import json
+
+    meta = json.loads((artifacts_dir / "meta.json").read_text())
+    assert meta["schema_version"] == 1
+    assert meta["sample_hz"] == pytest.approx(5.0)
+    assert meta["frames_sampled"] == result["data_quality"]["frames_sampled"]
+    assert meta["calibration"]["source"] == "manual"
+    assert meta["config"]["rally_speed_threshold_ms"] == PIPELINE_CONFIG.rally_speed_threshold_ms
+    assert meta["inference_seconds"] >= 0
+
+
+def test_replaying_the_artifacts_reproduces_the_analysis(result, artifacts_dir):
+    """The point of storing artifacts: the cheap stages, re-run on the stored
+    observations, must give the same answer as the original run. If they
+    drift, every threshold tuned with scripts/retune.py is tuned against a
+    system that does not exist."""
+    from app.ml.artifacts import load_artifacts
+    from app.ml.pipeline import analyse_tracklets
+
+    artifacts = load_artifacts(artifacts_dir)
+    replayed, identity, rallies = analyse_tracklets(
+        tracklets=artifacts.tracklets,
+        calibration=artifacts.calibration,
+        config=PIPELINE_CONFIG,
+        sample_hz=artifacts.sample_hz,
+        frames_sampled=artifacts.frames_sampled,
+        analysed_s=artifacts.analysed_s,
+    )
+
+    # Counts and segmentation must match exactly: these are decisions, and a
+    # stored value must never be able to flip one.
+    assert replayed["rallies"] == result["rallies"]
+    assert replayed["summary"]["rallies_count"] == result["summary"]["rallies_count"]
+    assert len(identity.players) == 4
+    assert set(replayed["per_player"]) == set(result["per_player"])
+
+    # Continuous quantities agree to well within displayed precision. The
+    # record is lossy on purpose (see app/ml/artifacts.py), so this is a
+    # tolerance, not float equality — but the tolerance is far tighter than
+    # anything the UI shows or a human could act on.
+    for pid, expected in result["per_player"].items():
+        actual = replayed["per_player"][pid]
+        assert actual["team"] == expected["team"]
+        assert actual["samples"] == expected["samples"]
+        assert actual["distance_m"] == pytest.approx(expected["distance_m"], abs=0.05)
+        assert actual["distance_rally_m"] == pytest.approx(expected["distance_rally_m"], abs=0.05)
+        assert actual["avg_speed_ms"] == pytest.approx(expected["avg_speed_ms"], abs=0.02)
+        assert actual["peak_speed_ms"] == pytest.approx(expected["peak_speed_ms"], abs=0.02)
+        assert actual["coverage_m2"] == pytest.approx(expected["coverage_m2"], abs=0.3)
+        for zone, share in expected["zone_pct"].items():
+            assert actual["zone_pct"][zone] == pytest.approx(share, abs=0.005)
+
+    for key in ("total_rally_s", "avg_rally_s", "longest_rally_s", "active_ratio"):
+        assert replayed["summary"][key] == pytest.approx(result["summary"][key], abs=0.05)
+
+
+def test_retuning_a_threshold_changes_the_outcome(result, artifacts_dir):
+    """A sanity check on the tuning loop itself: a much stricter rally
+    threshold must find fewer points than the default."""
+    from dataclasses import replace
+
+    from app.ml.artifacts import load_artifacts
+    from app.ml.pipeline import analyse_tracklets
+
+    artifacts = load_artifacts(artifacts_dir)
+    strict = replace(PIPELINE_CONFIG, rally_speed_threshold_ms=6.0)
+    retuned, _, rallies = analyse_tracklets(
+        tracklets=artifacts.tracklets,
+        calibration=artifacts.calibration,
+        config=strict,
+        sample_hz=artifacts.sample_hz,
+        frames_sampled=artifacts.frames_sampled,
+        analysed_s=artifacts.analysed_s,
+    )
+    assert len(rallies) < len(result["rallies"])
+    assert retuned["summary"]["active_ratio"] < result["summary"]["active_ratio"]
+
+
+# ── Debug overlay ────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def overlay_context(result, artifacts_dir):
+    from app.ml.artifacts import load_artifacts
+    from app.ml.overlay import build_context
+    from app.ml.pipeline import analyse_tracklets
+
+    artifacts = load_artifacts(artifacts_dir)
+    _, identity, rallies = analyse_tracklets(
+        tracklets=artifacts.tracklets,
+        calibration=artifacts.calibration,
+        config=PIPELINE_CONFIG,
+        sample_hz=artifacts.sample_hz,
+        frames_sampled=artifacts.frames_sampled,
+        analysed_s=artifacts.analysed_s,
+    )
+    return build_context(artifacts, identity.players, rallies)
+
+
+def test_every_tracklet_maps_to_a_canonical_player(overlay_context):
+    """An unmapped track draws grey, which is the signal that the identity
+    stage discarded it. On a clean synthetic match there should be none."""
+    assert len(overlay_context.track_to_player) >= 4
+    assert set(overlay_context.track_to_player.values()) == {0, 1, 2, 3}
+
+
+def test_rendering_a_frame_annotates_without_altering_the_source(overlay_context, calibration):
+    from app.ml.overlay import render_frame
+
+    source = _render(calibration, 5.0)
+    before = source.copy()
+    frame_index = next(iter(sorted(overlay_context.observations_by_frame)))
+
+    annotated = render_frame(source, frame_index, 5.0, overlay_context)
+    assert annotated.shape == source.shape
+    assert np.array_equal(source, before), "render_frame non deve modificare il frame originale"
+    assert not np.array_equal(annotated, source), "nessuna annotazione disegnata"
+
+
+def test_overlay_handles_a_frame_with_no_observations(overlay_context, calibration):
+    """Gaps in tracking are normal; the renderer must still draw the court."""
+    from app.ml.overlay import render_frame
+
+    source = _render(calibration, 5.0)
+    annotated = render_frame(source, 10**9, 5.0, overlay_context)
+    assert not np.array_equal(annotated, source)
+
+
+def test_stills_are_written_for_frames_that_contain_players(
+    synthetic_match, overlay_context, tmp_path
+):
+    from app.ml.overlay import render_stills
+
+    written = render_stills(synthetic_match, overlay_context, tmp_path / "stills", count=4, end_s=10.0)
+    assert len(written) == 4
+    for path in written:
+        assert cv2.imread(str(path)) is not None
+
+
+def test_overlay_video_is_rendered_for_a_time_window(synthetic_match, overlay_context, tmp_path):
+    from app.ml.overlay import render_video
+
+    out = tmp_path / "overlay.mp4"
+    written = render_video(synthetic_match, overlay_context, out, start_s=2.0, end_s=8.0, scale=0.5)
+    assert written > 0
+    assert out.exists() and out.stat().st_size > 0
+
+    capture = cv2.VideoCapture(str(out))
+    try:
+        assert capture.isOpened()
+        ok, frame = capture.read()
+        assert ok and frame is not None
+    finally:
+        capture.release()
+
+
+def test_labels_stay_inside_the_frame_for_edge_players(overlay_context, calibration):
+    """Players on the far baseline sit under the banner and players at the
+    right edge run off it. The renderer clamps both; a clipped id makes the
+    overlay useless for spotting identity errors."""
+    from dataclasses import replace
+
+    from app.ml.overlay import render_frame
+
+    frame_index = next(iter(sorted(overlay_context.observations_by_frame)))
+    entries = overlay_context.observations_by_frame[frame_index]
+    track_id, obs = entries[0]
+
+    # Top-left corner and far-right edge: the two clamping cases.
+    edge_cases = [
+        replace(obs, bbox=(2.0, 1.0, 26.0, 60.0)),
+        replace(obs, bbox=(W - 30.0, H - 70.0, W - 4.0, H - 6.0)),
+    ]
+    patched = dict(overlay_context.observations_by_frame)
+    patched[frame_index] = [(track_id, o) for o in edge_cases]
+    ctx = replace(overlay_context, observations_by_frame=patched)
+
+    source = _render(calibration, 5.0)
+    annotated = render_frame(source, frame_index, 5.0, ctx)
+    assert annotated.shape == source.shape
+    assert not np.array_equal(annotated, source)
+
+
+def test_minimap_is_blended_not_pasted(overlay_context, calibration):
+    """An opaque panel would hide the part of the court it covers, which on a
+    real recording is exactly what needs checking."""
+    from app.ml.overlay import MINIMAP_MARGIN, MINIMAP_W, render_frame
+
+    source = _render(calibration, 5.0)
+    frame_index = next(iter(sorted(overlay_context.observations_by_frame)))
+    annotated = render_frame(source, frame_index, 5.0, overlay_context)
+
+    x0 = W - MINIMAP_W - MINIMAP_MARGIN
+    patch_before = source[MINIMAP_MARGIN + 40: MINIMAP_MARGIN + 60, x0 + 10: x0 + 60]
+    patch_after = annotated[MINIMAP_MARGIN + 40: MINIMAP_MARGIN + 60, x0 + 10: x0 + 60]
+    assert not np.array_equal(patch_before, patch_after)
+
+    # The panel background must be a mix of the fill and the frame beneath it,
+    # never the fill alone — that is what "blended" means here.
+    from app.ml.overlay import MINIMAP_ALPHA
+
+    fill = np.array([40, 60, 45], dtype=np.float32)
+    expected = MINIMAP_ALPHA * fill + (1 - MINIMAP_ALPHA) * patch_before.astype(np.float32)
+    assert np.allclose(patch_after.astype(np.float32), expected, atol=1.5)
+    assert not np.allclose(patch_after.astype(np.float32), fill, atol=1.0)

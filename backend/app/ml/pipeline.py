@@ -26,13 +26,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
 from app.ml.detect import PersonDetector
-from app.ml.identity import resolve_players
+from app.ml.identity import IdentityResult, resolve_players
 from app.ml.metrics import MetricsInput, compute_metrics
-from app.ml.rallies import detect_rallies
-from app.ml.tracking import CourtTracker, Observation
-from app.ml.video import FrameSampler, probe
+from app.ml.rallies import Rally, detect_rallies
+from app.ml.tracking import CourtTracker, Observation, Tracklet
+from app.ml.video import FrameSampler, VideoInfo, probe
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -54,6 +55,7 @@ class PipelineConfig:
     max_analysis_minutes: int = 120
     max_player_speed_ms: float = 8.0
     track_max_age_s: float = 1.2
+    track_min_observations: int = 3
     rally_speed_threshold_ms: float = 1.1
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 1.5
@@ -75,7 +77,16 @@ class AnalysisPipeline:
         video_path: str | Path,
         calibration: CourtCalibration,
         progress: ProgressCallback | None = None,
+        artifacts_dir: str | Path | None = None,
     ) -> dict:
+        """Analyse a video.
+
+        `artifacts_dir`, when given, receives the raw per-frame observations
+        plus the run's metadata. Inference is the only expensive stage, so
+        keeping its output makes every downstream threshold re-tunable in
+        under a second (see scripts/retune.py) and lets the debug overlay be
+        rendered without running the detector again.
+        """
         def report(percent: int, message: str) -> None:
             if progress:
                 progress(percent, message)
@@ -104,6 +115,7 @@ class AnalysisPipeline:
             calibration=calibration,
             max_speed_ms=self.config.max_player_speed_ms,
             max_age_s=self.config.track_max_age_s,
+            min_observations=self.config.track_min_observations,
         )
         roi = calibration.roi_px()
 
@@ -115,27 +127,53 @@ class AnalysisPipeline:
         last_timestamp = 0.0
         started = time.monotonic()
 
-        for frame in sampler:
-            detections = detector.detect(frame.image, roi=roi)
-            tracked = tracker.update(
-                frame_index=frame.index,
-                timestamp_s=frame.timestamp_s,
-                detections=detections,
-                frame=frame.image,
-            )
-            _collect_crops(crops, tracked, frame.image)
+        writer: ArtifactWriter | None = None
+        try:
+            if artifacts_dir is not None:
+                writer = ArtifactWriter(artifacts_dir).__enter__()
 
-            frames_sampled += 1
-            last_timestamp = frame.timestamp_s
-
-            if frames_sampled % 40 == 0:
-                report(
-                    _pass_progress(frames_sampled, expected),
-                    _pass_message(frames_sampled, expected, started, last_timestamp),
+            for frame in sampler:
+                detections = detector.detect(frame.image, roi=roi)
+                tracked = tracker.update(
+                    frame_index=frame.index,
+                    timestamp_s=frame.timestamp_s,
+                    detections=detections,
+                    frame=frame.image,
                 )
+                _collect_crops(crops, tracked, frame.image)
+                if writer is not None:
+                    writer.write_observations(tracked)
 
-        tracklets = tracker.finish()
-        analysed_s = max(last_timestamp, 0.0)
+                frames_sampled += 1
+                last_timestamp = frame.timestamp_s
+
+                if frames_sampled % 40 == 0:
+                    report(
+                        _pass_progress(frames_sampled, expected),
+                        _pass_message(frames_sampled, expected, started, last_timestamp),
+                    )
+
+            tracklets = tracker.finish()
+            analysed_s = max(last_timestamp, 0.0)
+
+            if writer is not None:
+                # Written before the downstream stages run, so a crash in
+                # identity or metrics still leaves a replayable artifact set.
+                writer.write_meta(
+                    self._meta(
+                        video_path=video_path,
+                        info=info,
+                        calibration=calibration,
+                        sampler=sampler,
+                        frames_sampled=frames_sampled,
+                        analysed_s=analysed_s,
+                        inference_seconds=time.monotonic() - started,
+                    )
+                )
+        finally:
+            if writer is not None:
+                writer.__exit__(None, None, None)
+
         report(88, f"{len(tracklets)} tracce raccolte su {frames_sampled} frame")
 
         if not tracklets:
@@ -144,42 +182,17 @@ class AnalysisPipeline:
                 "corrisponda al video e che i giocatori siano visibili."
             )
 
-        # ── 3. Identity ──────────────────────────────────────────────────────
+        # ── 3-5. Identity, rallies, metrics ──────────────────────────────────
         report(89, "Ricostruzione identità giocatori…")
-        identity = resolve_players(tracklets, max_speed_ms=self.config.max_player_speed_ms)
-        if not identity.players:
-            raise RuntimeError(
-                "Impossibile ricostruire i giocatori dalle tracce rilevate."
-            )
-        report(92, f"{len(identity.players)} giocatori identificati")
-
-        # ── 4. Rallies ───────────────────────────────────────────────────────
-        report(93, "Segmentazione degli scambi…")
-        rallies = detect_rallies(
-            identity.players,
+        result, identity, rallies = analyse_tracklets(
+            tracklets=tracklets,
+            calibration=calibration,
+            config=self.config,
             sample_hz=sampler.effective_hz,
-            speed_threshold_ms=self.config.rally_speed_threshold_ms,
-            min_duration_s=self.config.rally_min_duration_s,
-            merge_gap_s=self.config.rally_merge_gap_s,
-            max_speed_ms=self.config.max_player_speed_ms,
+            frames_sampled=frames_sampled,
+            analysed_s=analysed_s,
         )
-        report(95, f"{len(rallies)} scambi individuati")
-
-        # ── 5. Metrics ───────────────────────────────────────────────────────
-        report(96, "Calcolo statistiche…")
-        result = compute_metrics(
-            MetricsInput(
-                players=identity.players,
-                rallies=rallies,
-                identity=identity,
-                calibration=calibration,
-                sample_hz=sampler.effective_hz,
-                frames_sampled=frames_sampled,
-                analysed_s=analysed_s,
-                max_speed_ms=self.config.max_player_speed_ms,
-                detector_model=Path(self.config.detector_model).name,
-            )
-        )
+        report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         if info.frame_count and analysed_s + 1.0 < info.duration_s:
             result["data_quality"]["warnings"].append(
@@ -191,8 +204,93 @@ class AnalysisPipeline:
         report(99, "Estrazione anteprime giocatori…")
         result["player_crops_data"] = _encode_player_crops(identity.players, crops)
 
+        if artifacts_dir is not None:
+            ArtifactWriter(artifacts_dir).write_result(result)
+
         report(100, "Analisi completata")
         return result
+
+    def _meta(
+        self,
+        video_path: str | Path,
+        info: VideoInfo,
+        calibration: CourtCalibration,
+        sampler: FrameSampler,
+        frames_sampled: int,
+        analysed_s: float,
+        inference_seconds: float,
+    ) -> dict:
+        return {
+            "video": {
+                "name": Path(video_path).name,
+                "fps": round(info.fps, 3),
+                "frame_count": info.frame_count,
+                "width": info.width,
+                "height": info.height,
+                "duration_s": round(info.duration_s, 2),
+            },
+            "calibration": calibration.to_dict(),
+            "sample_hz": sampler.effective_hz,
+            "sample_step": sampler.step,
+            "frames_sampled": frames_sampled,
+            "analysed_s": round(analysed_s, 2),
+            "min_observations": self.config.track_min_observations,
+            "inference_seconds": round(inference_seconds, 1),
+            "config": {
+                "detector_model": Path(self.config.detector_model).name,
+                "detector_imgsz": self.config.detector_imgsz,
+                "detector_conf": self.config.detector_conf,
+                "detector_iou": self.config.detector_iou,
+                "max_player_speed_ms": self.config.max_player_speed_ms,
+                "track_max_age_s": self.config.track_max_age_s,
+                "rally_speed_threshold_ms": self.config.rally_speed_threshold_ms,
+                "rally_min_duration_s": self.config.rally_min_duration_s,
+                "rally_merge_gap_s": self.config.rally_merge_gap_s,
+            },
+        }
+
+
+def analyse_tracklets(
+    tracklets: list[Tracklet],
+    calibration: CourtCalibration,
+    config: PipelineConfig,
+    sample_hz: float,
+    frames_sampled: int,
+    analysed_s: float,
+) -> tuple[dict, IdentityResult, list[Rally]]:
+    """Everything after tracking: identity, rallies, metrics.
+
+    Split out of `run` so that replaying stored artifacts exercises exactly
+    the production code path. A tuning script that reimplemented these steps
+    would drift from the pipeline and measure the wrong system.
+    """
+    identity = resolve_players(tracklets, max_speed_ms=config.max_player_speed_ms)
+    if not identity.players:
+        raise RuntimeError("Impossibile ricostruire i giocatori dalle tracce rilevate.")
+
+    rallies = detect_rallies(
+        identity.players,
+        sample_hz=sample_hz,
+        speed_threshold_ms=config.rally_speed_threshold_ms,
+        min_duration_s=config.rally_min_duration_s,
+        merge_gap_s=config.rally_merge_gap_s,
+        max_speed_ms=config.max_player_speed_ms,
+    )
+
+    result = compute_metrics(
+        MetricsInput(
+            players=identity.players,
+            rallies=rallies,
+            identity=identity,
+            calibration=calibration,
+            sample_hz=sample_hz,
+            frames_sampled=frames_sampled,
+            analysed_s=analysed_s,
+            max_speed_ms=config.max_player_speed_ms,
+            detector_model=Path(config.detector_model).name,
+        )
+    )
+    return result, identity, rallies
 
 
 # ── Progress helpers ─────────────────────────────────────────────────────────

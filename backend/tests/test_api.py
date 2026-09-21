@@ -267,3 +267,35 @@ async def test_unknown_api_path_returns_json_404(client):
     response = await client.get("/api/does-not-exist")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/json")
+
+
+async def test_no_content_routes_declare_no_response_model(client):
+    """A 204 route must not carry a response model.
+
+    FastAPI asserts this at import time, so getting it wrong takes the whole
+    application down rather than failing one endpoint. The trap is that these
+    modules use `from __future__ import annotations`: a `-> None` return
+    annotation is then resolved through `get_type_hints`, which normalises it
+    to `NoneType` — truthy — and FastAPI reads it as a response model.
+
+    This check is independent of FastAPI's version-specific behaviour, so it
+    catches the next 204 route added without `response_model=None`.
+    """
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    def routes(router):
+        for route in router.routes:
+            if isinstance(route, APIRoute):
+                yield route
+            elif hasattr(route, "routes"):
+                yield from routes(route)
+
+    no_content = [r for r in routes(app.router) if r.status_code == 204]
+    assert no_content, "nessuna rotta 204 trovata: il controllo non sta verificando nulla"
+    for route in no_content:
+        assert route.response_model is None, (
+            f"{route.path} restituisce 204 ma dichiara un response model "
+            f"({route.response_model}): aggiungi response_model=None"
+        )

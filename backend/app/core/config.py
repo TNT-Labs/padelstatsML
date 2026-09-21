@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 1.5
 
+    # ── Artifacts ────────────────────────────────────────────────────────────
+    # Keep the raw per-frame observations of each analysis (~17 MB per hour of
+    # video with four players at 5 Hz). They are what make scripts/overlay.py
+    # and scripts/retune.py possible: without them, changing a threshold costs
+    # a full re-analysis.
+    keep_artifacts: bool = True
+
     # ── Worker ───────────────────────────────────────────────────────────────
     worker_poll_seconds: float = 2.0
     job_max_attempts: int = 2
@@ -100,6 +107,10 @@ class Settings(BaseSettings):
         return self.data_path / "keyframes"
 
     @property
+    def artifacts_path(self) -> Path:
+        return self.data_path / "artifacts"
+
+    @property
     def db_path(self) -> Path:
         return self.data_path / "padel.db"
 
@@ -112,7 +123,13 @@ class Settings(BaseSettings):
         return f"sqlite:///{self.db_path}"
 
     def ensure_dirs(self) -> None:
-        for p in (self.data_path, self.videos_path, self.crops_path, self.keyframes_path):
+        for p in (
+            self.data_path,
+            self.videos_path,
+            self.crops_path,
+            self.keyframes_path,
+            self.artifacts_path,
+        ):
             p.mkdir(parents=True, exist_ok=True)
 
 
