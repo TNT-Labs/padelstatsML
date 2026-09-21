@@ -19,6 +19,11 @@ def keyframe_path(match_id: str) -> Path:
     return get_settings().keyframes_path / f"{match_id}.jpg"
 
 
+def artifacts_dir(match_id: str) -> Path:
+    """Per-match directory holding the raw observations of the analysis."""
+    return get_settings().artifacts_path / match_id
+
+
 def crop_path(match_id: str, player_id: int) -> Path:
     d = get_settings().crops_path / match_id
     d.mkdir(parents=True, exist_ok=True)
@@ -52,9 +57,9 @@ def delete_match_files(match_id: str) -> None:
     """Best-effort removal of every file belonging to a match."""
     video_path(match_id).unlink(missing_ok=True)
     keyframe_path(match_id).unlink(missing_ok=True)
-    crop_dir = get_settings().crops_path / match_id
-    if crop_dir.exists():
-        shutil.rmtree(crop_dir, ignore_errors=True)
+    for directory in (get_settings().crops_path / match_id, artifacts_dir(match_id)):
+        if directory.exists():
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 def free_space_bytes() -> int:

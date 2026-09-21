@@ -23,9 +23,10 @@ server, broker, object store o reverse proxy.
 9. [Prima analisi](#9-prima-analisi)
 10. [Avvio automatico al boot](#10-avvio-automatico-al-boot)
 11. [Comandi operativi](#11-comandi-operativi)
-12. [Taratura velocità/accuratezza](#12-taratura-velocitàaccuratezza)
-13. [Backup](#13-backup)
-14. [Risoluzione problemi](#14-risoluzione-problemi)
+12. [Verificare che il tracciamento sia corretto](#12-verificare-che-il-tracciamento-sia-corretto)
+13. [Taratura velocità/accuratezza](#13-taratura-velocitàaccuratezza)
+14. [Backup](#14-backup)
+15. [Risoluzione problemi](#15-risoluzione-problemi)
 
 ---
 
@@ -290,7 +291,48 @@ viene recuperato dall'heartbeat scaduto e riprovato al successivo avvio.
 
 ---
 
-## 12. Taratura velocità/accuratezza
+## 12. Verificare che il tracciamento sia corretto
+
+**Fallo alla prima partita, prima di fidarti di qualunque numero.** Le
+statistiche sono sempre plausibili: non si distingue un'analisi corretta da
+una in cui due giocatori sono stati scambiati guardando solo i totali.
+
+Ogni analisi salva le osservazioni grezze in
+`/mnt/ssd/padelstats/artifacts/<match-id>/` (~17 MB per ora di video). Da
+quelle si genera un video annotato senza rieseguire il detector:
+
+```bash
+cd ~/padelstats
+C="docker compose -f docker-compose.pi.yml exec worker"
+
+# Primi 3 minuti annotati, ridotti a metà risoluzione
+$C python scripts/overlay.py <match-id> --to 180 --scale 0.5 --out /data/check.mp4
+
+# Oppure una manciata di immagini, più rapide da sfogliare
+$C python scripts/overlay.py <match-id> --stills /data/frames --count 12
+```
+
+Il file finisce in `/mnt/ssd/padelstats/` sull'host. Copialo e guardalo.
+
+**Cosa controllare, in quest'ordine:**
+
+1. **Il campo disegnato sta sul campo vero?** La linea gialla deve cadere
+   sulla rete reale e le linee tratteggiate sulle linee di servizio. Se no,
+   la calibrazione è sbagliata e ogni metrica in metri lo è con lei:
+   riapri la partita e ricalibra.
+2. **Ogni giocatore mantiene lo stesso colore?** Se un colore salta fra due
+   persone c'è un errore di identità. La mini-mappa in alto a destra lo rende
+   evidente: un giocatore che attraversa la rete di colpo è uno scambio di
+   identità, non un movimento.
+3. **I segmenti verdi in basso coincidono con i punti reali?** Se gli scambi
+   sono troppi o troppo pochi, tara la soglia con `retune.py` (sotto).
+
+L'ID della partita si legge dall'URL della pagina delle statistiche o da
+`curl -s http://localhost:8000/api/matches | python3 -m json.tool`.
+
+---
+
+## 13. Taratura velocità/accuratezza
 
 `SAMPLE_HZ` nel `.env` è la leva principale.
 
@@ -310,9 +352,32 @@ Altre leve:
 
 Dopo ogni modifica: `docker compose -f docker-compose.pi.yml up -d`.
 
+### Tarare le soglie senza rianalizzare
+
+L'inferenza è l'unico stadio costoso. Tutto ciò che viene dopo — identità,
+scambi, metriche — gira sulle osservazioni salvate in millisecondi, quindi
+una soglia si valuta subito invece di costare un'ora:
+
+```bash
+C="docker compose -f docker-compose.pi.yml exec worker"
+
+# Risultato con le impostazioni attuali
+$C python scripts/retune.py <match-id>
+
+# Confronta più valori della soglia di scambio
+$C python scripts/retune.py <match-id> --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
+```
+
+Scegli il valore i cui scambi corrispondono ai punti reali (verificalo
+nell'overlay), poi mettilo nel `.env` e riavvia. Parametri disponibili:
+`rally-speed`, `rally-min`, `rally-gap`, `max-speed`.
+
+Se lo spazio disco diventa critico puoi disattivare gli artefatti con
+`KEEP_ARTIFACTS=false`, rinunciando però a overlay e taratura.
+
 ---
 
-## 13. Backup
+## 14. Backup
 
 Tutto lo stato sta in una cartella:
 
@@ -331,7 +396,7 @@ sqlite3 /mnt/ssd/padelstats/padel.db ".backup '/tmp/padel-$(date +%F).db'"
 
 ---
 
-## 14. Risoluzione problemi
+## 15. Risoluzione problemi
 
 **`/api/health` risponde 503 con `detector: mancante`**
 Il file ONNX non è in `./weights/`. Rifai il [passo 6](#6-esportare-il-modello-onnx)
@@ -346,6 +411,16 @@ Nel 90% dei casi la calibrazione non corrisponde al video: riapri la partita,
 ricalibra e controlla che la rete disegnata coincida con quella reale.
 Altrimenti il campo è troppo piccolo nel fotogramma o la ripresa è troppo
 bassa e i giocatori si coprono a vicenda.
+
+**I numeri sembrano sbagliati ma non capisci perché**
+Genera l'overlay ([passo 12](#12-verificare-che-il-tracciamento-sia-corretto)).
+Distanze gonfiate indicano quasi sempre scambi di identità; distanze troppo
+basse indicano un tracciamento con molti buchi (guarda *copertura del
+tracciamento* nel pannello di affidabilità).
+
+**"Artefatti non trovati" eseguendo overlay.py o retune.py**
+La partita è stata analizzata con `KEEP_ARTIFACTS=false`, oppure prima che la
+funzione esistesse. Rilancia l'analisi dalla pagina della partita.
 
 **"Rilevati solo N giocatori invece di 4"**
 Un angolo del campo è fuori inquadratura, oppure un giocatore resta occluso
