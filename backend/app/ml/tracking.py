@@ -187,8 +187,8 @@ class CourtTracker:
         if not self._active:
             return [(self._spawn(obs), obs) for obs in observations]
 
-        gate_m = self._gate_distance(dt)
-        cost, feasible = self._build_cost(observations, timestamp_s, gate_m)
+        sample_period = dt if dt > 1e-3 else 0.2
+        cost, feasible = self._build_cost(observations, timestamp_s, sample_period)
 
         rows, cols = linear_sum_assignment(cost)
         assigned_obs: set[int] = set()
@@ -227,16 +227,24 @@ class CourtTracker:
 
     # ── Internals ────────────────────────────────────────────────────────────
 
-    def _gate_distance(self, dt: float) -> float:
-        """Maximum plausible court displacement between two samples."""
-        step = dt if dt > 1e-3 else 0.2
+    def _gate_distance(self, elapsed_s: float, sample_period_s: float) -> float:
+        """Maximum plausible court displacement since a track was last seen.
+
+        The window is measured per track, not per frame. A detector that
+        misses a player for a few samples leaves that track stale, and during
+        the gap the player keeps running: gating it on the sampling interval
+        instead of on the track's own age rejects the perfectly valid
+        re-association, kills the track and starts a new one. That is how four
+        players become hundreds of tracklets.
+        """
+        step = max(elapsed_s, sample_period_s, 1e-3)
         return self.max_speed_ms * step + 0.6   # +0.6 m for homography noise
 
     def _build_cost(
         self,
         observations: list[Observation],
         now_s: float,
-        gate_m: float,
+        sample_period_s: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         n_tracks, n_obs = len(self._active), len(observations)
         cost = np.full((n_tracks, n_obs), 1e6, dtype=np.float64)
@@ -244,6 +252,12 @@ class CourtTracker:
 
         obs_pos = np.array([o.foot_court for o in observations], dtype=np.float32)
         obs_col = np.stack([o.color for o in observations])
+
+        # Feasibility widens with a track's own age, but the spatial cost is
+        # normalised by the one-step gate for every track: otherwise a stale
+        # track, with its larger gate, would score any match as "close" and
+        # outbid a fresh track that is genuinely next to the detection.
+        cost_scale = self._gate_distance(sample_period_s, sample_period_s)
 
         for r, track in enumerate(self._active):
             predicted = track.predict(now_s)
@@ -253,8 +267,9 @@ class CourtTracker:
                 [histogram_distance(track_col, obs_col[i]) for i in range(n_obs)],
                 dtype=np.float64,
             )
-            ok = dists <= gate_m
-            spatial = np.clip(dists / max(gate_m, 1e-6), 0.0, 1.0)
+            gate = self._gate_distance(now_s - track.last_seen_s, sample_period_s)
+            ok = dists <= gate
+            spatial = np.clip(dists / cost_scale, 0.0, 1.0)
             blended = (1.0 - self.color_weight) * spatial + self.color_weight * color_d
             cost[r, ok] = blended[ok]
             feasible[r] = ok

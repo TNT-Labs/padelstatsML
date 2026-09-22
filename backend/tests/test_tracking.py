@@ -82,3 +82,53 @@ def test_torso_histograms_separate_different_shirts(calibration):
     b = _torso_histogram(frame, detections[1].bbox)
     assert histogram_distance(a, a) < 1e-6
     assert histogram_distance(a, b) > 0.5
+
+
+def test_a_track_survives_missed_detections_while_the_player_runs(calibration):
+    """A track must be re-associated after the detector loses the player.
+
+    The gate used to be sized for one sampling interval, whatever the track's
+    own age. Here the player runs at 5 m/s and is missed for five samples — a
+    full second, five metres of real movement. The constant-velocity
+    prediction is clamped to a 0.4 s horizon, so it accounts for only two of
+    those metres; the remaining three exceed the one-step gate of 2.2 m, the
+    re-association was rejected and the track abandoned.
+    """
+    frames: list[list[SyntheticPlayer]] = []
+    y = 2.0
+    for i in range(30):
+        y = min(y + 5.0 * DT, 18.0)
+        frames.append([] if 10 <= i <= 14 else [SyntheticPlayer((5.0, y), 0)])
+
+    tracklets = _run(calibration, frames)
+    assert len(tracklets) == 1, f"traccia spezzata in {len(tracklets)} frammenti"
+    assert len(tracklets[0]) == 25
+
+
+def test_a_stale_track_does_not_outbid_a_fresh_one(calibration):
+    """Widening the gate for stale tracks must not let them steal detections:
+    the spatial cost stays normalised by the one-step gate, so the track
+    actually next to the detection still wins."""
+    frames = []
+    for i in range(12):
+        near = SyntheticPlayer((2.0, 4.0 + i * 0.1), 0)
+        far = SyntheticPlayer((8.0, 15.0), 1)
+        # The far player disappears for four samples, going stale.
+        frames.append([near] if 6 <= i <= 9 else [near, far])
+
+    tracklets = _run(calibration, frames)
+    by_position = sorted(tracklets, key=lambda t: t.mean_position()[0])
+    assert len(by_position) == 2
+    # The near player keeps every sample: nothing was stolen by the stale track.
+    assert len(by_position[0]) == 12
+
+
+def test_an_impossible_jump_is_still_rejected_after_a_gap(calibration):
+    """The widened gate is physical, not unlimited: after a 0.4 s gap a player
+    can cover about 3.8 m, not the whole court."""
+    frames = [[SyntheticPlayer((1.0, 2.0), 0)] for _ in range(8)]
+    frames += [[], []]
+    frames += [[SyntheticPlayer((9.0, 18.0), 1)] for _ in range(8)]
+
+    tracklets = _run(calibration, frames)
+    assert len(tracklets) == 2
