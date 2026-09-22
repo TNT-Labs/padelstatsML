@@ -207,7 +207,7 @@ automatico al boot ci sono due unit systemd pronte in
 ### Con Docker
 
 ```bash
-docker compose -f docker-compose.pi.yml up -d --build
+docker compose up -d --build
 ```
 
 Due container (`api` e `worker`) che condividono un'immagine; il build della
