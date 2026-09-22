@@ -1,0 +1,4 @@
+# Segnaposto: tiene la cartella nel repository.
+# docker-compose.pi.yml monta ./weights su /srv/weights; se la cartella
+# non esiste al primo avvio, Docker la crea con proprietario root e
+# l'export del modello fallisce con PermissionError.

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Export the YOLOv8 person detector to ONNX for the Pi runtime.
 
-Run this once, anywhere with torch available — a laptop is fine, the file is
-portable. The Pi itself never needs torch or ultralytics.
+Run this once. The resulting file is portable, so a laptop works too — but
+`torch==2.4.1` only ships wheels for Python 3.8-3.12, so a machine on a newer
+Python cannot install the export dependencies at all. Running it on the Pi,
+whose Raspberry Pi OS Bookworm has Python 3.11, avoids that entirely; the Pi
+itself never needs torch or ultralytics at runtime.
 
-    pip install -r requirements.export.txt
-    python scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+    python3 -m venv .export-venv && source .export-venv/bin/activate
+    pip install -r backend/requirements.export.txt
+    python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+    deactivate && rm -rf .export-venv
 
-Then copy weights/yolov8n.onnx onto the Pi and point DETECTOR_MODEL at it.
+The virtualenv is not optional on Bookworm: PEP 668 makes a system-wide
+`pip install` fail. Point DETECTOR_MODEL at the resulting file.
 
 Why a fixed input size: a statically-shaped graph lets onnxruntime pre-plan
 every allocation, which is worth roughly 10-15% on a Cortex-A76 compared to a
@@ -57,7 +63,21 @@ def main() -> int:
     )
 
     if produced.resolve() != out.resolve():
-        shutil.move(str(produced), str(out))
+        try:
+            shutil.move(str(produced), str(out))
+        except PermissionError:
+            # Caso tipico: docker compose monta ./weights e, se la cartella non
+            # esisteva al primo avvio, l'ha creata con proprietario root.
+            print(
+                f"\nPermesso negato scrivendo in {out.parent}/.\n"
+                f"Il modello è stato esportato ed è qui: {produced.resolve()}\n\n"
+                f"Quasi certamente la cartella appartiene a root perché l'ha creata\n"
+                f"Docker montandola. Sistema i permessi e sposta il file:\n\n"
+                f"  sudo chown -R $(id -u):$(id -g) {out.parent}\n"
+                f"  mv {produced.resolve()} {out}\n",
+                file=sys.stderr,
+            )
+            return 1
     print(f"Scritto {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
     if args.int8:

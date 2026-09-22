@@ -142,23 +142,42 @@ API_BASE_URL=http://padelpi.local:8000
 Il Pi esegue l'inferenza con **onnxruntime** e non installa PyTorch. Il
 modello va esportato una volta sola; il file risultante è portabile.
 
-### Opzione A — dal tuo PC (consigliata, più veloce)
-
-```bash
-pip install -r backend/requirements.export.txt
-python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
-scp weights/yolov8n.onnx pi@padelpi.local:~/padelstats/weights/
-```
-
-### Opzione B — sul Pi
+### Sul Pi (consigliato)
 
 ```bash
 cd ~/padelstats
-python3 -m venv /tmp/export && source /tmp/export/bin/activate
+
+# Il venv va sull'SSD, non in /tmp: lì lo spazio è poco.
+python3 -m venv .export-venv && source .export-venv/bin/activate
+pip install --upgrade pip
 pip install -r backend/requirements.export.txt      # ~10 minuti, ~2 GB
 python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
-deactivate && rm -rf /tmp/export                     # lo spazio torna libero
+deactivate && rm -rf .export-venv                    # lo spazio torna libero
 ```
+
+Il virtualenv non è opzionale: Bookworm segue la PEP 668 e un `pip install`
+di sistema fallisce con `externally-managed-environment`.
+
+### Da un altro computer
+
+Il file ONNX è portabile, quindi puoi produrlo altrove e copiarlo con `scp`
+in `~/padelstats/weights/`. Attenzione a due cose:
+
+- `torch==2.4.1` ha wheel solo per **Python 3.8-3.12**. Su una macchina con
+  un Python più recente (3.13, 3.14) `pip install` fallisce con
+  "No matching distribution found", e serve affiancare un Python più vecchio.
+- Su Windows i comandi qui sopra vanno tradotti in PowerShell: `;` al posto
+  di `&&`, e `.\.export-venv\Scripts\Activate.ps1` per attivare il venv.
+
+Per questo la strada sul Pi resta la più semplice.
+
+> **Se l'export finisce con `PermissionError` scrivendo in `weights/`:** la
+> cartella appartiene a root perché l'ha creata Docker montandola prima che
+> esistesse. Il modello è comunque stato prodotto nella cartella corrente:
+> ```bash
+> sudo chown -R $(id -u):$(id -g) weights
+> mv yolov8n.onnx weights/
+> ```
 
 Lo script verifica l'export ricaricandolo con onnxruntime, esattamente come
 farà il worker.
