@@ -28,12 +28,18 @@ this instead of silently degrading the numbers.
 """
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from app.ml.court import COURT_LENGTH_M
 from app.ml.tracking import Observation, Tracklet, histogram_distance
+
+# (fusioni completate, totale tracce di partenza) — serve solo a far avanzare
+# la barra durante uno stadio che altrimenti resta muto per minuti.
+ProgressCallback = Callable[[int, int], None]
 
 N_PLAYERS = 4
 
@@ -94,6 +100,12 @@ class IdentityResult:
 class _Cluster:
     observations: list[Observation]
     sources: list[int]
+    # Cached colour signature. Computing it averages over every observation in
+    # the cluster, and the linking loop compares each cluster against all the
+    # others repeatedly — recomputing it per comparison made the stage cubic in
+    # the number of tracklets. A merge builds a new _Cluster, so the cache
+    # cannot go stale.
+    _signature: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     @property
     def start_s(self) -> float:
@@ -104,12 +116,14 @@ class _Cluster:
         return self.observations[-1].timestamp_s
 
     def signature(self) -> np.ndarray:
-        weights = np.array([o.confidence for o in self.observations], dtype=np.float32)
-        stack = np.stack([o.color for o in self.observations])
-        total = float(weights.sum())
-        sig = stack.mean(axis=0) if total <= 0 else (stack * weights[:, None]).sum(axis=0) / total
-        norm = float(sig.sum())
-        return sig / norm if norm > 0 else sig
+        if self._signature is None:
+            weights = np.array([o.confidence for o in self.observations], dtype=np.float32)
+            stack = np.stack([o.color for o in self.observations])
+            total = float(weights.sum())
+            sig = stack.mean(axis=0) if total <= 0 else (stack * weights[:, None]).sum(axis=0) / total
+            norm = float(sig.sum())
+            self._signature = sig / norm if norm > 0 else sig
+        return self._signature
 
     def mean_x(self) -> float:
         return float(np.mean([o.foot_court[0] for o in self.observations]))
@@ -122,6 +136,7 @@ class _Cluster:
 def resolve_players(
     tracklets: list[Tracklet],
     max_speed_ms: float = 8.0,
+    progress: ProgressCallback | None = None,
 ) -> IdentityResult:
     """Link tracklets into four players and assign teams and stable ids."""
     warnings: list[str] = []
@@ -129,7 +144,7 @@ def resolve_players(
     if not usable:
         return IdentityResult([], ["Nessun giocatore rilevato nel video."], 0, 0, 0)
 
-    clusters = _link_tracklets(usable, max_speed_ms)
+    clusters = _link_tracklets(usable, max_speed_ms, progress=progress)
     clusters.sort(key=lambda c: -len(c.observations))
 
     total_obs = sum(len(c.observations) for c in clusters)
@@ -169,40 +184,78 @@ def resolve_players(
 
 # ── Linking ──────────────────────────────────────────────────────────────────
 
-def _link_tracklets(tracklets: list[Tracklet], max_speed_ms: float) -> list[_Cluster]:
-    clusters = [
-        _Cluster(observations=list(t.observations), sources=[t.id])
-        for t in sorted(tracklets, key=lambda t: t.start_s)
-    ]
+def _link_tracklets(
+    tracklets: list[Tracklet],
+    max_speed_ms: float,
+    progress: ProgressCallback | None = None,
+) -> list[_Cluster]:
+    """Greedily merge the cheapest linkable pair until none is cheap enough.
 
-    while True:
-        best: tuple[float, int, int] | None = None
-        for i in range(len(clusters)):
-            for j in range(len(clusters)):
-                if i == j:
-                    continue
-                cost = _link_cost(clusters[i], clusters[j], max_speed_ms)
-                if cost is None:
-                    continue
-                if best is None or cost < best[0]:
-                    best = (cost, i, j)
+    The pairwise costs are computed once and then kept: a merge only
+    invalidates the pairs involving the two clusters it consumed, so each
+    round costs one new row instead of a full rescan. Recomputing every pair
+    after every merge made this stage cubic in the number of tracklets, which
+    on a real match — where tracking fragments far more than on synthetic
+    video — meant minutes of apparently frozen progress.
+    """
+    clusters: dict[int, _Cluster] = {
+        index: _Cluster(observations=list(t.observations), sources=[t.id])
+        for index, t in enumerate(sorted(tracklets, key=lambda t: t.start_s))
+    }
+    next_id = len(clusters)
 
-        if best is None or best[0] > LINK_COST_THRESHOLD:
+    costs: dict[tuple[int, int], float] = {}
+    # Which cost entries mention a given cluster, so invalidation is O(degree)
+    # rather than a scan of every pair.
+    touching: dict[int, set[tuple[int, int]]] = defaultdict(set)
+
+    def add_pair(a: int, b: int) -> None:
+        cost = _link_cost(clusters[a], clusters[b], max_speed_ms)
+        if cost is None:
+            return
+        costs[(a, b)] = cost
+        touching[a].add((a, b))
+        touching[b].add((a, b))
+
+    ids = list(clusters)
+    for a in ids:
+        for b in ids:
+            if a != b:
+                add_pair(a, b)
+
+    total_candidates = len(clusters)
+    while costs:
+        (first, second), best = min(costs.items(), key=lambda item: item[1])
+        if best > LINK_COST_THRESHOLD:
             break
 
-        _, i, j = best
         merged = _Cluster(
             observations=sorted(
-                clusters[i].observations + clusters[j].observations,
+                clusters[first].observations + clusters[second].observations,
                 key=lambda o: o.timestamp_s,
             ),
-            sources=clusters[i].sources + clusters[j].sources,
+            sources=clusters[first].sources + clusters[second].sources,
         )
-        for index in sorted((i, j), reverse=True):
-            clusters.pop(index)
-        clusters.append(merged)
 
-    return clusters
+        for consumed in (first, second):
+            for key in touching.pop(consumed, ()):
+                if costs.pop(key, None) is not None:
+                    other = key[0] if key[1] == consumed else key[1]
+                    touching[other].discard(key)
+            del clusters[consumed]
+
+        merged_id = next_id
+        next_id += 1
+        clusters[merged_id] = merged
+        for other in list(clusters):
+            if other != merged_id:
+                add_pair(other, merged_id)
+                add_pair(merged_id, other)
+
+        if progress is not None:
+            progress(total_candidates - len(clusters), total_candidates)
+
+    return list(clusters.values())
 
 
 def _link_cost(earlier: _Cluster, later: _Cluster, max_speed_ms: float) -> float | None:

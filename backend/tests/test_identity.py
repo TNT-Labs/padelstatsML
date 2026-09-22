@@ -125,3 +125,61 @@ def test_identical_shirts_still_need_physical_reachability(calibration):
 
     result = resolve_players([here, there])
     assert len(result.players) == 2
+
+
+def test_linking_reports_progress(calibration):
+    """Without this the progress bar sits at 89% for the whole stage, which on
+    a heavily fragmented match is indistinguishable from a hang — exactly what
+    it looked like on the first real Pi run."""
+    tracklets = [_tracklet(i, obs) for i, obs in enumerate(_four_players(calibration, 0.0, 20.0))]
+    tracklets.append(_tracklet(10, walk(calibration, 0, (3.6, 6.2), (2.0, 4.0), 23.0, 40.0)))
+
+    seen: list[tuple[int, int]] = []
+    resolve_players(tracklets, progress=lambda done, total: seen.append((done, total)))
+
+    assert seen, "nessun avanzamento riportato durante il linking"
+    assert all(total == len(tracklets) for _, total in seen)
+    assert [done for done, _ in seen] == sorted(done for done, _ in seen)
+
+
+def test_linking_stays_fast_when_tracking_fragments(calibration):
+    """Real matches fragment far more than synthetic ones. The cost cache and
+    the memoised colour signature keep this linear enough to finish in
+    milliseconds; recomputing every pair after every merge made it cubic and
+    took minutes on a Pi."""
+    import time
+
+    import numpy as np
+
+    from app.ml.tracking import Observation
+
+    rng = np.random.default_rng(0)
+    tracklets = []
+    timestamp = 0.0
+    for track_id in range(300):
+        colour = rng.random(32).astype(np.float32)
+        colour /= colour.sum()
+        observations = []
+        for _ in range(20):
+            observations.append(
+                Observation(
+                    frame_index=int(timestamp * 5),
+                    timestamp_s=timestamp,
+                    bbox=(0.0, 0.0, 10.0, 30.0),
+                    foot_px=(100.0, 900.0),
+                    foot_court=(float(rng.uniform(0, 10)), float(rng.uniform(0, 20))),
+                    confidence=0.8,
+                    color=colour,
+                )
+            )
+            timestamp += 0.2
+        tracklets.append(Tracklet(id=track_id, observations=observations))
+
+    start = time.monotonic()
+    result = resolve_players(tracklets)
+    elapsed = time.monotonic() - start
+
+    assert result.players
+    # Generous: a Pi is several times slower than CI, and the pre-fix
+    # implementation needed tens of seconds for this input on x86 alone.
+    assert elapsed < 5.0, f"linking troppo lento: {elapsed:.1f}s per 300 tracce"
