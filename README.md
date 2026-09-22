@@ -168,18 +168,48 @@ aggiungerebbe due servizi e ~200 MB di RAM per una concorrenza mai usata.
 
 ## Avvio rapido
 
+Due modi, entrambi supportati. In entrambi i casi servono un `.env` e il
+modello ONNX del detector.
+
 ```bash
 git clone <repo> && cd padelstatsML
-cp .env.example .env        # imposta DATA_VOLUME e API_BASE_URL
+cp .env.example .env        # imposta DATA_DIR/DATA_VOLUME e API_BASE_URL
 
 # Esporta il detector una volta sola (anche da un PC, il file è portabile)
+python3 -m venv /tmp/export && source /tmp/export/bin/activate
 pip install -r backend/requirements.export.txt
 python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+deactivate && rm -rf /tmp/export
+```
 
+### Senza Docker
+
+```bash
+make install     # venv + dipendenze + build della UI in backend/web
+make run         # API su :8000
+make worker      # in un secondo terminale
+```
+
+`make install` crea un virtualenv in `.venv`: su Raspberry Pi OS Bookworm non
+è una preferenza ma un obbligo (PEP 668 rifiuta `pip install` nell'interprete
+di sistema).
+
+La UI viene compilata in `backend/web`, che è dove FastAPI la cerca: senza
+quel passo l'API funziona ma il browser non vede nulla. Per un avvio
+automatico al boot ci sono due unit systemd pronte in
+[`deploy/systemd/`](deploy/systemd/).
+
+### Con Docker
+
+```bash
 docker compose -f docker-compose.pi.yml up -d --build
 ```
 
-Apri `http://padelpi.local:8000`.
+Due container (`api` e `worker`) che condividono un'immagine; il build della
+UI è uno stage del Dockerfile, quindi qui non serve `make web`.
+
+In entrambi i casi apri `http://padelpi.local:8000` e verifica con
+`curl http://localhost:8000/api/health`.
 
 Guida completa passo per passo: [INSTALL_RASPBERRY.md](INSTALL_RASPBERRY.md).
 
@@ -213,22 +243,23 @@ sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 ## Sviluppo
 
 ```bash
-# Backend — installa SEMPRE da requirements.dev.txt: le versioni sono
-# pinnate e la CI usa esattamente queste. Pacchetti non pinnati in locale
-# producono test verdi che falliscono in CI.
-cd backend
-pip install -r requirements.dev.txt
-DATA_DIR=/tmp/padel python -m pytest        # 116 test
-DATA_DIR=/tmp/padel uvicorn app.main:app --reload
+make install      # venv, dipendenze, build della UI
+make test         # 124 backend + 14 frontend
+make run          # API con reload
+make worker       # worker, in un altro terminale
+make check        # interroga /api/health
+```
 
-# Worker
-DATA_DIR=/tmp/padel python -m app.worker.runner
+Installa **sempre** le dipendenze pinnate (`make` lo fa): pacchetti non
+pinnati in locale producono test verdi che falliscono in CI. Per i soli
+strumenti di test aggiungi `.venv/bin/pip install -r backend/requirements.dev.txt`.
 
-# Frontend
-cd frontend
-npm install
-npm test          # 14 test sulla geometria del campo
-npm run dev       # richiede CORS_ORIGINS=http://localhost:5173 nel backend
+Per lavorare sul frontend con hot reload serve il dev server di Vite, che
+gira su un'altra porta e quindi richiede CORS:
+
+```bash
+echo 'CORS_ORIGINS=http://localhost:5173' >> .env
+cd frontend && npm run dev
 ```
 
 I test coprono calibrazione e validazione geometrica, campionamento video,

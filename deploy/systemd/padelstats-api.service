@@ -1,0 +1,42 @@
+# API + interfaccia web. Installazione senza Docker.
+#
+#   sudo cp deploy/systemd/padelstats-*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now padelstats-api padelstats-worker
+#
+# Adatta User e i percorsi se il repository non è in /home/pi/padelstats.
+
+[Unit]
+Description=Padel Stats API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/padelstats/backend
+# La configurazione viene letta dal .env nella radice del repository, lo
+# stesso file che userebbe docker compose.
+ExecStart=/home/pi/padelstats/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+# L'API deve restare reattiva anche mentre il worker satura i quattro core,
+# altrimenti la pagina di stato smette di aggiornarsi proprio durante
+# l'analisi — l'unico momento in cui serve guardarla.
+Nice=-5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=padelstats-api
+
+# Il servizio scrive solo dentro la cartella dati.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/mnt/ssd/padelstats
+
+[Install]
+WantedBy=multi-user.target

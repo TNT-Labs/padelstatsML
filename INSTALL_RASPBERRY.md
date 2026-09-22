@@ -18,7 +18,8 @@ server, broker, object store o reverse proxy.
 4. [SSD e cartella dati](#4-ssd-e-cartella-dati)
 5. [Configurazione](#5-configurazione)
 6. [Esportare il modello ONNX](#6-esportare-il-modello-onnx)
-7. [Build e avvio](#7-build-e-avvio)
+7. [Build e avvio (Docker)](#7-build-e-avvio-docker)
+7b. [Installazione senza Docker](#7b-installazione-senza-docker)
 8. [Verifica](#8-verifica)
 9. [Prima analisi](#9-prima-analisi)
 10. [Avvio automatico al boot](#10-avvio-automatico-al-boot)
@@ -168,7 +169,7 @@ farà il worker.
 
 ---
 
-## 7. Build e avvio
+## 7. Build e avvio (Docker)
 
 ```bash
 cd ~/padelstats
@@ -181,10 +182,100 @@ nulla.
 
 ---
 
+## 7b. Installazione senza Docker
+
+Alternativa al passo 7, non aggiuntiva: scegli l'una o l'altra. Senza Docker
+si risparmiano circa 400 MB di immagini e l'avvio è più rapido, ma i due
+servizi vanno installati a mano.
+
+### Prerequisiti
+
+```bash
+sudo apt install -y python3-venv python3-dev libglib2.0-0 nodejs npm
+```
+
+`libglib2.0-0` serve a opencv-python-headless; tutto il resto delle
+dipendenze Python ha wheel precompilate per aarch64, quindi non viene
+compilato nulla.
+
+### Installazione
+
+```bash
+cd ~/padelstats
+make install
+```
+
+Il target crea un virtualenv in `.venv`, installa le dipendenze pinnate e
+compila la UI in `backend/web`.
+
+> Il virtualenv non è opzionale: Raspberry Pi OS Bookworm segue la PEP 668 e
+> un `pip install` nell'interprete di sistema fallisce con
+> `externally-managed-environment`.
+
+> La UI **deve** finire in `backend/web`: è lì che FastAPI la cerca. Se salti
+> `make web`, l'API risponde regolarmente ma il browser riceve una pagina
+> vuota, e nei log compare `UI non presente in … — modalità solo API`.
+
+### Prova in foreground
+
+Due terminali, per vedere subito i log:
+
+```bash
+make run      # terminale 1 — API su :8000
+make worker   # terminale 2 — worker di analisi
+```
+
+Verifica da un altro terminale:
+
+```bash
+make check
+```
+
+### Servizi systemd (avvio automatico)
+
+```bash
+sudo cp deploy/systemd/padelstats-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now padelstats-api padelstats-worker
+```
+
+Le unit presuppongono il repository in `/home/pi/padelstats`, l'utente `pi` e
+i dati in `/mnt/ssd/padelstats`. Se il tuo assetto è diverso, adatta
+`User`, `WorkingDirectory`, `ExecStart` e `ReadWritePaths` prima di copiarle
+(`ReadWritePaths` deve combaciare con `DATA_VOLUME`, altrimenti i servizi
+partono ma non riescono a scrivere).
+
+Il worker gira con `Nice=5` e l'API con `Nice=-5`: durante un'analisi i
+quattro core sono saturi, e senza questa differenza la pagina di stato smette
+di aggiornarsi proprio quando serve guardarla.
+
+### Comandi operativi
+
+```bash
+sudo systemctl status padelstats-api padelstats-worker
+sudo journalctl -u padelstats-worker -f     # log dell'analisi
+sudo systemctl restart padelstats-worker
+
+# Dopo un git pull
+cd ~/padelstats && git pull && make install
+sudo systemctl restart padelstats-api padelstats-worker
+```
+
+Il worker termina il job in corso prima di uscire, quindi un `restart`
+durante un'analisi può richiedere qualche minuto; se viene interrotto prima,
+il job torna in coda da solo al riavvio successivo.
+
+---
+
 ## 8. Verifica
 
 ```bash
+# Docker
 docker compose -f docker-compose.pi.yml ps
+# Senza Docker
+sudo systemctl status padelstats-api padelstats-worker
+
+# In entrambi i casi
 curl -s http://localhost:8000/api/health | python3 -m json.tool
 ```
 
@@ -209,7 +300,8 @@ silenzio su un risultato inventato.
 Log del worker:
 
 ```bash
-docker compose -f docker-compose.pi.yml logs -f worker
+docker compose -f docker-compose.pi.yml logs -f worker   # Docker
+sudo journalctl -u padelstats-worker -f                  # senza Docker
 # Worker avviato · 4 thread di inferenza
 ```
 
