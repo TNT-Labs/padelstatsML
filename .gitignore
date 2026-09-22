@@ -22,8 +22,12 @@ data/
 *.db-wal
 *.db-shm
 
-# Model weights
-weights/
+# Pesi dei modelli: i file no, la cartella sì.
+# `weights/` per intero la escluderebbe dal clone, e docker compose — che la
+# monta — la ricreerebbe come root, rendendo impossibile all'utente scriverci
+# il modello esportato.
+weights/*
+!weights/.gitkeep
 *.onnx
 *.pt
 *.pth

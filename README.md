@@ -175,12 +175,17 @@ modello ONNX del detector.
 git clone <repo> && cd padelstatsML
 cp .env.example .env        # imposta DATA_DIR/DATA_VOLUME e API_BASE_URL
 
-# Esporta il detector una volta sola (anche da un PC, il file è portabile)
-python3 -m venv /tmp/export && source /tmp/export/bin/activate
+# Esporta il detector una volta sola, direttamente sul Pi
+python3 -m venv .export-venv && source .export-venv/bin/activate
 pip install -r backend/requirements.export.txt
 python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
-deactivate && rm -rf /tmp/export
+deactivate && rm -rf .export-venv
 ```
+
+Il file ONNX è portabile, quindi in teoria puoi produrlo altrove — ma
+`torch==2.4.1` ha wheel solo per Python 3.8-3.12, e su una macchina con un
+Python più recente l'installazione fallisce. Sul Pi, dove Bookworm porta
+Python 3.11, il problema non si pone.
 
 ### Senza Docker
 
