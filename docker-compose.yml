@@ -5,7 +5,7 @@
 # now a SQLite table, storage is the SSD, and the API serves the web UI, so
 # what is left is the API and the analysis worker sharing one image.
 #
-#   docker compose -f docker-compose.pi.yml up -d --build
+#   docker compose up -d --build
 #
 # Both services need DATA_DIR to point at the same volume: the SQLite file and
 # the videos live there.

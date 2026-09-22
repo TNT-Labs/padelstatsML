@@ -251,6 +251,10 @@ def _progress_writer(job_id: str, match_id: str):
         if percent < 100 and percent - state["percent"] < 2 and now - state["at"] < 15.0:
             return
         state["percent"], state["at"] = percent, now
+        # Anche nei log, non solo nel database: `docker compose logs -f worker`
+        # è il solo modo di vedere che un'analisi lunga sta davvero avanzando
+        # senza tenere aperta la pagina.
+        logger.info("[%s] %3d%% · %s", match_id[:8], percent, message)
         try:
             with sync_session() as session:
                 match = session.get(Match, match_id)

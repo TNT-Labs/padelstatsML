@@ -192,7 +192,7 @@ farà il worker.
 
 ```bash
 cd ~/padelstats
-docker compose -f docker-compose.pi.yml up -d --build
+docker compose up -d --build
 ```
 
 La prima build richiede 10-15 minuti (npm install + pip install). Tutte le
@@ -290,7 +290,7 @@ il job torna in coda da solo al riavvio successivo.
 
 ```bash
 # Docker
-docker compose -f docker-compose.pi.yml ps
+docker compose ps
 # Senza Docker
 sudo systemctl status padelstats-api padelstats-worker
 
@@ -319,7 +319,7 @@ silenzio su un risultato inventato.
 Log del worker:
 
 ```bash
-docker compose -f docker-compose.pi.yml logs -f worker   # Docker
+docker compose logs -f worker   # Docker
 sudo journalctl -u padelstats-worker -f                  # senza Docker
 # Worker avviato · 4 thread di inferenza
 ```
@@ -368,8 +368,8 @@ After=docker.service network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/home/pi/padelstats
-ExecStart=/usr/bin/docker compose -f docker-compose.pi.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose.pi.yml down
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
 
 [Install]
 WantedBy=multi-user.target
@@ -384,7 +384,7 @@ sudo systemctl daemon-reload && sudo systemctl enable padelstats
 
 ```bash
 cd ~/padelstats
-C="docker compose -f docker-compose.pi.yml"
+C="docker compose"
 
 $C ps                      # stato
 $C logs -f worker          # log dell'analisi
@@ -414,7 +414,7 @@ quelle si genera un video annotato senza rieseguire il detector:
 
 ```bash
 cd ~/padelstats
-C="docker compose -f docker-compose.pi.yml exec worker"
+C="docker compose exec worker"
 
 # Primi 3 minuti annotati, ridotti a metà risoluzione
 $C python scripts/overlay.py <match-id> --to 180 --scale 0.5 --out /data/check.mp4
@@ -461,7 +461,7 @@ Altre leve:
 - `MAX_ANALYSIS_MINUTES` — tronca i video lunghi; la troncatura viene
   dichiarata nel risultato.
 
-Dopo ogni modifica: `docker compose -f docker-compose.pi.yml up -d`.
+Dopo ogni modifica: `docker compose up -d`.
 
 ### Tarare le soglie senza rianalizzare
 
@@ -470,7 +470,7 @@ scambi, metriche — gira sulle osservazioni salvate in millisecondi, quindi
 una soglia si valuta subito invece di costare un'ora:
 
 ```bash
-C="docker compose -f docker-compose.pi.yml exec worker"
+C="docker compose exec worker"
 
 # Risultato con le impostazioni attuali
 $C python scripts/retune.py <match-id>
@@ -494,9 +494,9 @@ Tutto lo stato sta in una cartella:
 
 ```bash
 # A container fermi, per un backup coerente del database
-docker compose -f docker-compose.pi.yml stop
+docker compose stop
 tar czf padel-backup-$(date +%F).tar.gz -C /mnt/ssd padelstats
-docker compose -f docker-compose.pi.yml start
+docker compose start
 ```
 
 Solo il database (i video pesano molto di più):
@@ -554,4 +554,4 @@ altro dispositivo della rete.
 **Il database è bloccato**
 Solo il worker scrive a lungo; l'API usa un `busy_timeout` di 10 secondi. Se
 l'errore persiste, quasi sempre ci sono due worker attivi:
-`docker compose -f docker-compose.pi.yml ps` deve mostrarne uno solo.
+`docker compose ps` deve mostrarne uno solo.

@@ -183,7 +183,15 @@ class AnalysisPipeline:
             )
 
         # ── 3-5. Identity, rallies, metrics ──────────────────────────────────
-        report(89, "Ricostruzione identità giocatori…")
+        report(89, f"Ricostruzione identità da {len(tracklets)} tracce…")
+
+        def identity_progress(done: int, total: int) -> None:
+            # 89 -> 92 while tracklets are being linked. Without this the bar
+            # sits at 89% for the whole stage, which on a heavily fragmented
+            # match is indistinguishable from a hang.
+            share = done / total if total else 0.0
+            report(89 + int(3 * min(share, 1.0)), f"Ricostruzione identità · {done}/{total} tracce unite")
+
         result, identity, rallies = analyse_tracklets(
             tracklets=tracklets,
             calibration=calibration,
@@ -191,6 +199,7 @@ class AnalysisPipeline:
             sample_hz=sampler.effective_hz,
             frames_sampled=frames_sampled,
             analysed_s=analysed_s,
+            identity_progress=identity_progress,
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
@@ -257,6 +266,7 @@ def analyse_tracklets(
     sample_hz: float,
     frames_sampled: int,
     analysed_s: float,
+    identity_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -264,7 +274,9 @@ def analyse_tracklets(
     the production code path. A tuning script that reimplemented these steps
     would drift from the pipeline and measure the wrong system.
     """
-    identity = resolve_players(tracklets, max_speed_ms=config.max_player_speed_ms)
+    identity = resolve_players(
+        tracklets, max_speed_ms=config.max_player_speed_ms, progress=identity_progress
+    )
     if not identity.players:
         raise RuntimeError("Impossibile ricostruire i giocatori dalle tracce rilevate.")
 
