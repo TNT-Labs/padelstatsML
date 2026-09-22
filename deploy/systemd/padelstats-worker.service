@@ -1,0 +1,44 @@
+# Worker di analisi. Un solo processo: elabora una partita alla volta.
+
+[Unit]
+Description=Padel Stats analysis worker
+After=network-online.target padelstats-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/padelstats/backend
+ExecStart=/home/pi/padelstats/.venv/bin/python -m app.worker.runner
+Restart=always
+RestartSec=10
+
+# Priorità più bassa dell'API: il worker tiene i quattro core al 100% per
+# un'ora e non deve rendere l'interfaccia inutilizzabile nel frattempo.
+Nice=5
+
+# Un'analisi arriva a ~3 GB di picco. Il limite lascia margine e protegge il
+# resto del sistema; superato, il kernel rallenta il processo invece di
+# ucciderlo subito.
+MemoryHigh=4G
+MemoryMax=5G
+
+# Un SIGTERM fa terminare il job corrente prima di uscire (vedi
+# app/worker/runner.py); un'analisi in corso può richiedere qualche minuto
+# per chiudersi, quindi il timeout è generoso.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=padelstats-worker
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/mnt/ssd/padelstats
+
+[Install]
+WantedBy=multi-user.target

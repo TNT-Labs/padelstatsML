@@ -41,10 +41,11 @@ def create_app() -> FastAPI:
 
     # Same-origin by default. A list is only needed when the Vite dev server
     # runs on another port.
-    if settings.cors_origins:
+    origins = settings.cors_origin_list
+    if origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=settings.cors_origins,
+            allow_origins=origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

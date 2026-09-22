@@ -9,6 +9,8 @@ venv/
 # Node
 node_modules/
 dist/
+# UI compilata, prodotta da `make web` o dal build Docker
+backend/web/
 
 # Secrets and local config
 .env
