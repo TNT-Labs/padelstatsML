@@ -97,9 +97,6 @@ class Settings(BaseSettings):
     # ── Worker ───────────────────────────────────────────────────────────────
     worker_poll_seconds: float = 2.0
     job_max_attempts: int = 2
-    # A running job whose heartbeat is older than this is considered dead and
-    # is requeued on worker startup.
-    job_heartbeat_timeout_s: float = 300.0
 
     # ── Derived values ───────────────────────────────────────────────────────
     @property

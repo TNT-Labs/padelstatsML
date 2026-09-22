@@ -107,15 +107,27 @@ def test_a_job_abandoned_by_a_crashed_worker_is_requeued():
     assert match.status == MatchStatus.QUEUED
 
 
-def test_a_running_job_with_a_fresh_heartbeat_is_left_alone():
+def test_a_running_job_is_requeued_even_with_a_fresh_heartbeat():
+    """This deployment runs one worker, so a job still marked RUNNING when it
+    starts belongs to the process that just died.
+
+    Waiting for the heartbeat to age out stranded the job for good:
+    `_claim_next_job` only picks up QUEUED rows, so the match stayed in
+    ANALYZING forever. The earlier version of this test asserted the buggy
+    behaviour."""
     match_id, job_id = _queued_match()
-    _claim_next_job()
+    _claim_next_job()          # heartbeat scritto adesso
     _requeue_stale_jobs()
-    _, job = _reload(match_id, job_id)
-    assert job.state == JobState.RUNNING
+
+    match, job = _reload(match_id, job_id)
+    assert job.state == JobState.QUEUED
+    assert job.started_at is None and job.heartbeat_at is None
+    assert match.status == MatchStatus.QUEUED
 
 
 def test_an_abandoned_job_out_of_attempts_is_failed_not_looped():
+    """Il recupero non deve diventare un ciclo infinito: esaurititi i
+    tentativi il job fallisce e l'utente vede l'errore."""
     match_id, job_id = _queued_match()
     with sync_session() as session:
         job = session.get(Job, job_id)
