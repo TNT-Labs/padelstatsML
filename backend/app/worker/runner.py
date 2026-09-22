@@ -19,7 +19,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.ml.runtime import configure_cpu
@@ -99,14 +99,25 @@ def _claim_next_job() -> str | None:
 
 
 def _requeue_stale_jobs() -> None:
-    """Recover jobs abandoned by a crashed or killed worker."""
+    """Recover jobs abandoned by a crashed, killed or restarted worker.
+
+    Called once at startup. This deployment runs exactly one worker, so a job
+    still marked RUNNING when that worker starts cannot be running anywhere:
+    it belongs to the process that just died. It is requeued regardless of how
+    recent its heartbeat is.
+
+    Waiting for the heartbeat to age out, as this used to, strands the job
+    permanently — `_claim_next_job` only ever picks up QUEUED rows, so a job
+    left RUNNING is never resumed and the match sits in ANALYZING forever.
+    The stage that reports no progress is exactly the one during which a
+    restart is most likely, which made the window anything but theoretical.
+    """
     from sqlalchemy import select
 
     from app.core.database import sync_session
     from app.models import Job, JobState, Match, MatchStatus
 
     settings = get_settings()
-    cutoff = _now() - timedelta(seconds=settings.job_heartbeat_timeout_s)
 
     with sync_session() as session:
         running = session.scalars(select(Job).where(Job.state == JobState.RUNNING)).all()
@@ -114,8 +125,7 @@ def _requeue_stale_jobs() -> None:
             beat = job.heartbeat_at or job.started_at
             if beat is not None and beat.tzinfo is None:
                 beat = beat.replace(tzinfo=timezone.utc)
-            if beat is not None and beat > cutoff:
-                continue
+            idle_for = (_now() - beat).total_seconds() if beat is not None else None
 
             match = session.get(Match, job.match_id)
             if job.attempts >= settings.job_max_attempts:
@@ -126,7 +136,13 @@ def _requeue_stale_jobs() -> None:
                     match.status = MatchStatus.FAILED
                     match.error_message = "Analisi interrotta: worker riavviato."
             else:
-                logger.warning("Job %s rimasto appeso: rimesso in coda.", job.id)
+                logger.warning(
+                    "Job %s interrotto%s: rimesso in coda (tentativo %d di %d).",
+                    job.id,
+                    f" da {idle_for:.0f}s" if idle_for is not None else "",
+                    job.attempts + 1,
+                    settings.job_max_attempts,
+                )
                 job.state = JobState.QUEUED
                 job.started_at = None
                 job.heartbeat_at = None
