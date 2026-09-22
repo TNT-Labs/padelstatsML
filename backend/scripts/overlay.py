@@ -24,14 +24,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings                   # noqa: E402
 from app.core.storage import artifacts_dir, video_path     # noqa: E402
-from app.ml.artifacts import load_artifacts                # noqa: E402
+from app.ml.artifacts import load_artifacts, resolve_artifacts_dir   # noqa: E402
 from app.ml.overlay import build_context, render_stills, render_video  # noqa: E402
 from app.ml.pipeline import PipelineConfig, analyse_tracklets          # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("match_id", help="id della partita (vedi /api/matches)")
+    parser.add_argument(
+        "match_id",
+        help="id della partita, un suo prefisso, oppure 'latest' per l'ultima analizzata",
+    )
     parser.add_argument("--out", default=None, help="file MP4 di destinazione")
     parser.add_argument("--stills", default=None, help="cartella per immagini JPEG invece del video")
     parser.add_argument("--count", type=int, default=12, help="numero di immagini con --stills")
@@ -44,7 +47,14 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    directory = Path(args.artifacts) if args.artifacts else artifacts_dir(args.match_id)
+    if args.artifacts:
+        directory = Path(args.artifacts)
+    else:
+        try:
+            directory = resolve_artifacts_dir(args.match_id, settings.artifacts_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
     source = Path(args.video) if args.video else video_path(args.match_id)
 
     if not directory.exists():

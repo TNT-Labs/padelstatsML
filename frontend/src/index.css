@@ -183,6 +183,14 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
 }
 .quality-grid dt { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .03em; }
 .quality-grid dd { font-weight: 600; margin-top: .1rem; }
+.match-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem;
+  font-weight: 400;
+  word-break: break-all;
+  user-select: all;
+}
+
 .quality-excluded {
   margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--border);
   font-size: .82rem; color: var(--muted); line-height: 1.5;

@@ -29,8 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 
 from app.core.config import get_settings          # noqa: E402
-from app.core.storage import artifacts_dir        # noqa: E402
-from app.ml.artifacts import load_artifacts       # noqa: E402
+from app.ml.artifacts import load_artifacts, resolve_artifacts_dir   # noqa: E402
 
 # A successor further away in time than this is a different player, not the
 # same one reappearing.
@@ -39,12 +38,22 @@ MAX_HANDOVER_S = 3.0
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("match_id")
+    parser.add_argument(
+        "match_id",
+        help="id della partita, un suo prefisso, oppure 'latest' per l'ultima analizzata",
+    )
     parser.add_argument("--artifacts", default=None)
     args = parser.parse_args()
 
     settings = get_settings()
-    directory = Path(args.artifacts) if args.artifacts else artifacts_dir(args.match_id)
+    if args.artifacts:
+        directory = Path(args.artifacts)
+    else:
+        try:
+            directory = resolve_artifacts_dir(args.match_id, settings.artifacts_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
     if not directory.exists():
         print(f"Artefatti non trovati in {directory}.", file=sys.stderr)
         return 1

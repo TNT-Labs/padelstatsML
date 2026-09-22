@@ -119,12 +119,19 @@ Ogni analisi salva le osservazioni grezze (~17 MB per ora di video). Da quelle:
 ```bash
 # Guarda cosa ha visto la pipeline: campo proiettato, ID giocatori,
 # velocità, mini-mappa dall'alto, scambi sulla timeline
-python scripts/overlay.py <match-id> --out check.mp4
-python scripts/overlay.py <match-id> --stills /tmp/frames --from 120 --to 180
+python scripts/overlay.py latest --out check.mp4
+python scripts/overlay.py latest --stills /tmp/frames --from 120 --to 180
 
 # Ri-tara una soglia in un secondo, senza rifare l'inferenza
-python scripts/retune.py <match-id> --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
+python scripts/retune.py latest --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
+
+# Perché le tracce si spezzano: detector che perde il giocatore,
+# o associazione che rifiuta di ricongiungere?
+python scripts/diagnose_tracking.py latest
 ```
+
+Ogni script accetta `latest`, un prefisso dell'id (`4f21e100`) o l'id intero.
+L'id compare anche nel pannello di affidabilità della pagina statistiche.
 
 L'inferenza è l'unico stadio costoso: tutto ciò che viene dopo gira sulle
 osservazioni salvate in millisecondi. È la differenza fra tarare una soglia

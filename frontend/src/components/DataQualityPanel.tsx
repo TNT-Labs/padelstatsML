@@ -18,9 +18,13 @@ const SOURCE_LABEL: Record<string, string> = {
 
 interface Props {
   quality: DataQuality
+  /** Serve per gli strumenti diagnostici da riga di comando, che lo chiedono
+   *  come argomento. Senza mostrarlo qui, l'unico modo di conoscerlo è
+   *  interrogare l'API: l'app non ha rotte e l'URL non lo contiene. */
+  matchId?: string
 }
 
-export const DataQualityPanel: FC<Props> = ({ quality }) => {
+export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
   const [open, setOpen] = useState(quality.warnings.length > 0)
   const hasWarnings = quality.warnings.length > 0
 
@@ -73,6 +77,16 @@ export const DataQualityPanel: FC<Props> = ({ quality }) => {
               <dt>Modello</dt>
               <dd>{quality.detector_model || '—'}</dd>
             </div>
+            {matchId && (
+              <div>
+                <dt>ID partita</dt>
+                <dd>
+                  <code className="match-id" title="Usalo con gli script diagnostici">
+                    {matchId}
+                  </code>
+                </dd>
+              </div>
+            )}
           </dl>
 
           {quality.excluded_metrics.length > 0 && (

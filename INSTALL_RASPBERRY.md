@@ -417,10 +417,10 @@ cd ~/padelstats
 C="docker compose exec worker"
 
 # Primi 3 minuti annotati, ridotti a metà risoluzione
-$C python scripts/overlay.py <match-id> --to 180 --scale 0.5 --out /data/check.mp4
+$C python scripts/overlay.py latest --to 180 --scale 0.5 --out /data/check.mp4
 
 # Oppure una manciata di immagini, più rapide da sfogliare
-$C python scripts/overlay.py <match-id> --stills /data/frames --count 12
+$C python scripts/overlay.py latest --stills /data/frames --count 12
 ```
 
 Il file finisce in `/mnt/ssd/padelstats/` sull'host. Copialo e guardalo.
@@ -438,8 +438,17 @@ Il file finisce in `/mnt/ssd/padelstats/` sull'host. Copialo e guardalo.
 3. **I segmenti verdi in basso coincidono con i punti reali?** Se gli scambi
    sono troppi o troppo pochi, tara la soglia con `retune.py` (sotto).
 
-L'ID della partita si legge dall'URL della pagina delle statistiche o da
-`curl -s http://localhost:8000/api/matches | python3 -m json.tool`.
+Non serve conoscere l'ID della partita: `latest` indica l'ultima analizzata.
+Va bene anche un prefisso, per esempio `4f21e100`. L'ID completo compare nel
+pannello *Affidabilità dei dati* della pagina statistiche, oppure con:
+
+```bash
+curl -s http://localhost:8000/api/matches | python3 -c "
+import json,sys
+for m in json.load(sys.stdin):
+    print(f\"{m['id']}  {m['status']:<18} {m['title']}\")
+"
+```
 
 ---
 
@@ -473,10 +482,10 @@ una soglia si valuta subito invece di costare un'ora:
 C="docker compose exec worker"
 
 # Risultato con le impostazioni attuali
-$C python scripts/retune.py <match-id>
+$C python scripts/retune.py latest
 
 # Confronta più valori della soglia di scambio
-$C python scripts/retune.py <match-id> --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
+$C python scripts/retune.py latest --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
 ```
 
 Scegli il valore i cui scambi corrispondono ai punti reali (verificalo
