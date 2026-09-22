@@ -75,33 +75,43 @@ def main() -> int:
 
     starts = sorted(tracklets, key=lambda t: t.start_s)
     orphaned = 0
-    reachable_now = 0
+    reachable_one_step = 0
+    reachable_per_track = 0
     needed_windows: list[float] = []
+    box_changes: list[float] = []
     gap_hist: Counter[int] = Counter()
 
     for track in tracklets:
-        end_pos = np.array(track.observations[-1].foot_court)
-        best: tuple[float, float] | None = None       # (gap, distance)
+        last = track.observations[-1]
+        end_pos = np.array(last.foot_court)
+        best: tuple[float, float, float] | None = None    # (gap, distance, box ratio)
         for candidate in starts:
             gap = candidate.start_s - track.end_s
             if gap <= 0:
                 continue
             if gap > MAX_HANDOVER_S:
                 break
-            distance = float(np.linalg.norm(np.array(candidate.observations[0].foot_court) - end_pos))
+            first = candidate.observations[0]
+            distance = float(np.linalg.norm(np.array(first.foot_court) - end_pos))
             if best is None or distance < best[1]:
-                best = (gap, distance)
+                height_before = last.bbox[3] - last.bbox[1]
+                height_after = first.bbox[3] - first.bbox[1]
+                ratio = height_after / height_before if height_before > 1 else 1.0
+                best = (gap, distance, ratio)
 
         if best is None:
             orphaned += 1
             continue
 
-        gap, distance = best
+        gap, distance, ratio = best
         gap_hist[round(gap / period)] += 1
         if distance <= one_step_gate:
-            reachable_now += 1
-        # Window that would have been needed to accept this re-link.
+            reachable_one_step += 1
+        # Gate as the tracker computes it today: sized on the track's own age.
+        if distance <= settings.max_player_speed_ms * max(gap, period) + 0.6:
+            reachable_per_track += 1
         needed_windows.append(max(distance - 0.6, 0.0) / settings.max_player_speed_ms)
+        box_changes.append(abs(ratio - 1.0))
 
     with_successor = len(tracklets) - orphaned
     print(f"tracce senza successore entro {MAX_HANDOVER_S:.0f}s: {orphaned} "
@@ -111,21 +121,42 @@ def main() -> int:
     print()
 
     if with_successor:
-        print(f"gate di un passo ({one_step_gate:.1f} m): {reachable_now} di {with_successor} "
-              f"successori erano già raggiungibili ({100 * reachable_now / with_successor:.0f}%)")
+        print("quante di quelle ri-associazioni accetta ciascun gate:")
+        print(f"  un passo fisso ({one_step_gate:.1f} m, com'era prima): "
+              f"{reachable_one_step:>5} ({100 * reachable_one_step / with_successor:.0f}%)")
+        print(f"  età della traccia (come adesso):               "
+              f"{reachable_per_track:>5} ({100 * reachable_per_track / with_successor:.0f}%)")
+        print()
+
         needed = sorted(needed_windows)
         print("finestra di associazione che sarebbe servita (secondi di movimento):")
         for label, q in (("mediana", 0.5), ("p75", 0.75), ("p90", 0.90), ("p99", 0.99)):
             print(f"  {label:>8}: {needed[int(q * (len(needed) - 1))]:.2f}s")
         print()
+
+        changes = sorted(box_changes)
+        print("variazione di altezza del riquadro fra una traccia e la successiva:")
+        for label, q in (("mediana", 0.5), ("p75", 0.75), ("p90", 0.90)):
+            print(f"  {label:>8}: {100 * changes[int(q * (len(changes) - 1))]:.0f}%")
+        print("  (una variazione forte indica occlusione: cambia il riquadro, non il giocatore)")
+        print()
+
         print("distanza in campioni fra la morte di una traccia e la nascita della successiva:")
         for step, count in sorted(gap_hist.items())[:8]:
             print(f"  {step:>2} campioni ({step * period:.1f}s): {count}")
 
     print()
-    print("Lettura: se la maggior parte dei successori era già raggiungibile con il")
-    print("gate di un passo, il problema NON è il gate ma la resa del detector.")
-    print("Se invece servivano finestre molto più lunghe, il gate era troppo stretto.")
+    print("Lettura:")
+    print("  · molti successori già raggiungibili col gate di un passo → il problema è")
+    print("    la resa del detector, non l'associazione")
+    print("  · il gate per età accetta molto più del gate fisso → la frammentazione era")
+    print("    l'associazione, e il rimedio è già attivo")
+    print("  · restano fuori soprattutto i buchi da un campione → non è velocità del")
+    print("    giocatore ma rumore di posizione, spesso da riquadri tagliati")
+    print()
+    print("Attenzione: il successore è scelto come il più vicino nel tempo e nello")
+    print("spazio, quindi in campo affollato può appartenere a un altro giocatore.")
+    print("I numeri indicano dove guardare, non sostituiscono l'overlay.")
     return 0
 
 
