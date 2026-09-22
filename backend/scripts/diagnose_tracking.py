@@ -50,6 +50,14 @@ def main() -> int:
         return 1
 
     artifacts = load_artifacts(directory)
+    if not artifacts.complete:
+        print(
+            "ATTENZIONE: questa analisi non è conclusa. Il file delle tracce è\n"
+            "            parziale e i totali non sono ancora disponibili: i numeri\n"
+            "            qui sotto riguardano solo la parte già elaborata.\n",
+            file=sys.stderr,
+        )
+
     tracklets = artifacts.tracklets
     if not tracklets:
         print("Nessuna traccia negli artefatti.", file=sys.stderr)

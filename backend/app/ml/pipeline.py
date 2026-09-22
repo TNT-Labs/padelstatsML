@@ -131,6 +131,10 @@ class AnalysisPipeline:
         try:
             if artifacts_dir is not None:
                 writer = ArtifactWriter(artifacts_dir).__enter__()
+                # Scritto subito, prima di qualunque osservazione: chi legge la
+                # cartella mentre l'analisi gira trova un meta.json coerente
+                # con il tracks.jsonl in corso, marcato come incompleto.
+                writer.write_meta(self._meta(video_path, info, calibration, sampler))
 
             for frame in sampler:
                 detections = detector.detect(frame.image, roi=roi)
@@ -225,11 +229,16 @@ class AnalysisPipeline:
         info: VideoInfo,
         calibration: CourtCalibration,
         sampler: FrameSampler,
-        frames_sampled: int,
-        analysed_s: float,
-        inference_seconds: float,
+        frames_sampled: int | None = None,
+        analysed_s: float | None = None,
+        inference_seconds: float | None = None,
     ) -> dict:
+        """Run metadata. Called twice: once when the decode pass starts, with
+        only what is already known, and once when it ends with the totals."""
         return {
+            # False until the decode pass finishes. A reader that ignores this
+            # would pair a previous run's totals with a partial track file.
+            "complete": frames_sampled is not None,
             "video": {
                 "name": Path(video_path).name,
                 "fps": round(info.fps, 3),
@@ -242,9 +251,11 @@ class AnalysisPipeline:
             "sample_hz": sampler.effective_hz,
             "sample_step": sampler.step,
             "frames_sampled": frames_sampled,
-            "analysed_s": round(analysed_s, 2),
+            "analysed_s": round(analysed_s, 2) if analysed_s is not None else None,
             "min_observations": self.config.track_min_observations,
-            "inference_seconds": round(inference_seconds, 1),
+            "inference_seconds": (
+                round(inference_seconds, 1) if inference_seconds is not None else None
+            ),
             "config": {
                 "detector_model": Path(self.config.detector_model).name,
                 "detector_imgsz": self.config.detector_imgsz,

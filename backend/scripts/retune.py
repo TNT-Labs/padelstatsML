@@ -59,6 +59,14 @@ def main() -> int:
         return 1
 
     artifacts = load_artifacts(directory)
+    if not artifacts.complete:
+        print(
+            "ATTENZIONE: questa analisi non è conclusa. Il file delle tracce è\n"
+            "            parziale e i totali non sono ancora disponibili: i numeri\n"
+            "            qui sotto riguardano solo la parte già elaborata.\n",
+            file=sys.stderr,
+        )
+
     print(f"Partita {args.match_id[:8]} · {len(artifacts.tracklets)} tracce · "
           f"{artifacts.analysed_s / 60:.1f} min · {artifacts.sample_hz:.1f} Hz\n")
 

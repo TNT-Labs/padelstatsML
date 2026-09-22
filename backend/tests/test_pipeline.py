@@ -441,3 +441,75 @@ def test_minimap_is_blended_not_pasted(overlay_context, calibration):
     expected = MINIMAP_ALPHA * fill + (1 - MINIMAP_ALPHA) * patch_before.astype(np.float32)
     assert np.allclose(patch_after.astype(np.float32), expected, atol=1.5)
     assert not np.allclose(patch_after.astype(np.float32), fill, atol=1.0)
+
+
+def test_meta_is_written_before_the_pass_and_marked_incomplete(
+    synthetic_match, calibration, tmp_path
+):
+    """Il caso che ha tratto in inganno durante la prima analisi reale: leggere
+    la cartella mentre l'analisi gira dava i totali della run precedente
+    accanto a un tracks.jsonl appena troncato. Ora, in ogni istante della
+    passata, meta.json descrive *questa* run e dichiara di non essere finita."""
+    import json
+
+    import app.ml.pipeline as pipeline_module
+
+    directory = tmp_path / "artifacts"
+    seen: list[dict] = []
+
+    class _WatchingDetector(_BlobDetector):
+        """Fotografa meta.json durante la passata, non solo alla fine."""
+
+        def detect(self, frame, roi=None):
+            meta_file = directory / "meta.json"
+            if meta_file.exists() and len(seen) < 3:
+                seen.append(json.loads(meta_file.read_text()))
+            return super().detect(frame, roi=roi)
+
+    original = pipeline_module.PersonDetector
+    pipeline_module.PersonDetector = _WatchingDetector
+    try:
+        AnalysisPipeline(PIPELINE_CONFIG).run(
+            synthetic_match, calibration=calibration, artifacts_dir=directory
+        )
+    finally:
+        pipeline_module.PersonDetector = original
+
+    assert seen, "meta.json non esisteva durante la passata"
+    for snapshot in seen:
+        assert snapshot["complete"] is False
+        assert snapshot["frames_sampled"] is None
+        # Ma la parte già nota c'è, così la cartella è leggibile fin da subito.
+        assert snapshot["calibration"]["source"] == "manual"
+        assert snapshot["sample_hz"] == pytest.approx(5.0)
+
+    final = json.loads((directory / "meta.json").read_text())
+    assert final["complete"] is True
+    assert final["frames_sampled"] > 0
+
+
+def test_a_reanalysis_never_mixes_two_generations(synthetic_match, calibration, tmp_path):
+    """Rianalizzare la stessa partita deve sostituire gli artefatti, non
+    sovrapporli: nessun totale della run precedente può sopravvivere accanto
+    alle tracce della nuova."""
+    import json
+
+    import app.ml.pipeline as pipeline_module
+
+    directory = tmp_path / "artifacts"
+    original = pipeline_module.PersonDetector
+    pipeline_module.PersonDetector = _BlobDetector
+    try:
+        pipeline = AnalysisPipeline(PIPELINE_CONFIG)
+        pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=directory)
+        first = json.loads((directory / "meta.json").read_text())
+
+        pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=directory)
+        second = json.loads((directory / "meta.json").read_text())
+    finally:
+        pipeline_module.PersonDetector = original
+
+    assert first["frames_sampled"] == second["frames_sampled"]
+    lines = (directory / "tracks.jsonl").read_text().splitlines()
+    # Troncato e riscritto, non accodato.
+    assert len(lines) == len({(json.loads(line)["f"], json.loads(line)["id"]) for line in lines})

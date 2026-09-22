@@ -59,6 +59,15 @@ class ArtifactWriter:
         self._count = 0
 
     def __enter__(self) -> "ArtifactWriter":
+        # A re-analysis truncates tracks.jsonl and starts refilling it, so any
+        # meta.json or result.json left by the previous run would describe a
+        # file that no longer matches them. Reading the directory mid-run then
+        # mixes two generations — a completed run's frame count next to a few
+        # percent of the new run's observations — which is a very convincing
+        # way to reach the wrong conclusion. Clear them first; the pipeline
+        # writes a fresh meta.json immediately, and the result at the end.
+        for stale in ("meta.json", "result.json"):
+            (self.directory / stale).unlink(missing_ok=True)
         self._tracks = (self.directory / "tracks.jsonl").open("w", encoding="utf-8")
         return self
 
@@ -101,6 +110,15 @@ class LoadedArtifacts:
     tracklets: list[Tracklet]
     calibration: CourtCalibration
     result: dict | None
+
+    @property
+    def complete(self) -> bool:
+        """False while the decode pass is still running.
+
+        Artifacts written before this flag existed were only ever saved at the
+        end of the pass, so their absence means complete.
+        """
+        return bool(self.meta.get("complete", True))
 
     @property
     def sample_hz(self) -> float:

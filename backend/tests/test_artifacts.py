@@ -138,3 +138,41 @@ def test_result_is_stored_without_the_raw_image_bytes(tmp_path, calibration):
     stored = json.loads((directory / "result.json").read_text())
     assert stored["summary"]["rallies_count"] == 3
     assert "player_crops_data" not in stored
+
+
+# ── Rianalisi: la cartella non deve mai mescolare due generazioni ────────────
+
+def test_reopening_clears_the_previous_run(written, calibration):
+    """Una rianalisi tronca tracks.jsonl e lo riempie da capo. Se meta.json e
+    result.json della run precedente restassero lì, chi legge la cartella a
+    metà lavoro accosterebbe i totali di una run al file tracce di un'altra —
+    esattamente come è successo leggendo 12.765 frame accanto a 664."""
+    directory, _ = written
+    (directory / "result.json").write_text('{"summary": {"rallies_count": 7}}')
+    assert (directory / "meta.json").exists()
+
+    with ArtifactWriter(directory):
+        assert not (directory / "meta.json").exists()
+        assert not (directory / "result.json").exists()
+        assert (directory / "tracks.jsonl").read_text() == ""
+
+
+def test_a_run_without_the_flag_counts_as_complete(written):
+    """Gli artefatti scritti prima che il flag esistesse venivano salvati solo
+    a fine passata: la sua assenza significa concluso."""
+    directory, _ = written
+    meta_file = directory / "meta.json"
+    meta = json.loads(meta_file.read_text())
+    meta.pop("complete", None)
+    meta_file.write_text(json.dumps(meta))
+
+    assert load_artifacts(directory).complete is True
+
+
+def test_an_incomplete_run_is_reported_as_such(written, calibration):
+    directory, _ = written
+    meta = json.loads((directory / "meta.json").read_text())
+    meta["complete"] = False
+    (directory / "meta.json").write_text(json.dumps(meta))
+
+    assert load_artifacts(directory).complete is False
