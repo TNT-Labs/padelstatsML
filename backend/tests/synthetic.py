@@ -57,7 +57,7 @@ def make_observation(
     frame, detections = render_frame(calibration, [SyntheticPlayer(court_xy, shirt)])
     detection = detections[0]
     return Observation(
-        frame_index=frame_index if frame_index is not None else int(timestamp_s * 5),
+        frame_index=frame_index if frame_index is not None else int(round(timestamp_s * 5)),
         timestamp_s=timestamp_s,
         bbox=detection.bbox,
         foot_px=detection.foot_px,

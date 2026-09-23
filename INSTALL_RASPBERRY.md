@@ -501,6 +501,13 @@ prima di spendere un'ora a rianalizzarla:
 $C python scripts/retrack.py latest
 ```
 
+Se i giocatori risultano tracciati per una piccola parte della partita,
+`diagnose_identity.py` mostra cosa tiene fuori le rilevazioni scartate:
+
+```bash
+$C python scripts/diagnose_identity.py latest
+```
+
 Se lo spazio disco diventa critico puoi disattivare gli artefatti con
 `KEEP_ARTIFACTS=false`, rinunciando però a overlay e taratura.
 

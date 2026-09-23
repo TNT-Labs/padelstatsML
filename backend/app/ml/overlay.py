@@ -35,6 +35,7 @@ from app.ml.court import (
 )
 from app.ml.identity import PlayerTrack
 from app.ml.rallies import Rally
+from app.ml.tracking import observation_key
 from app.ml.video import FrameSampler
 
 # BGR, matching the four player colours used by the web UI.
@@ -59,7 +60,9 @@ class OverlayContext:
     rallies: list[Rally]
     sample_hz: float
     observations_by_frame: dict[int, list]
-    track_to_player: dict[int, int]
+    # Per detection, not per track id: identity may split a tracklet that
+    # switched person, and give its pieces to different players.
+    owner: dict[tuple[int, tuple[float, float]], int]
     speeds: dict[tuple[int, int], float]      # (track_id, frame_index) -> m/s
     analysed_s: float
 
@@ -69,10 +72,11 @@ def build_context(
     players: list[PlayerTrack],
     rallies: list[Rally],
 ) -> OverlayContext:
-    track_to_player: dict[int, int] = {}
-    for player in players:
-        for track_id in player.source_tracklets:
-            track_to_player[track_id] = player.player_id
+    owner = {
+        observation_key(obs): player.player_id
+        for player in players
+        for obs in player.observations
+    }
 
     speeds: dict[tuple[int, int], float] = {}
     for tracklet in artifacts.tracklets:
@@ -95,7 +99,7 @@ def build_context(
         rallies=rallies,
         sample_hz=artifacts.sample_hz,
         observations_by_frame=artifacts.observations_by_frame(),
-        track_to_player=track_to_player,
+        owner=owner,
         speeds=speeds,
         analysed_s=artifacts.analysed_s,
     )
@@ -107,7 +111,7 @@ def render_frame(frame: np.ndarray, frame_index: int, timestamp_s: float, ctx: O
 
     entries = ctx.observations_by_frame.get(frame_index, [])
     for track_id, obs in entries:
-        player_id = ctx.track_to_player.get(track_id)
+        player_id = ctx.owner.get(observation_key(obs))
         color = PLAYER_BGR[player_id % 4] if player_id is not None else UNASSIGNED_BGR
         _draw_player(canvas, track_id, player_id, obs, color, ctx)
 
@@ -203,7 +207,7 @@ def _draw_minimap(canvas: np.ndarray, entries, ctx: OverlayContext) -> None:
         py = int((1 - obs.foot_court[1] / COURT_LENGTH_M) * map_h)
         if not (0 <= px < MINIMAP_W and 0 <= py < map_h):
             continue        # outside the court: already flagged by the tracker
-        player_id = ctx.track_to_player.get(track_id)
+        player_id = ctx.owner.get(observation_key(obs))
         color = PLAYER_BGR[player_id % 4] if player_id is not None else UNASSIGNED_BGR
         cv2.circle(panel, (px, py), 5, color, -1)
         cv2.circle(panel, (px, py), 5, (255, 255, 255), 1)

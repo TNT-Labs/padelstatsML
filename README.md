@@ -132,6 +132,10 @@ python scripts/diagnose_tracking.py latest
 # Riesegue il tracker (senza detector, in secondi) e confronta con
 # l'analisi salvata: misura una modifica al tracker prima di rianalizzare
 python scripts/retrack.py latest
+
+# Perché delle rilevazioni restano fuori dai 4 giocatori: per ogni cluster
+# escluso, cosa gli impedisce di unirsi a ciascun giocatore
+python scripts/diagnose_identity.py latest
 ```
 
 Ogni script accetta `latest`, un prefisso dell'id (`4f21e100`) o l'id intero.

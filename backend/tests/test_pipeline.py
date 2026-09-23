@@ -352,10 +352,15 @@ def overlay_context(result, artifacts_dir):
 
 
 def test_every_tracklet_maps_to_a_canonical_player(overlay_context):
-    """An unmapped track draws grey, which is the signal that the identity
-    stage discarded it. On a clean synthetic match there should be none."""
-    assert len(overlay_context.track_to_player) >= 4
-    assert set(overlay_context.track_to_player.values()) == {0, 1, 2, 3}
+    """An unmapped detection draws grey, which is the signal that the
+    identity stage discarded it. On a clean synthetic match there should be
+    almost none."""
+    from app.ml.tracking import observation_key
+
+    assert set(overlay_context.owner.values()) == {0, 1, 2, 3}
+    drawn = [obs for entries in overlay_context.observations_by_frame.values() for _, obs in entries]
+    owned = sum(1 for obs in drawn if observation_key(obs) in overlay_context.owner)
+    assert owned / len(drawn) > 0.95
 
 
 def test_rendering_a_frame_annotates_without_altering_the_source(overlay_context, calibration):
