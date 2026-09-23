@@ -125,3 +125,59 @@ def test_pytorch_weights_are_refused(tmp_path):
     weights.write_bytes(b"stub")
     with pytest.raises(DetectorError, match="onnx"):
         PersonDetector(weights)
+
+
+# ── Part-of-person duplicates ────────────────────────────────────────────────
+
+WHOLE = (100.0, 100.0, 160.0, 400.0)            # a player, 60 x 300 px
+
+
+def test_an_upper_body_box_of_the_same_player_is_dropped():
+    from app.ml.detect import part_of_another
+
+    torso = (105.0, 102.0, 158.0, 260.0)          # same head, cut at the waist
+    assert part_of_another([WHOLE, torso]).tolist() == [False, True]
+
+
+def test_a_legs_box_of_the_same_player_is_dropped():
+    from app.ml.detect import part_of_another
+
+    legs = (108.0, 250.0, 152.0, 398.0)           # same feet
+    assert part_of_another([legs, WHOLE]).tolist() == [True, False]
+
+
+def test_a_player_standing_behind_is_kept():
+    """Far away and in line with the camera, another player can sit wholly
+    inside a near player's box — but at neither its top nor its bottom."""
+    from app.ml.detect import part_of_another
+
+    behind = (115.0, 180.0, 140.0, 280.0)
+    assert part_of_another([WHOLE, behind]).tolist() == [False, False]
+
+
+def test_a_player_just_behind_another_is_kept():
+    """Nearly the same depth: nearly the same height on screen, the same
+    bottom edge, mostly overlapping — two people, not a part of one."""
+    from app.ml.detect import part_of_another
+
+    behind = (104.0, 125.0, 158.0, 395.0)         # 90% of the height, bottoms aligned
+    assert part_of_another([WHOLE, behind]).tolist() == [False, False]
+
+
+def test_side_by_side_players_are_kept():
+    from app.ml.detect import part_of_another
+
+    other = (150.0, 110.0, 210.0, 405.0)          # overlapping, not contained
+    assert part_of_another([WHOLE, other]).tolist() == [False, False]
+    assert part_of_another([WHOLE]).tolist() == [False]
+    assert part_of_another([]).tolist() == []
+
+
+def test_the_detector_returns_one_box_for_a_player_detected_twice():
+    """Whole body (60 x 300) and torso (54 x 150, same head): IoU 0.45, under
+    the NMS threshold, so NMS alone kept both — a phantom player."""
+    detector = _stub_detector()
+    raw = _prediction([(240, 250, 60, 300, 0.8), (240, 175, 54, 150, 0.9)])
+    detections = detector._postprocess(raw, 1.0, (0.0, 0.0), (0.0, 0.0), (480, 480), (480, 480))
+    assert len(detections) == 1
+    assert detections[0].bbox[3] == pytest.approx(400.0)     # the whole body, feet included

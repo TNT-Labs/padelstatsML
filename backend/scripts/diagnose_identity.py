@@ -35,6 +35,7 @@ import numpy as np  # noqa: E402
 from app.core.config import get_settings                               # noqa: E402
 from app.ml import identity                                            # noqa: E402
 from app.ml.artifacts import load_artifacts, read_observations, resolve_artifacts_dir  # noqa: E402
+from app.ml.detect import part_of_another                              # noqa: E402
 from app.ml.tracking import Tracklet                                   # noqa: E402
 
 SHOWN = 12
@@ -152,7 +153,8 @@ def main() -> int:
         # people present, five detections in one frame need all five seen at
         # once. Each person is seen in a share r of the frames, so that
         # happens in about r^5 of them — a few percent, not most.
-        per_frame = Counter(o.frame_index for _, o in read_observations(directory))
+        stored = read_observations(directory)
+        per_frame = Counter(o.frame_index for _, o in stored)
         frames = max(artifacts.frames_sampled or len(per_frame), 1)
         crowded = sum(1 for n in per_frame.values() if n > identity.N_PLAYERS)
         share = crowded / frames
@@ -162,6 +164,20 @@ def main() -> int:
               f"({100 * share:.1f}%)")
         print(f"  con una quinta persona sempre presente ci si aspetterebbe circa il "
               f"{100 * expected:.1f}% (ogni persona vista nel {100 * per_person:.0f}% dei frame)")
+        # The same player detected twice — a whole-body box and a box of
+        # part of them — is a fifth "person" too, moving in step with a real
+        # one. The detector now drops them; runs recorded before still hold them.
+        by_frame: dict[int, list] = {}
+        for _, obs in stored:
+            by_frame.setdefault(obs.frame_index, []).append(obs)
+        parts = sum(int(part_of_another([o.bbox for o in group]).sum())
+                    for group in by_frame.values() if len(group) > 1)
+        print(f"  rilevazioni doppie (riquadro di una parte di un giocatore): {parts} "
+              f"({100 * parts / max(len(stored), 1):.1f}% delle osservazioni)")
+        if crowded and parts > 0.2 * crowded:
+            print("  Buona parte dei frame affollati sono doppioni dello stesso giocatore, non una")
+            print("  quinta persona. Il detector ora li scarta: misura l'effetto senza rianalizzare")
+            print("  con scripts/retrack.py, che applica lo stesso filtro alle osservazioni salvate.")
         if share >= 0.5 * expected:
             print("  Compatibile con una quinta persona in campo o appena fuori per buona parte")
             print("  della partita: guarda sotto dove sta e quanto si muove il primo escluso.")

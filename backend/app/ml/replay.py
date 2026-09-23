@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.ml.artifacts import LoadedArtifacts, read_observations
+from app.ml.detect import part_of_another
 from app.ml.tracking import CourtTracker, Observation, Tracklet
 
 
@@ -55,6 +56,12 @@ def replay_tracking(
     for index in indices:
         observations = by_frame.get(index, [])
         timestamp = observations[0].timestamp_s if observations else index * seconds_per_frame
+        # Runs recorded before the detector dropped part-of-person boxes still
+        # hold them; the current detector would not have produced them, so
+        # neither does the replay.
+        if len(observations) > 1:
+            drop = part_of_another([o.bbox for o in observations])
+            observations = [o for o, dropped in zip(observations, drop) if not dropped]
         # The live tracker received them ordered by confidence.
         observations = sorted(observations, key=lambda o: -o.confidence)
         tracker.update_observations(timestamp, observations)
