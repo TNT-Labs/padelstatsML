@@ -362,6 +362,11 @@ async def start_analysis(match_id: str, db: AsyncSession = Depends(get_db)) -> M
     match.progress = 0
     match.progress_message = "In coda"
     match.error_message = None
+    # Names are attached to player ids, and a new analysis may number the
+    # people differently — the identity stage is exactly what re-analysis
+    # improves. Kept, they would silently label the wrong players; cleared,
+    # the app asks for them again when the analysis completes.
+    match.player_names = None
     await db.flush()
     return MatchRead.from_match(match)
 

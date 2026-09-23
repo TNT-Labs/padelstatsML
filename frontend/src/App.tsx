@@ -154,6 +154,9 @@ export default function App() {
           stats={view.stats}
           onBack={home}
           onRename={() => setView({ name: 'identify', stats: view.stats })}
+          onReanalyse={() =>
+            setView({ name: 'processing', matchId: view.stats.match_id, autoStart: true })
+          }
         />
       )
 
