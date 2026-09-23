@@ -36,7 +36,7 @@ COPY backend/app    ./app
 COPY backend/scripts ./scripts
 COPY --from=web /web/dist ./web
 
-# Exported detector weights are mounted at runtime, not baked in.
+# Exported models (detector, re-ID) are mounted at runtime, not baked in.
 VOLUME ["/data", "/srv/weights"]
 
 EXPOSE 8000

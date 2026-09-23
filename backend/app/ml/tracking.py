@@ -26,7 +26,8 @@ robust than forcing one tracker to survive every occlusion.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -34,6 +35,9 @@ from scipy.optimize import linear_sum_assignment
 
 from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M, CourtCalibration
 from app.ml.detect import Detection
+
+if TYPE_CHECKING:
+    from app.ml.reid import ReidEmbedder
 
 # How far outside the painted court a detection may stand and still be a
 # player. The glass walls are on the lines, so 1.5 m of slack covers players
@@ -66,6 +70,9 @@ class Observation:
     foot_court: tuple[float, float]
     confidence: float
     color: np.ndarray            # normalised histogram, shape (COLOR_DIM,)
+    # Unit-length re-identification vector (see app.ml.reid), or None when no
+    # re-ID model is installed or the crop was too small to describe anybody.
+    embedding: np.ndarray | None = field(default=None, repr=False, compare=False)
 
 
 def observation_key(obs: Observation) -> tuple[int, tuple[float, float]]:
@@ -162,6 +169,7 @@ class CourtTracker:
         min_observations: int = 3,
         max_players_per_frame: int = 6,
         color_weight: float = 0.35,
+        embedder: ReidEmbedder | None = None,
     ) -> None:
         self.calibration = calibration
         self.max_speed_ms = max_speed_ms
@@ -169,6 +177,7 @@ class CourtTracker:
         self.min_observations = min_observations
         self.max_players_per_frame = max_players_per_frame
         self.color_weight = color_weight
+        self.embedder = embedder
 
         self._active: list[_ActiveTrack] = []
         self._finished: list[Tracklet] = []
@@ -355,6 +364,11 @@ class CourtTracker:
 
         candidates.sort(key=lambda o: -o.confidence)
         kept = candidates[: self.max_players_per_frame]
+        # Embedded after filtering: a spectator off court or a sixth box costs
+        # nothing. One batch per frame.
+        if self.embedder is not None and kept:
+            vectors = self.embedder.embed(frame, [o.bbox for o in kept])
+            kept = [replace(o, embedding=v) for o, v in zip(kept, vectors)]
         self.detections_kept += len(kept)
         return kept
 

@@ -534,3 +534,29 @@ def test_a_reanalysis_never_mixes_two_generations(synthetic_match, calibration, 
     lines = (directory / "tracks.jsonl").read_text().splitlines()
     # Troncato e riscritto, non accodato.
     assert len(lines) == len({(json.loads(line)["f"], json.loads(line)["id"]) for line in lines})
+
+
+def test_a_run_with_a_re_id_model_stores_embeddings(synthetic_match, calibration, tmp_path):
+    """With a re-ID model installed every kept detection carries an
+    embedding, into the artifacts and back, and the run names the model in
+    meta.json. The stand-in model is tests/fixtures/tiny_reid.onnx."""
+    import json
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+    from app.ml.artifacts import read_observations
+
+    model = Path(__file__).parent / "fixtures" / "tiny_reid.onnx"
+    original = pipeline_module.PersonDetector
+    pipeline_module.PersonDetector = _BlobDetector
+    try:
+        output = AnalysisPipeline(replace(PIPELINE_CONFIG, reid_model=str(model))).run(
+            synthetic_match, calibration=calibration, artifacts_dir=tmp_path / "run",
+        )
+    finally:
+        pipeline_module.PersonDetector = original
+
+    observations = read_observations(tmp_path / "run")
+    assert observations and all(obs.embedding is not None for _, obs in observations)
+    assert json.loads((tmp_path / "run" / "meta.json").read_text())["config"]["reid_model"] == model.name
+    assert len(output["per_player"]) == 4

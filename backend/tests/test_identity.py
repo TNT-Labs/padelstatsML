@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import numpy as np
+import pytest
+
 from app.ml.identity import resolve_players
 from app.ml.tracking import Tracklet
 from tests.synthetic import walk
@@ -362,3 +365,112 @@ def test_a_sliver_of_overlap_is_not_proof_of_two_people(calibration):
 
     assert len(result.players) == 1
     assert sorted(result.players[0].source_tracklets) == [1, 2, 3]
+
+
+# ── Re-identification ────────────────────────────────────────────────────────
+
+def _with_embeddings(observations, centroid, rng, noise=0.35):
+    from dataclasses import replace
+
+    out = []
+    for obs in observations:
+        vector = centroid + noise * rng.normal(size=centroid.shape) / np.sqrt(centroid.size)
+        out.append(replace(obs, embedding=(vector / np.linalg.norm(vector)).astype(np.float32)))
+    return out
+
+
+def _four_players_crossing(calibration, with_embeddings: bool):
+    """Two pairs, each in one kit, over a minute of play in 5 s pieces with a
+    1 s gap between them. Every piece, team-mates swap sides: a player who
+    came back to the middle from the left leaves it to the right. Space
+    points each piece at the wrong successor, the kit cannot tell them
+    apart; only their appearance can."""
+    rng = np.random.default_rng(3)
+    centroids = []
+    for _ in range(4):
+        c = rng.normal(size=64)
+        centroids.append(c / np.linalg.norm(c))
+
+    # (shirt, y, direction the player swings out to) for each player
+    players = [(0, 5.0, -3.0), (0, 5.0, +3.0), (1, 15.0, -3.0), (1, 15.0, +3.0)]
+    tracklets, truth = [], {}
+    for segment in range(10):
+        t0 = segment * 6.0
+        for who, (shirt, y, swing) in enumerate(players):
+            swing = swing if segment % 2 == 0 else -swing
+            out_and_back = walk(calibration, shirt, (5.0, y), (5.0 + swing, y), t0, t0 + 2.4) + \
+                walk(calibration, shirt, (5.0 + swing, y), (5.0, y), t0 + 2.6, t0 + 5.0)
+            if with_embeddings:
+                out_and_back = _with_embeddings(out_and_back, centroids[who], rng)
+            tid = segment * 10 + who
+            tracklets.append(_tracklet(tid, out_and_back))
+            truth[tid] = who
+    return tracklets, truth
+
+
+def test_re_id_tells_apart_team_mates_in_the_same_kit(calibration):
+    tracklets, truth = _four_players_crossing(calibration, with_embeddings=True)
+
+    result = resolve_players(tracklets)
+
+    assert result.appearance["cue"] == "reid"
+    assert result.appearance["same"] < result.appearance["different"]
+    assert len(result.players) == 4
+    for player in result.players:
+        people = {truth[tid] for tid in player.source_tracklets}
+        assert len(people) == 1, f"un giocatore ne contiene {len(people)}: {sorted(player.source_tracklets)}"
+    assert result.observations_discarded == 0
+
+
+def test_without_re_id_the_match_says_so(calibration):
+    tracklets, _ = _four_players_crossing(calibration, with_embeddings=False)
+    result = resolve_players(tracklets)
+    assert result.appearance["cue"] == "colore"
+    assert "re-ID" in result.appearance["reason"]
+
+
+def test_too_few_labelled_pairs_fall_back_to_colour(calibration):
+    """Calibration needs examples of both kinds; a short clip does not have
+    them, and a scale guessed from three pairs would be worse than colour."""
+    from app.ml.identity import calibrate_appearance
+
+    rng = np.random.default_rng(0)
+    centroid = np.ones(64) / 8.0
+    short = [_tracklet(1, _with_embeddings(walk(calibration, 0, (2.0, 3.0), (3.0, 4.0), 0.0, 4.0), centroid, rng))]
+    appearance, summary = calibrate_appearance(short)
+    assert appearance is None
+    assert summary["cue"] == "colore" and "poche coppie" in summary["reason"]
+
+
+def test_the_embedding_veto_lands_on_the_colour_veto():
+    """Rescaled so that every threshold downstream applies unchanged."""
+    from app.ml.identity import MAX_COLOR_DISTANCE, Appearance, _Cluster, appearance_distance
+
+    appearance = Appearance(same_median=0.1, different_median=0.5, positives=30, negatives=30)
+    assert appearance.veto == pytest.approx(0.3)
+
+    def cluster(vector):
+        return _Cluster(observations=[], sources=[], segments=[], embedding_sum=np.asarray(vector, float))
+
+    a = cluster([1.0, 0.0])
+    angle = np.arccos(1.0 - appearance.veto)
+    b = cluster([np.cos(angle), np.sin(angle)])
+    assert appearance_distance(a, b, appearance) == pytest.approx(MAX_COLOR_DISTANCE)
+    assert appearance_distance(a, a, appearance) == pytest.approx(0.0)
+
+
+def test_a_tracklet_that_switched_between_look_alikes_is_cut_by_re_id(calibration):
+    """Same kit on both sides of the switch: colour sees one person, the
+    embedding sees two."""
+    from app.ml.identity import Appearance, _split_identity_switches
+
+    rng = np.random.default_rng(1)
+    a, b = np.zeros(64), np.zeros(64)
+    a[0], b[1] = 1.0, 1.0
+    first = _with_embeddings(walk(calibration, 0, (4.0, 5.0), (5.0, 5.0), 0.0, 4.0), a, rng, noise=0.2)
+    second = _with_embeddings(walk(calibration, 0, (5.0, 5.2), (6.0, 5.2), 4.2, 8.0), b, rng, noise=0.2)
+    appearance = Appearance(same_median=0.05, different_median=0.9, positives=30, negatives=30)
+
+    assert len(_split_identity_switches(first + second)) == 1
+    pieces = _split_identity_switches(first + second, appearance)
+    assert [len(p) for p in pieces] == [len(first), len(second)]

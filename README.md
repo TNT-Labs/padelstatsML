@@ -190,12 +190,18 @@ modello ONNX del detector.
 git clone <repo> && cd padelstatsML
 cp .env.example .env        # imposta DATA_DIR/DATA_VOLUME e API_BASE_URL
 
-# Esporta il detector una volta sola, direttamente sul Pi
+# Esporta i modelli una volta sola, direttamente sul Pi
 python3 -m venv .export-venv && source .export-venv/bin/activate
 pip install -r backend/requirements.export.txt
 python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+python backend/scripts/export_reid_onnx.py --out weights/osnet_x0_25_msmt17.onnx
 deactivate && rm -rf .export-venv
 ```
+
+Il secondo modello (re-identificazione, OSNet) è facoltativo ma consigliato:
+distingue i giocatori dall'aspetto e non solo dal colore della divisa, che
+non basta quando i compagni sono vestiti uguali. Costa circa il 25% di tempo
+di analisi in più. Senza, l'identità usa il solo colore.
 
 Il file ONNX è portabile, quindi in teoria puoi produrlo altrove — ma
 `torch==2.4.1` ha wheel solo per Python 3.8-3.12, e su una macchina con un

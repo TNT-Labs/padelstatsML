@@ -31,6 +31,7 @@ can flip a threshold decision; `test_pipeline.py` pins them.
 """
 from __future__ import annotations
 
+import base64
 import json
 from collections import defaultdict
 from dataclasses import dataclass
@@ -241,6 +242,13 @@ _PRECISION_TIME = 6
 _PRECISION_COURT = 5
 _PRECISION_PIXEL = 1
 _PRECISION_COLOR = 4
+#   re-ID embedding — 512 numbers, which as JSON text would be most of the
+#     file several times over. It is only ever compared by dot product, so
+#     it is stored as int8, scaled to its own largest component (a float32
+#     in front), and base64: 692 characters. The cosine error is around
+#     1e-5, far below the gap between one person (~0.2) and two (~0.5).
+#     Scaling to 1 instead of to the largest component wasted most of the
+#     int8 range and cost 1e-3.
 
 
 def _encode(track_id: int, obs: Observation) -> dict:
@@ -255,7 +263,22 @@ def _encode(track_id: int, obs: Observation) -> dict:
         "c": [round(v, _PRECISION_COURT) for v in obs.foot_court],
         "q": round(obs.confidence, 3),
         "h": [round(float(v), _PRECISION_COLOR) for v in obs.color],
+        **({"e": _encode_embedding(obs.embedding)} if obs.embedding is not None else {}),
     }
+
+
+def _encode_embedding(vector: np.ndarray) -> str:
+    peak = float(np.abs(vector).max()) or 1.0
+    quantised = np.clip(np.round(vector / peak * 127.0), -127, 127).astype(np.int8)
+    return base64.b64encode(np.float32(peak).tobytes() + quantised.tobytes()).decode("ascii")
+
+
+def _decode_embedding(text: str) -> np.ndarray:
+    raw = base64.b64decode(text)
+    peak = float(np.frombuffer(raw[:4], dtype=np.float32)[0])
+    vector = np.frombuffer(raw[4:], dtype=np.int8).astype(np.float32) * (peak / 127.0)
+    norm = float(np.linalg.norm(vector))
+    return vector / norm if norm > 0 else vector
 
 
 def _decode(record: dict) -> tuple[int, Observation]:
@@ -267,6 +290,7 @@ def _decode(record: dict) -> tuple[int, Observation]:
         foot_court=tuple(float(v) for v in record["c"]),  # type: ignore[arg-type]
         confidence=float(record["q"]),
         color=np.asarray(record["h"], dtype=np.float32),
+        embedding=_decode_embedding(record["e"]) if "e" in record else None,
     )
 
 

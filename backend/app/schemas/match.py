@@ -156,6 +156,9 @@ class DataQuality(BaseModel):
     clusters_found: int = 0
     side_changes: int = 0
     detector_model: str = ""
+    # {"cue": "reid", "same", "different", "veto", "pairs"} or {"cue": "colore",
+    # "reason"}; None for results produced before re-identification existed.
+    identity_cue: dict | None = None
     metrics_tier: int = 1
     excluded_metrics: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

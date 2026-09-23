@@ -321,3 +321,16 @@ async def test_a_completed_match_can_be_analysed_again(uploaded_match, client):
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "queued"
     assert response.json()["player_names"] is None
+
+
+async def test_the_identity_cue_reaches_the_client():
+    """The schema used to list data_quality fields one by one; one it did not
+    list was silently dropped before reaching the reliability panel."""
+    from app.schemas.match import DataQuality
+
+    cue = {"cue": "reid", "same": 0.03, "different": 0.39, "veto": 0.21, "pairs": [900, 2900]}
+    quality = DataQuality(calibration_source="manual", sample_hz=5.0, frames_sampled=10,
+                          players_found=4, identity_cue=cue)
+    assert quality.model_dump()["identity_cue"] == cue
+    legacy = DataQuality(calibration_source="manual", sample_hz=5.0, frames_sampled=10, players_found=4)
+    assert legacy.identity_cue is None

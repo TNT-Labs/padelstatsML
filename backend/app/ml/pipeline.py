@@ -18,6 +18,7 @@ message carries a live ETA because a 60-minute match takes about an hour.
 """
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -32,8 +33,11 @@ from app.ml.detect import PersonDetector
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.rallies import Rally, detect_rallies
+from app.ml.reid import ReidEmbedder
 from app.ml.tracking import CourtTracker, Observation, Tracklet
 from app.ml.video import FrameSampler, VideoInfo, probe
+
+logger = logging.getLogger("padel.pipeline")
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -59,6 +63,8 @@ class PipelineConfig:
     rally_speed_threshold_ms: float = 1.1
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 1.5
+    # Optional: without it identity falls back to kit colour.
+    reid_model: str | None = None
 
 
 @dataclass
@@ -106,6 +112,7 @@ class AnalysisPipeline:
             iou_threshold=self.config.detector_iou,
             threads=self.config.inference_threads,
         )
+        embedder = self._embedder()
 
         max_duration_s = self.config.max_analysis_minutes * 60.0
         sampler = FrameSampler(
@@ -119,6 +126,7 @@ class AnalysisPipeline:
             max_speed_ms=self.config.max_player_speed_ms,
             max_age_s=self.config.track_max_age_s,
             min_observations=self.config.track_min_observations,
+            embedder=embedder,
         )
         roi = calibration.roi_px()
 
@@ -226,6 +234,22 @@ class AnalysisPipeline:
         report(100, "Analisi completata")
         return result
 
+    def _embedder(self) -> ReidEmbedder | None:
+        """The re-ID model if installed. Its absence is not an error — the
+        analysis runs as before, telling players apart by kit colour only —
+        but it is logged, and recorded in meta.json, so a weak identity result
+        can be traced to it."""
+        if not self.config.reid_model:
+            return None
+        path = Path(self.config.reid_model)
+        if not path.exists():
+            logger.warning(
+                "Modello re-ID assente (%s): identità dal solo colore della divisa. "
+                "Esportalo con scripts/export_reid_onnx.py.", path,
+            )
+            return None
+        return ReidEmbedder(path, threads=self.config.inference_threads)
+
     def _meta(
         self,
         video_path: str | Path,
@@ -264,6 +288,13 @@ class AnalysisPipeline:
                 "detector_imgsz": self.config.detector_imgsz,
                 "detector_conf": self.config.detector_conf,
                 "detector_iou": self.config.detector_iou,
+                # Which appearance cue identity had: the re-ID model, or None
+                # for kit colour only.
+                "reid_model": (
+                    Path(self.config.reid_model).name
+                    if self.config.reid_model and Path(self.config.reid_model).exists()
+                    else None
+                ),
                 "max_player_speed_ms": self.config.max_player_speed_ms,
                 "track_max_age_s": self.config.track_max_age_s,
                 "rally_speed_threshold_ms": self.config.rally_speed_threshold_ms,

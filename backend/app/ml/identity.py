@@ -11,9 +11,12 @@ number computed from it is meaningless.
 
 The approach here
 -----------------
-1. Cut tracklets where the shirt changes: a track that switched person
+0. Calibrate the appearance cue on the match itself: with a re-ID model,
+   how far apart the embeddings of one person and of two people are
+   (`calibrate_appearance`); without one, kit colour.
+1. Cut tracklets where the look changes: a track that switched person
    when two players crossed carries both, and would poison any cluster.
-2. Link the pieces into clusters, using shirt colour, a physical
+2. Link the pieces into clusters, using appearance, a physical
    reachability test at every hand-over, and coexistence: two clusters seen
    in the same frames while both on court are two people. A cluster is a set
    of pieces with gaps, and a piece can fill a gap. This is the step that
@@ -31,11 +34,11 @@ Known limitations, reported rather than hidden:
 * players swap ends at changeovers. A swap that happens while both players
   are untracked can split one person into two clusters. `side_changes` and
   the warnings list expose this instead of silently degrading the numbers.
-* shirt colour is the only appearance cue. Team-mates in the same kit are
-  told apart only by where they are, so when the tracker swaps them while
-  crossing, their numbers mix. On simulated matches: 91-98% of all
-  detections go to the right player with four distinct kits; with two kits
-  only 55-65% of those attributed do.
+* without a re-ID model, kit colour is the only appearance cue, and
+  team-mates in the same kit are told apart only by where they are: when
+  the tracker swaps them while crossing, their numbers mix. On simulated
+  matches with two kits, 25% of detections reach the right player against
+  91-94% with re-ID; with four distinct kits, colour alone reaches 91-98%.
 """
 from __future__ import annotations
 
@@ -91,6 +94,13 @@ COEXIST_DENSITY = 0.5
 # frames in a 0.6 s overlap already make 50%. Measured on simulated matches,
 # requiring two let such a sliver keep a player's halves apart.
 COEXIST_MIN_SHARED = 3
+# Re-identification calibration (see `calibrate_appearance`): the fewest
+# pairs of each kind worth trusting, and which tracklets may serve as
+# examples of one person — long enough to average, short enough that the
+# tracker is unlikely to have swapped people inside them.
+CALIBRATION_MIN_PAIRS = 20
+_POSITIVE_MIN_EMBEDDED = 10
+_POSITIVE_MAX_DURATION_S = 20.0
 
 
 @dataclass
@@ -128,6 +138,40 @@ class IdentityResult:
     side_changes: int
     clusters_found: int
     observations_discarded: int
+    # Which appearance cue told the players apart, and how well: see
+    # `Appearance.summary`. For the data-quality panel and the diagnostics.
+    appearance: dict = field(default_factory=lambda: {"cue": "colore"})
+
+
+@dataclass(frozen=True)
+class Appearance:
+    """How far apart re-ID embeddings are, measured on this match.
+
+    Cosine distances between embeddings have no universal scale: they depend
+    on the model, the camera, the light and on how alike the players dress.
+    So the scale is read from the match itself, where two kinds of pairs come
+    labelled for free: two tracklets detected in the same frames are two
+    people, and the two halves of one short tracklet are one person. The veto
+    — beyond it, two clusters are not linked — is the midpoint between the
+    typical distance of each kind.
+    """
+    same_median: float
+    different_median: float
+    positives: int
+    negatives: int
+
+    @property
+    def veto(self) -> float:
+        return (self.same_median + self.different_median) / 2.0
+
+    def summary(self) -> dict:
+        return {
+            "cue": "reid",
+            "same": round(self.same_median, 3),
+            "different": round(self.different_median, 3),
+            "veto": round(self.veto, 3),
+            "pairs": [self.positives, self.negatives],
+        }
 
 
 @dataclass(frozen=True)
@@ -182,6 +226,24 @@ class _Cluster:
     _signature: np.ndarray | None = field(default=None, repr=False, compare=False)
     _sqrt_signature: np.ndarray | None = field(default=None, repr=False, compare=False)
     _frames: np.ndarray | None = field(default=None, repr=False, compare=False)
+    # Sum of the observations' re-ID embeddings. Kept, rather than only the
+    # mean, so that a merge costs one vector addition instead of a pass over
+    # the thousands of observations of a player's cluster: that pass, once
+    # per merge, doubled the time of the whole stage.
+    embedding_sum: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _embedding: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _embedding_known: bool = field(default=False, repr=False, compare=False)
+
+    def embedding(self) -> np.ndarray | None:
+        """Mean re-ID embedding, unit length; None without any."""
+        if not self._embedding_known:
+            if self.embedding_sum is None:
+                self.embedding_sum = _embedding_sum(self.observations)
+            if self.embedding_sum is not None:
+                norm = float(np.linalg.norm(self.embedding_sum))
+                self._embedding = (self.embedding_sum / norm).astype(np.float32) if norm > 0 else None
+            self._embedding_known = True
+        return self._embedding
 
     def frames(self) -> np.ndarray:
         """Sorted frame indices of the cluster's observations."""
@@ -239,12 +301,13 @@ def resolve_players(
     # as one person, so a single such tracklet makes two clusters of the same
     # player "coexist" and blocks them from ever merging. Cut it where the
     # shirt changes.
+    appearance, appearance_summary = calibrate_appearance(usable)
     pieces = [
         Tracklet(id=t.id, observations=part)
         for t in usable
-        for part in _split_identity_switches(t.observations)
+        for part in _split_identity_switches(t.observations, appearance)
     ]
-    clusters = _link_tracklets(pieces, max_speed_ms, progress=progress)
+    clusters = _link_tracklets(pieces, max_speed_ms, progress=progress, appearance=appearance)
     clusters.sort(key=lambda c: -len(c.observations))
 
     # Counted from the input: frames dropped as shared while merging are
@@ -281,7 +344,71 @@ def resolve_players(
         side_changes=side_changes,
         clusters_found=len(clusters),
         observations_discarded=discarded,
+        appearance=appearance_summary,
     )
+
+
+def calibrate_appearance(tracklets: list[Tracklet]) -> tuple[Appearance | None, dict]:
+    """Measure, on this match, what "same person" and "two people" look like
+    to the re-ID model. None — and kit colour instead — when the match has
+    no embeddings or too few labelled pairs to trust."""
+    means = [_mean_embedding(t.observations) for t in tracklets]
+    if all(m is None for m in means):
+        return None, {"cue": "colore", "reason": "nessun modello re-ID in questa analisi"}
+
+    positives: list[float] = []
+    for tracklet in tracklets:
+        embedded = [o for o in tracklet.observations if o.embedding is not None]
+        if len(embedded) < _POSITIVE_MIN_EMBEDDED or tracklet.duration_s > _POSITIVE_MAX_DURATION_S:
+            continue
+        half = len(embedded) // 2
+        first, second = _mean_embedding(embedded[:half]), _mean_embedding(embedded[half:])
+        positives.append(1.0 - float(first @ second))
+
+    negatives = [
+        1.0 - float(means[a] @ means[b])
+        for a, b in _pairs_seen_together(tracklets)
+        if means[a] is not None and means[b] is not None
+    ]
+
+    if len(positives) < CALIBRATION_MIN_PAIRS or len(negatives) < CALIBRATION_MIN_PAIRS:
+        return None, {
+            "cue": "colore",
+            "reason": f"troppo poche coppie per calibrare il re-ID ({len(positives)} stessa persona, "
+                      f"{len(negatives)} persone diverse)",
+        }
+    appearance = Appearance(
+        same_median=float(np.median(positives)),
+        different_median=float(np.median(negatives)),
+        positives=len(positives),
+        negatives=len(negatives),
+    )
+    return appearance, appearance.summary()
+
+
+def _pairs_seen_together(tracklets: list[Tracklet]) -> list[tuple[int, int]]:
+    """Index pairs of tracklets detected in the same frame, repeatedly: two
+    detections at the same instant are two people."""
+    by_frame: dict[int, list[int]] = {}
+    for index, tracklet in enumerate(tracklets):
+        for obs in tracklet.observations:
+            by_frame.setdefault(obs.frame_index, []).append(index)
+    together: dict[tuple[int, int], int] = {}
+    for members in by_frame.values():
+        for i, a in enumerate(members):
+            for b in members[i + 1:]:
+                key = (a, b) if a < b else (b, a)
+                together[key] = together.get(key, 0) + 1
+    return [pair for pair, count in together.items() if count >= COEXIST_MIN_SHARED]
+
+
+def _mean_embedding(observations: list[Observation]) -> np.ndarray | None:
+    vectors = [o.embedding for o in observations if o.embedding is not None]
+    if not vectors:
+        return None
+    mean = np.mean(vectors, axis=0)
+    norm = float(np.linalg.norm(mean))
+    return (mean / norm).astype(np.float32) if norm > 0 else None
 
 
 def _select_players(clusters: list[_Cluster], period_s: float) -> list[_Cluster]:
@@ -313,24 +440,56 @@ def _select_players(clusters: list[_Cluster], period_s: float) -> list[_Cluster]
 
 # ── Identity switches ────────────────────────────────────────────────────────
 
-def _split_identity_switches(observations: list[Observation]) -> list[list[Observation]]:
+def _split_identity_switches(
+    observations: list[Observation], appearance: Appearance | None = None,
+) -> list[list[Observation]]:
     """Cut a tracklet where it changes person.
 
-    Finds the split point that makes the two sides' shirts most different,
-    and cuts there if the two sides would be vetoed as different people were
-    they separate tracklets — the same MAX_COLOR_DISTANCE linking uses, so
-    this adds no threshold of its own. Recurses on both sides, for tracklets
-    that switched more than once.
+    Finds the split point that makes the two sides look most different, and
+    cuts there if the two sides would be vetoed as different people were
+    they separate tracklets — the same veto linking uses, so this adds no
+    threshold of its own. The look is the re-ID embedding when the match has
+    a calibrated one, the kit colour otherwise. Recurses on both sides, for
+    tracklets that switched more than once.
 
     Over-splitting is cheap: linking rejoins pieces of one person. Missing a
     switch is not: the mixed tracklet blocks two whole clusters from merging.
-    Team-mates in the same kit cannot be told apart this way, and are left
-    as they are.
+    With colour alone, team-mates in the same kit cannot be told apart and
+    are left as they are.
     """
     n = len(observations)
     if n < 2 * MIN_PIECE_OBSERVATIONS:
         return [observations]
+    embedded = [i for i, o in enumerate(observations) if o.embedding is not None]
+    if appearance is not None and len(embedded) >= 2 * MIN_PIECE_OBSERVATIONS:
+        # Crops too small to embed are skipped, not allowed to veto re-ID.
+        at = _embedding_switch([observations[i] for i in embedded], appearance)
+        cut = embedded[at] if at is not None else None
+    else:
+        cut = _colour_switch(observations)
+    if cut is None:
+        return [observations]
+    return (_split_identity_switches(observations[:cut], appearance)
+            + _split_identity_switches(observations[cut:], appearance))
 
+
+def _embedding_switch(observations: list[Observation], appearance: Appearance) -> int | None:
+    """Where the re-ID embedding changes most, if more than the veto."""
+    n = len(observations)
+    cumulative = np.cumsum(np.stack([o.embedding for o in observations]).astype(np.float64), axis=0)
+    cuts = np.arange(MIN_PIECE_OBSERVATIONS, n - MIN_PIECE_OBSERVATIONS + 1)
+    left = cumulative[cuts - 1]
+    right = cumulative[-1] - left
+    left /= np.clip(np.linalg.norm(left, axis=1, keepdims=True), 1e-12, None)
+    right /= np.clip(np.linalg.norm(right, axis=1, keepdims=True), 1e-12, None)
+    distance = 1.0 - (left * right).sum(axis=1)
+    best = int(np.argmax(distance))
+    return int(cuts[best]) if distance[best] > appearance.veto else None
+
+
+def _colour_switch(observations: list[Observation]) -> int | None:
+    """Where the kit colour changes most, if more than the colour veto."""
+    n = len(observations)
     weights = np.array([o.confidence for o in observations], dtype=np.float64)
     colors = np.stack([o.color for o in observations]).astype(np.float64) * weights[:, None]
     cumulative = np.cumsum(colors, axis=0)
@@ -344,11 +503,7 @@ def _split_identity_switches(observations: list[Observation]) -> list[list[Obser
     distance = 1.0 - np.sqrt(np.clip(left, 0.0, None) * np.clip(right, 0.0, None)).sum(axis=1)
 
     best = int(np.argmax(distance))
-    if distance[best] <= MAX_COLOR_DISTANCE:
-        return [observations]
-    cut = int(cuts[best])
-    return (_split_identity_switches(observations[:cut])
-            + _split_identity_switches(observations[cut:]))
+    return int(cuts[best]) if distance[best] > MAX_COLOR_DISTANCE else None
 
 
 # ── Linking ──────────────────────────────────────────────────────────────────
@@ -357,6 +512,7 @@ def _link_tracklets(
     tracklets: list[Tracklet],
     max_speed_ms: float,
     progress: ProgressCallback | None = None,
+    appearance: Appearance | None = None,
 ) -> list[_Cluster]:
     """Greedily merge the cheapest linkable pair until none is cheap enough.
 
@@ -398,7 +554,7 @@ def _link_tracklets(
             return
         if _coexist(first, second, period_s):
             return
-        cost = _disjoint_link_cost(first, second, max_speed_ms, period_s)
+        cost = _disjoint_link_cost(first, second, max_speed_ms, period_s, appearance)
         if cost is not None:
             heapq.heappush(heap, (cost, min(a, b), max(a, b)))
 
@@ -420,11 +576,7 @@ def _link_tracklets(
         a, b = clusters.pop(first), clusters.pop(second)
         merged_id = next_id
         next_id += 1
-        clusters[merged_id] = _Cluster(
-            observations=_without_shared_frames(a, b),
-            sources=a.sources + b.sources,
-            segments=list(heapq.merge(a.segments, b.segments, key=lambda seg: seg.start_s)),
-        )
+        clusters[merged_id] = _merge(a, b)
 
         for other in list(clusters):
             if other != merged_id:
@@ -436,7 +588,9 @@ def _link_tracklets(
     return list(clusters.values())
 
 
-def _link_cost(a: _Cluster, b: _Cluster, max_speed_ms: float) -> float | None:
+def _link_cost(
+    a: _Cluster, b: _Cluster, max_speed_ms: float, appearance: Appearance | None = None,
+) -> float | None:
     """Cost of declaring two clusters the same player. None = not linkable.
 
     Symmetric. The two clusters' pieces are laid out on one timeline; every
@@ -446,14 +600,15 @@ def _link_cost(a: _Cluster, b: _Cluster, max_speed_ms: float) -> float | None:
     period_s = _sample_period_of(a, b)
     if _coexist(a, b, period_s):
         return None     # seen at the same time, so they are different people
-    return _disjoint_link_cost(a, b, max_speed_ms, period_s)
+    return _disjoint_link_cost(a, b, max_speed_ms, period_s, appearance)
 
 
 def _disjoint_link_cost(
     a: _Cluster, b: _Cluster, max_speed_ms: float, period_s: float,
+    appearance: Appearance | None = None,
 ) -> float | None:
     """`_link_cost` for two clusters already known not to coexist."""
-    color = _color_distance(a, b)
+    color = appearance_distance(a, b, appearance)
     if color > MAX_COLOR_DISTANCE:
         return None     # different kit, therefore a different person
 
@@ -481,6 +636,22 @@ def _disjoint_link_cost(
         return color + 0.30
 
     return 0.6 * color + 0.4 * float(np.mean(spatial))
+
+
+def appearance_distance(a: _Cluster, b: _Cluster, appearance: Appearance | None) -> float:
+    """How different two clusters look, in kit-colour units.
+
+    With a calibrated re-ID model the embedding distance is rescaled so that
+    its veto lands on MAX_COLOR_DISTANCE: every threshold downstream — the
+    veto, the strong match that allows a changeover, the link cost — then
+    applies unchanged, whichever cue is measuring.
+    """
+    if appearance is not None:
+        ea, eb = a.embedding(), b.embedding()
+        if ea is not None and eb is not None:
+            distance = 1.0 - float(ea @ eb)
+            return float(np.clip(MAX_COLOR_DISTANCE * distance / appearance.veto, 0.0, 1.0))
+    return _color_distance(a, b)
 
 
 def _color_distance(a: _Cluster, b: _Cluster) -> float:
@@ -515,17 +686,42 @@ def _overlap_s(a: list[_Segment], b: list[_Segment]) -> float:
     return total
 
 
-def _without_shared_frames(a: _Cluster, b: _Cluster) -> list[Observation]:
-    """Both clusters' observations in time order, minus the frames where both
-    have one. Two linked clusters are one person, so a shared frame means
-    one of the two detections belongs to somebody else — and nothing says
-    which. Dropping both loses a sample; keeping the wrong one would put
-    another player's position into this player's numbers."""
+def _merge(a: _Cluster, b: _Cluster) -> _Cluster:
+    """One cluster from two, minus the frames where both have an observation.
+
+    Two linked clusters are one person, so a shared frame means one of the
+    two detections belongs to somebody else — and nothing says which.
+    Dropping both loses a sample; keeping the wrong one would put another
+    player's position into this player's numbers.
+    """
     shared = set(np.intersect1d(a.frames(), b.frames(), assume_unique=True).tolist())
     merged = heapq.merge(a.observations, b.observations, key=lambda o: o.timestamp_s)
-    if not shared:
-        return list(merged)
-    return [o for o in merged if o.frame_index not in shared]
+    if shared:
+        kept: list[Observation] = []
+        dropped: list[Observation] = []
+        for obs in merged:
+            (dropped if obs.frame_index in shared else kept).append(obs)
+    else:
+        kept, dropped = list(merged), []
+
+    a.embedding(), b.embedding()        # makes both sums known
+    parts = [x for x in (a.embedding_sum, b.embedding_sum) if x is not None]
+    embedding_sum = np.sum(parts, axis=0) if parts else None
+    removed = _embedding_sum(dropped)
+    if embedding_sum is not None and removed is not None:
+        embedding_sum = embedding_sum - removed
+
+    return _Cluster(
+        observations=kept,
+        sources=a.sources + b.sources,
+        segments=list(heapq.merge(a.segments, b.segments, key=lambda seg: seg.start_s)),
+        embedding_sum=embedding_sum,
+    )
+
+
+def _embedding_sum(observations: list[Observation]) -> np.ndarray | None:
+    vectors = [o.embedding for o in observations if o.embedding is not None]
+    return np.sum(vectors, axis=0, dtype=np.float64) if vectors else None
 
 
 def _sample_period(tracklets: list[Tracklet]) -> float:

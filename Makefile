@@ -60,16 +60,18 @@ check: ## Verifica che l'API risponda e che il modello sia al suo posto
 	@curl -fsS http://localhost:$(PORT)/api/health | $(PY) -m json.tool || \
 		echo "L'API non risponde su http://localhost:$(PORT)"
 
-model-help: ## Come esportare il modello ONNX del detector
+model-help: ## Come esportare i modelli ONNX (detector e re-ID)
 	@echo "Il Pi esegue l'inferenza con onnxruntime e non installa PyTorch."
 	@echo "Esporta il modello una volta sola (anche da un PC, il file è portabile):"
 	@echo
 	@echo "  python3 -m venv /tmp/export && source /tmp/export/bin/activate"
 	@echo "  pip install -r backend/requirements.export.txt"
 	@echo "  python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx"
+	@echo "  python backend/scripts/export_reid_onnx.py --out weights/osnet_x0_25_msmt17.onnx"
 	@echo "  deactivate && rm -rf /tmp/export"
 	@echo
-	@echo "Poi imposta DETECTOR_MODEL nel .env (percorso assoluto o relativo a backend/)."
+	@echo "Poi imposta DETECTOR_MODEL e REID_MODEL nel .env (percorso assoluto o relativo a backend/)."
+	@echo "Il re-ID è facoltativo: senza, i giocatori si distinguono dal solo colore della divisa."
 
 test: test-backend test-frontend ## Esegue tutti i test
 
