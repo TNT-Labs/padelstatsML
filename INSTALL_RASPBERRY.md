@@ -152,6 +152,7 @@ python3 -m venv .export-venv && source .export-venv/bin/activate
 pip install --upgrade pip
 pip install -r backend/requirements.export.txt      # ~10 minuti, ~2 GB
 python backend/scripts/export_yolo_onnx.py --imgsz 480 --out weights/yolov8n.onnx
+python backend/scripts/export_reid_onnx.py --out weights/osnet_x0_25_msmt17.onnx
 deactivate && rm -rf .export-venv                    # lo spazio torna libero
 ```
 
@@ -185,6 +186,37 @@ farà il worker.
 > `--imgsz` deve coincidere con `DETECTOR_IMGSZ` nel `.env`. 480 è il
 > compromesso migliore sul Cortex-A76: circa 1,8× più veloce di 640 con una
 > perdita di recall contenuta sui giocatori di fondo campo.
+
+### Il modello di re-identificazione
+
+`export_reid_onnx.py` produce il secondo modello, **OSNet** (x0_25, addestrato
+su MSMT17): riconosce una persona dall'aspetto complessivo, non solo dal
+colore della divisa. Serve soprattutto quando i compagni sono vestiti uguali
+o le divise sono di tinte simili: sulle partite simulate con compagni
+vestiti uguali l'identità passa dal 25% al 91-94% di rilevazioni attribuite
+al giocatore giusto.
+
+- **È facoltativo.** Senza il file l'analisi funziona come prima e distingue
+  i giocatori dal colore; `/api/health` lo segnala alla voce `reid`.
+- **Costa circa il 25%** di tempo di analisi in più sul Pi.
+- **Vale per le analisi nuove:** l'aspetto si calcola durante l'analisi, quindi
+  per applicarlo a una partita già analizzata usa **Rianalizza**.
+- Il file va in `weights/`, dove Docker lo trova come `REID_MODEL`
+  (`/srv/weights/osnet_x0_25_msmt17.onnx`, già impostato).
+
+I pesi si scaricano da Google Drive, che a volte rifiuta i download dei file
+molto richiesti. In quel caso lo script stampa il link: scarica il file dal
+browser, copialo sul Pi e passalo con `--weights`:
+
+```bash
+python backend/scripts/export_reid_onnx.py --weights ~/osnet_x0_25_msmt17.pt \
+    --out weights/osnet_x0_25_msmt17.onnx
+```
+
+Dopo la prima analisi con il re-ID, il pannello *Affidabilità dei dati* mostra
+alla voce *Identità* quanto il modello distingue i giocatori di quella partita
+(distanza tipica fra due immagini della stessa persona e fra persone diverse),
+e `scripts/diagnose_identity.py` ne dà il dettaglio.
 
 ---
 

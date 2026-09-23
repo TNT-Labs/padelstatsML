@@ -92,6 +92,14 @@ export interface MatchSummary {
   players_found: number
 }
 
+export interface IdentityCue {
+  cue: 'reid' | 'colore'
+  same?: number
+  different?: number
+  veto?: number
+  reason?: string
+}
+
 export interface DataQuality {
   calibration_source: string
   net_error_m: number | null
@@ -101,6 +109,8 @@ export interface DataQuality {
   clusters_found: number
   side_changes: number
   detector_model: string
+  /** Absent in results produced before re-identification existed. */
+  identity_cue?: IdentityCue
   metrics_tier: number
   excluded_metrics: string[]
   warnings: string[]

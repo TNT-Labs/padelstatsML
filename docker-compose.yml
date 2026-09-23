@@ -22,6 +22,7 @@ x-common: &common
   environment:
     DATA_DIR: /data
     DETECTOR_MODEL: /srv/weights/yolov8n.onnx
+    REID_MODEL: /srv/weights/osnet_x0_25_msmt17.onnx
   volumes:
     # Mount the SSD here. An SD card works but wears out quickly with WAL.
     - ${DATA_VOLUME:-./data}:/data

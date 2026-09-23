@@ -77,6 +77,17 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
               <dt>Modello</dt>
               <dd>{quality.detector_model || '—'}</dd>
             </div>
+            {quality.identity_cue && (
+              <div>
+                <dt>Identità</dt>
+                <dd>
+                  {quality.identity_cue.cue === 'reid'
+                    ? `re-ID · stessa persona ${quality.identity_cue.same?.toFixed(2)} · ` +
+                      `persone diverse ${quality.identity_cue.different?.toFixed(2)}`
+                    : `colore della divisa${quality.identity_cue.reason ? ` · ${quality.identity_cue.reason}` : ''}`}
+                </dd>
+              </div>
+            )}
             {matchId && (
               <div>
                 <dt>ID partita</dt>

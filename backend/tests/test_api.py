@@ -321,3 +321,51 @@ async def test_a_completed_match_can_be_analysed_again(uploaded_match, client):
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "queued"
     assert response.json()["player_names"] is None
+
+
+async def test_the_identity_cue_reaches_the_client():
+    """The schema used to list data_quality fields one by one; one it did not
+    list was silently dropped before reaching the reliability panel."""
+    from app.schemas.match import DataQuality
+
+    cue = {"cue": "reid", "same": 0.03, "different": 0.39, "veto": 0.21, "pairs": [900, 2900]}
+    quality = DataQuality(calibration_source="manual", sample_hz=5.0, frames_sampled=10,
+                          players_found=4, identity_cue=cue)
+    assert quality.model_dump()["identity_cue"] == cue
+    legacy = DataQuality(calibration_source="manual", sample_hz=5.0, frames_sampled=10, players_found=4)
+    assert legacy.identity_cue is None
+
+
+async def test_player_thumbnails_are_served_from_a_relative_url(uploaded_match, client):
+    """The URL used to be absolute, built on API_BASE_URL, and every
+    thumbnail broke when that setting did not match the address the browser
+    used to reach the Pi. Relative, it works from any address."""
+    match_id, _ = uploaded_match
+
+    from app.core.database import sync_session
+    from app.core.storage import save_crop
+    from app.models import MatchStats
+
+    player = {
+        "team": 0, "samples": 10, "tracked_ratio": 0.8, "distance_m": 100.0,
+        "distance_rally_m": 60.0, "avg_speed_ms": 1.5, "peak_speed_ms": 5.0,
+        "coverage_m2": 30.0, "zone_pct": {"net": 0.2, "mid": 0.3, "back": 0.5},
+    }
+    key = save_crop(match_id, 0, b"\xff\xd8\xff\xe0 jpeg")
+    with sync_session() as session:
+        session.add(MatchStats(
+            match_id=match_id, per_player={"0": player}, heatmaps={}, rallies=[],
+            summary={"analysed_s": 60, "rallies_count": 0, "total_rally_s": 0, "avg_rally_s": 0,
+                     "median_rally_s": 0, "longest_rally_s": 0, "active_ratio": 0, "players_found": 1},
+            data_quality={"calibration_source": "manual", "sample_hz": 5.0, "frames_sampled": 300,
+                          "players_found": 1},
+            player_crops={"0": key},
+        ))
+
+    stats = (await client.get(f"/api/matches/{match_id}/stats")).json()
+    url = stats["per_player"]["0"]["crop_url"]
+    assert url.startswith(f"/api/matches/{match_id}/crops/0?v=")
+
+    image = await client.get(url)
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/jpeg"

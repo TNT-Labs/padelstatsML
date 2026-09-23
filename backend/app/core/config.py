@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # onnxruntime intra-op threads. 0 = auto (physical cores, capped at 4).
     inference_threads: int = 0
 
+    # ── Re-identification ───────────────────────────────────────────────────
+    # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,
+    # players are told apart by kit colour only — which fails when team-mates
+    # dress alike. Empty string disables it explicitly.
+    reid_model: str = "weights/osnet_x0_25_msmt17.onnx"
+
     # ── Sampling ─────────────────────────────────────────────────────────────
     # Player positions are sampled at this rate regardless of source fps.
     # 5 Hz keeps path length within ~10% of ground truth for padel movement

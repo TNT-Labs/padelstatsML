@@ -29,6 +29,8 @@ data/
 weights/*
 !weights/.gitkeep
 *.onnx
+# A few hundred bytes, built by hand to stand in for the re-ID network in tests.
+!backend/tests/fixtures/*.onnx
 *.pt
 *.pth
 

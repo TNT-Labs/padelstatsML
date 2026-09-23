@@ -228,6 +228,9 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
         "clusters_found": data.identity.clusters_found,
         "side_changes": data.identity.side_changes,
         "detector_model": data.detector_model,
+        # What told the players apart: the re-ID model with its calibration on
+        # this match, or kit colour and why.
+        "identity_cue": data.identity.appearance,
         "metrics_tier": 1,
         "excluded_metrics": [
             "tipo di colpo",

@@ -1,0 +1,25 @@
+/** Formatting shared by the views. Pure, so it is unit-tested. */
+
+/** Metres per second to km/h, the unit a padel player thinks in. */
+export function kmh(metresPerSecond: number): string {
+  return `${(metresPerSecond * 3.6).toFixed(1)} km/h`
+}
+
+/**
+ * A URL the server returned for one of its own files (a player thumbnail),
+ * made to point at the API this page actually talks to.
+ *
+ * Older results carry an absolute URL built on the server's API_BASE_URL,
+ * which is wrong whenever the browser reached the Pi at a different address —
+ * every thumbnail then failed to load. Only the path and query are kept, and
+ * `base` (the configured API origin, empty when the page is served by the
+ * API itself) is put in front.
+ */
+export function apiAsset(url: string, base: string): string {
+  try {
+    const parsed = new URL(url, 'http://placeholder')
+    return `${base}${parsed.pathname}${parsed.search}`
+  } catch {
+    return url
+  }
+}

@@ -90,6 +90,13 @@ def create_app() -> FastAPI:
             checks["detector"] = f"mancante: {model}"
             healthy = False
 
+        # Optional, so never unhealthy: its absence only weakens identity.
+        reid = Path(settings.reid_model) if settings.reid_model else None
+        if reid is not None and reid.exists():
+            checks["reid"] = f"ok · {reid.name}"
+        else:
+            checks["reid"] = "assente · giocatori distinti dal solo colore della divisa"
+
         return JSONResponse(
             {"status": "ok" if healthy else "degraded", "checks": checks},
             status_code=200 if healthy else 503,

@@ -44,8 +44,17 @@ def upload_url(match_id: str) -> str:
 
 
 def crop_url(match_id: str, player_id: int) -> str:
-    base = get_settings().api_base_url.rstrip("/")
-    return f"{base}/api/matches/{match_id}/crops/{player_id}"
+    """Relative, so it works from whatever address the browser reached the
+    Pi at. An absolute URL built on API_BASE_URL broke every thumbnail when
+    that setting did not match the address actually used (padelpi.local in
+    the .env, the Pi's IP in the browser).
+
+    The version is the file's modification time: a re-analysis rewrites the
+    thumbnails under the same path, possibly for different people, and the
+    browser must not keep showing the old ones."""
+    path = get_settings().crops_path / match_id / f"player_{player_id}.jpg"
+    version = int(path.stat().st_mtime) if path.exists() else 0
+    return f"/api/matches/{match_id}/crops/{player_id}?v={version}"
 
 
 def keyframe_url(match_id: str) -> str:
