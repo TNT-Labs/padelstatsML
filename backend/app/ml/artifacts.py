@@ -20,8 +20,8 @@ Layout, one directory per match:
     result.json      the final metrics payload
 
 `tracks.jsonl` is the only large file and the only one that cannot be
-recomputed: measured at ~240 bytes per observation, a 60-minute match with
-four players sampled at 5 Hz costs about 17 MB. Set KEEP_ARTIFACTS=false to
+recomputed: measured at ~420 bytes per observation, a 60-minute match with
+four players sampled at 5 Hz costs about 30 MB. Set KEEP_ARTIFACTS=false to
 turn it off, at the price of losing the tuning loop and the overlay.
 
 On precision: the record is lossy by design (see `_PRECISION_*` below), so a
@@ -235,7 +235,8 @@ def load_artifacts(directory: str | Path) -> LoadedArtifacts:
 #     of a pixel is plenty.
 #   colour histogram — compared against a 0.45 veto and a 0.55 link cost, so
 #     four decimals sits four orders of magnitude below any decision
-#     boundary. It is also 32 numbers per observation, i.e. most of the file.
+#     boundary. It is also COLOR_DIM (72) numbers per observation, i.e. most
+#     of the file.
 _PRECISION_TIME = 6
 _PRECISION_COURT = 5
 _PRECISION_PIXEL = 1

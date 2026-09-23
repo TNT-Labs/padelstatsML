@@ -409,7 +409,7 @@ statistiche sono sempre plausibili: non si distingue un'analisi corretta da
 una in cui due giocatori sono stati scambiati guardando solo i totali.
 
 Ogni analisi salva le osservazioni grezze in
-`/mnt/ssd/padelstats/artifacts/<match-id>/` (~17 MB per ora di video). Da
+`/mnt/ssd/padelstats/artifacts/<match-id>/` (~30 MB per ora di video). Da
 quelle si genera un video annotato senza rieseguire il detector:
 
 ```bash
