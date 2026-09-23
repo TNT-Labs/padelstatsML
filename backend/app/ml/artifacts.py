@@ -269,21 +269,34 @@ def _decode(record: dict) -> tuple[int, Observation]:
     )
 
 
-def _read_tracklets(path: Path, min_observations: int) -> list[Tracklet]:
+def read_observations(directory: str | Path) -> list[tuple[int, Observation]]:
+    """Every stored observation, in file order, short tracks included.
+
+    `load_artifacts` drops tracks below the minimum length, as the pipeline
+    does. Replaying the tracker needs the opposite: every detection it was
+    fed, since which tracks end up short is exactly what a replay recomputes.
+    """
+    path = Path(directory) / "tracks.jsonl"
     if not path.exists():
         raise FileNotFoundError(f"tracks.jsonl non trovato in {path.parent}")
 
-    grouped: dict[int, list[Observation]] = defaultdict(list)
+    records: list[tuple[int, Observation]] = []
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
-                track_id, obs = _decode(json.loads(line))
+                records.append(_decode(json.loads(line)))
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{path}:{line_number} record illeggibile: {exc}") from exc
-            grouped[track_id].append(obs)
+    return records
+
+
+def _read_tracklets(path: Path, min_observations: int) -> list[Tracklet]:
+    grouped: dict[int, list[Observation]] = defaultdict(list)
+    for track_id, obs in read_observations(path.parent):
+        grouped[track_id].append(obs)
 
     tracklets: list[Tracklet] = []
     for track_id, observations in grouped.items():

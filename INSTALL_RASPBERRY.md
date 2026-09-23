@@ -492,6 +492,15 @@ Scegli il valore i cui scambi corrispondono ai punti reali (verificalo
 nell'overlay), poi mettilo nel `.env` e riavvia. Parametri disponibili:
 `rally-speed`, `rally-min`, `rally-gap`, `max-speed`.
 
+Lo stesso vale per il tracker: `retrack.py` lo riesegue sulle osservazioni
+salvate, senza detector, e confronta il risultato con l'analisi originale.
+Dopo un aggiornamento che tocca il tracking, dice se la partita migliora
+prima di spendere un'ora a rianalizzarla:
+
+```bash
+$C python scripts/retrack.py latest
+```
+
 Se lo spazio disco diventa critico puoi disattivare gli artefatti con
 `KEEP_ARTIFACTS=false`, rinunciando però a overlay e taratura.
 

@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings                   # noqa: E402
-from app.core.storage import artifacts_dir, video_path     # noqa: E402
+from app.core.storage import video_path                    # noqa: E402
 from app.ml.artifacts import load_artifacts, resolve_artifacts_dir   # noqa: E402
 from app.ml.overlay import build_context, render_stills, render_video  # noqa: E402
 from app.ml.pipeline import PipelineConfig, analyse_tracklets          # noqa: E402

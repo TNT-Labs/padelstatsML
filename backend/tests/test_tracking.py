@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from app.ml.detect import Detection
-from app.ml.tracking import CourtTracker, histogram_distance, _torso_histogram
+from app.ml.tracking import COLOR_DIM, CourtTracker, Observation, histogram_distance, _torso_histogram
 from tests.synthetic import SyntheticPlayer, render_frame
 
 HZ = 5.0
@@ -132,3 +132,64 @@ def test_an_impossible_jump_is_still_rejected_after_a_gap(calibration):
 
     tracklets = _run(calibration, frames)
     assert len(tracklets) == 2
+
+
+def _observation(t: float, position: tuple[float, float]) -> Observation:
+    color = np.full(COLOR_DIM, 1.0 / COLOR_DIM, dtype=np.float32)
+    return Observation(
+        frame_index=int(round(t * HZ)),
+        timestamp_s=t,
+        bbox=(0.0, 0.0, 10.0, 40.0),
+        foot_px=(5.0, 40.0),
+        foot_court=position,
+        confidence=0.9,
+        color=color,
+    )
+
+
+def test_one_displaced_sample_does_not_kill_the_track(calibration):
+    """The gate is measured from the last observed position, not from the
+    prediction.
+
+    A player runs at 4 m/s (0.8 m per sample). One box is cut short —
+    occlusion by the net or by another player — and its foot point lands
+    1.2 m behind the real position. Velocity from the last two points turns
+    that into -2 m/s and the prediction overshoots backwards: the next,
+    correct, detection is 2.4 m from the prediction but only 2.0 m from
+    where the player was last seen, inside the 2.2 m one-step gate. Gating
+    on the prediction rejected it and split the track at the first bad
+    sample.
+    """
+    true_y = [5.0 + 0.8 * i for i in range(10)]
+    observed = list(true_y)
+    observed[4] -= 1.2                                  # the cropped box
+
+    tracker = CourtTracker(calibration, max_speed_ms=8.0, max_age_s=1.2)
+    for i, y in enumerate(observed):
+        tracker.update_observations(i * DT, [_observation(i * DT, (5.0, y))])
+    tracklets = tracker.finish()
+
+    assert len(tracklets) == 1, f"traccia spezzata in {len(tracklets)} frammenti"
+    assert len(tracklets[0]) == 10
+
+
+def test_update_observations_matches_update(calibration):
+    """The replay entry point must associate exactly like the live one."""
+    frames = []
+    for i in range(30):
+        frames.append([
+            SyntheticPlayer((2.0 + 0.1 * i, 4.0), 0),
+            SyntheticPlayer((8.0, 16.0 - 0.1 * i), 1),
+        ] if i % 7 else [SyntheticPlayer((2.0 + 0.1 * i, 4.0), 0)])
+
+    live = CourtTracker(calibration)
+    replay = CourtTracker(calibration)
+    for i, players in enumerate(frames):
+        frame, detections = render_frame(calibration, players)
+        tracked = live.update(frame_index=i, timestamp_s=i * DT, detections=detections, frame=frame)
+        replay.update_observations(i * DT, [obs for _, obs in tracked])
+
+    def partition(tracklets):
+        return sorted(tuple(o.frame_index for o in t.observations) for t in tracklets)
+
+    assert partition(live.finish()) == partition(replay.finish())

@@ -172,11 +172,27 @@ class CourtTracker:
         frame: np.ndarray,
     ) -> list[tuple[int, Observation]]:
         """Feed one sampled frame. Returns [(track_id, observation), ...]."""
+        observations = self._to_observations(frame_index, timestamp_s, detections, frame)
+        return self.update_observations(timestamp_s, observations)
+
+    def update_observations(
+        self,
+        timestamp_s: float,
+        observations: list[Observation],
+    ) -> list[tuple[int, Observation]]:
+        """Associate observations that are already projected and described.
+
+        `update` is this plus projection and colour. Replaying a stored run
+        (`app.ml.replay`) calls it directly: the stored observations are
+        exactly what the tracker saw, so association can be re-run on a real
+        match in seconds instead of repeating an hour of inference. Every
+        sampled frame must be fed, empty ones included — the sampling period
+        is taken from consecutive calls.
+        """
         self.frames_seen += 1
         dt = timestamp_s - self._last_ts if self._last_ts is not None else 0.0
         self._last_ts = timestamp_s
 
-        observations = self._to_observations(frame_index, timestamp_s, detections, frame)
         self._retire_stale(timestamp_s)
 
         if not observations:
@@ -260,6 +276,19 @@ class CourtTracker:
         cost_scale = self._gate_distance(sample_period_s, sample_period_s)
 
         for r, track in enumerate(self._active):
+            # Two different questions, two different reference points.
+            # Feasibility is physical — how far can the player have got since
+            # they were last *seen* — so it is measured from the last observed
+            # position. The prediction only ranks feasible candidates. Gating
+            # on the prediction instead fed position noise back into the
+            # gate: velocity comes from the last two points, so one displaced
+            # box (a player cut off by the net or by another player) produces
+            # a phantom velocity, the prediction overshoots in the wrong
+            # direction by as much again, and the next correct detection falls
+            # outside the gate. The track dies right after its first bad
+            # sample.
+            last_seen = np.array(track.observations[-1].foot_court, dtype=np.float32)
+            reach = np.linalg.norm(obs_pos - last_seen[None, :], axis=1)
             predicted = track.predict(now_s)
             dists = np.linalg.norm(obs_pos - predicted[None, :], axis=1)
             track_col = track.color_signature()
@@ -268,7 +297,7 @@ class CourtTracker:
                 dtype=np.float64,
             )
             gate = self._gate_distance(now_s - track.last_seen_s, sample_period_s)
-            ok = dists <= gate
+            ok = reach <= gate
             spatial = np.clip(dists / cost_scale, 0.0, 1.0)
             blended = (1.0 - self.color_weight) * spatial + self.color_weight * color_d
             cost[r, ok] = blended[ok]

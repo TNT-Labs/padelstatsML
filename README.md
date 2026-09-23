@@ -128,6 +128,10 @@ python scripts/retune.py latest --sweep rally-speed 0.8 1.0 1.2 1.4 1.6
 # Perché le tracce si spezzano: detector che perde il giocatore,
 # o associazione che rifiuta di ricongiungere?
 python scripts/diagnose_tracking.py latest
+
+# Riesegue il tracker (senza detector, in secondi) e confronta con
+# l'analisi salvata: misura una modifica al tracker prima di rianalizzare
+python scripts/retrack.py latest
 ```
 
 Ogni script accetta `latest`, un prefisso dell'id (`4f21e100`) o l'id intero.
