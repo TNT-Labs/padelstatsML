@@ -114,7 +114,7 @@ heatmap sbilanciata verso la rete sono indistinguibili da quelle giuste,
 anche se due giocatori sono stati scambiati per metà partita. L'unico modo
 per saperlo è **guardare i fotogrammi**.
 
-Ogni analisi salva le osservazioni grezze (~17 MB per ora di video). Da quelle:
+Ogni analisi salva le osservazioni grezze (~30 MB per ora di video). Da quelle:
 
 ```bash
 # Guarda cosa ha visto la pipeline: campo proiettato, ID giocatori,

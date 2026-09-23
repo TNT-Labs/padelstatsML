@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from app.ml.detect import Detection
-from app.ml.tracking import COLOR_DIM, CourtTracker, Observation, histogram_distance, _torso_histogram
+from app.ml.tracking import COLOR_DIM, CourtTracker, Observation, histogram_distance, _kit_histogram
 from tests.synthetic import SyntheticPlayer, render_frame
 
 HZ = 5.0
@@ -74,12 +74,12 @@ def test_tracks_shorter_than_the_minimum_are_discarded(calibration):
     assert _run(calibration, frames) == []
 
 
-def test_torso_histograms_separate_different_shirts(calibration):
+def test_kit_histograms_separate_different_shirts(calibration):
     frame, detections = render_frame(
         calibration, [SyntheticPlayer((2.0, 5.0), 0), SyntheticPlayer((8.0, 5.0), 1)]
     )
-    a = _torso_histogram(frame, detections[0].bbox)
-    b = _torso_histogram(frame, detections[1].bbox)
+    a = _kit_histogram(frame, detections[0].bbox)
+    b = _kit_histogram(frame, detections[1].bbox)
     assert histogram_distance(a, a) < 1e-6
     assert histogram_distance(a, b) > 0.5
 
@@ -193,3 +193,47 @@ def test_update_observations_matches_update(calibration):
         return sorted(tuple(o.frame_index for o in t.observations) for t in tracklets)
 
     assert partition(live.finish()) == partition(replay.finish())
+
+
+def _painted(shirt_bgr, shorts_bgr):
+    """One player's box, shirt and shorts painted as the kit regions sit."""
+    frame = np.full((400, 200, 3), 70, dtype=np.uint8)
+    bbox = (50.0, 50.0, 150.0, 350.0)            # 100 x 300 px, standing
+    frame[50:215, 50:150] = shirt_bgr               # top half, shirt
+    frame[215:260, 50:150] = shorts_bgr              # shorts
+    frame[260:350, 50:150] = (90, 120, 170)          # legs
+    return _kit_histogram(frame, bbox)
+
+
+WHITE, BLACK, GREY, RED = (245, 245, 245), (20, 20, 20), (128, 128, 128), (40, 40, 220)
+
+
+def test_white_black_and_grey_kits_are_told_apart():
+    """They used to be masked out as shadow and court lines, which gave every
+    player in white, black or grey the same uniform signature: on a real
+    match, colour could not tell anyone apart."""
+    white = _painted(WHITE, WHITE)
+    black = _painted(BLACK, BLACK)
+    grey = _painted(GREY, GREY)
+    for a, b in ((white, black), (white, grey), (black, grey)):
+        assert histogram_distance(a, b) > 0.45     # identity's colour veto
+
+
+def test_the_same_kit_has_the_same_signature():
+    assert histogram_distance(_painted(WHITE, BLACK), _painted(WHITE, BLACK)) < 1e-6
+    assert histogram_distance(_painted(RED, WHITE), _painted(RED, WHITE)) < 1e-6
+
+
+def test_the_shorts_count_but_less_than_the_shirt():
+    """A white shirt over black shorts is not a white shirt over white
+    shorts — but the shorts region is smaller and catches some shirt, so it
+    is a secondary cue: it adds cost, it does not veto on its own."""
+    shorts_only = histogram_distance(_painted(WHITE, BLACK), _painted(WHITE, WHITE))
+    shirt_only = histogram_distance(_painted(WHITE, BLACK), _painted(BLACK, BLACK))
+    assert 0.15 < shorts_only < shirt_only
+
+
+def test_a_kit_signature_is_a_distribution():
+    signature = _painted(RED, BLACK)
+    assert signature.shape == (COLOR_DIM,)
+    assert abs(float(signature.sum()) - 1.0) < 1e-5

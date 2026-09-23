@@ -28,6 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import numpy as np  # noqa: E402
+
 from app.core.config import get_settings                               # noqa: E402
 from app.ml import identity                                            # noqa: E402
 from app.ml.artifacts import load_artifacts, resolve_artifacts_dir     # noqa: E402
@@ -84,6 +86,17 @@ def main() -> int:
           f"{kept} di {total} osservazioni ai 4 giocatori ({100 * kept / total:.0f}%)")
     print("giocatori tracciati: " + "  ".join(
         f"G{i + 1} {100 * len(c.observations) / expected:.0f}%" for i, c in enumerate(players)))
+
+    # The uniform histogram is what the colour stage returns when it found no
+    # usable pixel. Before kit colours included white, grey and black, that
+    # was every player dressed in them — and colour told nobody apart.
+    colours = [o.color for t in tracklets for o in t.observations]
+    blind = sum(1 for c in colours if np.allclose(c, 1.0 / len(c), atol=1e-4))
+    print(f"osservazioni senza colore utilizzabile: {blind} di {len(colours)} "
+          f"({100 * blind / len(colours):.0f}%)")
+    if blind > 0.2 * len(colours):
+        print("  Il colore non distingue questi giocatori. Se la partita è stata analizzata")
+        print("  prima che il bianco, il nero e il grigio venissero misurati, va rianalizzata.")
     print()
 
     print(f"i {min(SHOWN, len(leftovers))} cluster esclusi più grandi, contro ciascun giocatore:")

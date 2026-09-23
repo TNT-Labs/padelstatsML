@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.ml.detect import Detection
-from app.ml.tracking import Observation, _torso_histogram
+from app.ml.tracking import Observation, _kit_histogram
 
 FRAME_W, FRAME_H = 1920, 1080
 
@@ -63,7 +63,7 @@ def make_observation(
         foot_px=detection.foot_px,
         foot_court=court_xy,
         confidence=confidence,
-        color=_torso_histogram(frame, detection.bbox),
+        color=_kit_histogram(frame, detection.bbox),
     )
 
 

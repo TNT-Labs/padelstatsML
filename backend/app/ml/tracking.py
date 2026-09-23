@@ -17,7 +17,7 @@ reasons:
 
 Associating in *metres* on the court floor fixes both: the gate becomes
 `max_speed * dt`, a real physical constraint, uniform across the court.
-A coarse HSV torso histogram is carried along as a second cue, which is what
+A coarse HSV kit histogram (shirt and shorts) is carried along as a second cue, which is what
 later lets `identity` re-link a player across an occlusion or a changeover.
 
 Tracks are deliberately allowed to die and be reborn. Producing many clean
@@ -40,10 +40,21 @@ from app.ml.detect import Detection
 # leaning into the wall plus homography error, without admitting spectators.
 COURT_MARGIN_M = 1.5
 
-# Colour histogram: 8 hue bins x 4 saturation bins. Coarse on purpose —
-# padel kit is mostly flat colour and a fine histogram would key on lighting.
-_HUE_BINS, _SAT_BINS = 8, 4
-COLOR_DIM = _HUE_BINS * _SAT_BINS
+# Kit descriptor: the shirt and the shorts, each a histogram of its
+# coloured pixels (8 hue x 4 saturation bins) plus its white, grey and black
+# pixels by brightness (4 bins). Coarse on purpose — padel kit is mostly
+# flat colour and a fine histogram would key on lighting.
+_HUE_BINS, _SAT_BINS, _GREY_BINS = 8, 4, 4
+_REGION_DIM = _HUE_BINS * _SAT_BINS + _GREY_BINS
+COLOR_DIM = 2 * _REGION_DIM
+# Below this saturation, or at the extremes of brightness, hue is noise: the
+# pixel is white, grey or black, and is binned by brightness instead.
+_MIN_SATURATION = 50
+_MIN_VALUE, _MAX_VALUE = 40, 245
+# Brightness edges of the achromatic bins: black | dark grey | light grey | white.
+_GREY_EDGES = np.array([60, 130, 200])
+# Shirt and shorts, as (top, bottom) fractions of a standing player's box.
+_KIT_REGIONS = ((0.15, 0.50), (0.52, 0.68))
 
 
 @dataclass(frozen=True)
@@ -338,7 +349,7 @@ class CourtTracker:
                     foot_px=det.foot_px,
                     foot_court=(float(pos[0]), float(pos[1])),
                     confidence=det.confidence,
-                    color=_torso_histogram(frame, det.bbox),
+                    color=_kit_histogram(frame, det.bbox),
                 )
             )
 
@@ -376,33 +387,49 @@ def _inside_court(position_m: np.ndarray) -> bool:
     )
 
 
-def _torso_histogram(frame: np.ndarray, bbox: tuple[float, float, float, float]) -> np.ndarray:
-    """Coarse HSV histogram of the player's shirt region.
+def _kit_histogram(frame: np.ndarray, bbox: tuple[float, float, float, float]) -> np.ndarray:
+    """Colour signature of the player's kit: shirt and shorts side by side.
 
-    The window is the upper-middle of the bounding box, which is the shirt for
-    a standing player and avoids the court surface leaking in at the edges.
-    Very dark and very desaturated pixels are masked out so that shadow and
-    white lines do not dominate the signature.
+    White, grey and black pixels used to be masked out as "shadow and court
+    lines", which left a player in white, black or grey kit with an empty
+    histogram and the uniform fallback — the same signature as every other
+    player in white, black or grey. On a real match, where that is most kit,
+    colour could not tell anybody apart and identity collapsed. They are
+    binned by brightness now, and the shorts count as well: a white shirt
+    over black shorts is not a white shirt over white shorts.
     """
     x1, y1, x2, y2 = bbox
     h, w = frame.shape[:2]
     cx1 = int(np.clip(x1 + 0.25 * (x2 - x1), 0, w - 1))
     cx2 = int(np.clip(x1 + 0.75 * (x2 - x1), 1, w))
-    cy1 = int(np.clip(y1 + 0.15 * (y2 - y1), 0, h - 1))
-    cy2 = int(np.clip(y1 + 0.55 * (y2 - y1), 1, h))
 
-    if cx2 - cx1 < 2 or cy2 - cy1 < 2:
+    parts: list[np.ndarray] = []
+    for top, bottom in _KIT_REGIONS:
+        cy1 = int(np.clip(y1 + top * (y2 - y1), 0, h - 1))
+        cy2 = int(np.clip(y1 + bottom * (y2 - y1), 1, h))
+        parts.append(_region_histogram(frame, cx1, cx2, cy1, cy2))
+
+    if not any(part.any() for part in parts):
         return np.full(COLOR_DIM, 1.0 / COLOR_DIM, dtype=np.float32)
+    signature = np.concatenate(parts)
+    return (signature / signature.sum()).astype(np.float32)
 
-    patch = frame[cy1:cy2, cx1:cx2]
-    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, (0, 40, 40), (180, 255, 245))
 
-    hist = cv2.calcHist([hsv], [0, 1], mask, [_HUE_BINS, _SAT_BINS], [0, 180, 0, 256])
-    total = float(hist.sum())
-    if total <= 0:
-        return np.full(COLOR_DIM, 1.0 / COLOR_DIM, dtype=np.float32)
-    return (hist / total).flatten().astype(np.float32)
+def _region_histogram(frame: np.ndarray, x1: int, x2: int, y1: int, y2: int) -> np.ndarray:
+    """Normalised histogram of one region; all zeros if the region is empty."""
+    if x2 - x1 < 2 or y2 - y1 < 2:
+        return np.zeros(_REGION_DIM, dtype=np.float64)
+    hsv = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.int32)
+    hue, sat, val = hsv[:, 0], hsv[:, 1], hsv[:, 2]
+
+    chromatic = (sat >= _MIN_SATURATION) & (val >= _MIN_VALUE) & (val <= _MAX_VALUE)
+    hue_bin = np.minimum(hue[chromatic] * _HUE_BINS // 180, _HUE_BINS - 1)
+    sat_bin = np.minimum(sat[chromatic] * _SAT_BINS // 256, _SAT_BINS - 1)
+    grey_bin = np.searchsorted(_GREY_EDGES, val[~chromatic], side="right")
+
+    bins = np.concatenate([hue_bin * _SAT_BINS + sat_bin, _HUE_BINS * _SAT_BINS + grey_bin])
+    hist = np.bincount(bins, minlength=_REGION_DIM).astype(np.float64)
+    return hist / hist.sum()
 
 
 def histogram_distance(a: np.ndarray, b: np.ndarray) -> float:
