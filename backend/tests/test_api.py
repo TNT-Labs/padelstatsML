@@ -299,3 +299,25 @@ async def test_no_content_routes_declare_no_response_model(client):
             f"{route.path} restituisce 204 ma dichiara un response model "
             f"({route.response_model}): aggiungi response_model=None"
         )
+
+
+async def test_a_completed_match_can_be_analysed_again(uploaded_match, client):
+    """Re-analysis re-queues a finished match, and forgets the player names:
+    the new run may number the people differently, and old names would then
+    sit on the wrong players."""
+    match_id, _ = uploaded_match
+    await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS})
+    await client.patch(
+        f"/api/matches/{match_id}", json={"player_names": ["Ana", "Bea", "Carlo", "Dino"]}
+    )
+
+    from app.core.database import sync_session
+    from app.models import Match, MatchStatus
+
+    with sync_session() as session:
+        session.get(Match, match_id).status = MatchStatus.COMPLETED
+
+    response = await client.post(f"/api/matches/{match_id}/start")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "queued"
+    assert response.json()["player_names"] is None

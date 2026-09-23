@@ -12,7 +12,13 @@ interface Props {
 }
 
 export const ProcessingView: FC<Props> = ({ matchId, autoStart, onCompleted, onFailed, onBack }) => {
-  const { match, error, refresh } = useMatch(matchId)
+  // Polling starts only once the start request has been answered. Started
+  // together, the first poll could land before the server had queued the
+  // job: it read the match as still "ready" (or, on a re-analysis, as
+  // "completed"), stopped polling for good — or jumped straight back to the
+  // old statistics — and the page sat at 0% while the worker finished.
+  const [started, setStarted] = useState(!autoStart)
+  const { match, error } = useMatch(started ? matchId : null)
   const [startError, setStartError] = useState<string | null>(null)
   const startRequested = useRef(false)
 
@@ -21,9 +27,11 @@ export const ProcessingView: FC<Props> = ({ matchId, autoStart, onCompleted, onF
     startRequested.current = true
     api
       .startAnalysis(matchId)
-      .then(() => refresh())
       .catch((e: Error) => setStartError(e.message))
-  }, [autoStart, matchId, refresh])
+      // Poll either way: a refused start ("already running") still has a
+      // state worth showing.
+      .finally(() => setStarted(true))
+  }, [autoStart, matchId])
 
   useEffect(() => {
     if (match?.status === 'completed') onCompleted()

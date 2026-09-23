@@ -11,6 +11,7 @@ interface Props {
   stats: MatchStats
   onBack: () => void
   onRename: () => void
+  onReanalyse: () => void
 }
 
 function formatDuration(seconds: number): string {
@@ -20,7 +21,7 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
-export const StatsView: FC<Props> = ({ stats, onBack, onRename }) => {
+export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
@@ -32,6 +33,21 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename }) => {
         <div style={{ display: 'flex', gap: '.5rem' }}>
           <button className="btn btn-ghost btn-sm" onClick={onRename}>
             Rinomina giocatori
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              if (
+                window.confirm(
+                  'Rianalizzare la partita? Le statistiche attuali verranno sostituite e i ' +
+                    'nomi dei giocatori andranno reinseriti. Richiede circa quanto la durata del video.',
+                )
+              ) {
+                onReanalyse()
+              }
+            }}
+          >
+            Rianalizza
           </button>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>
             ← Partite
