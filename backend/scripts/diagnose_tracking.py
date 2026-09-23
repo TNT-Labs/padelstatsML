@@ -29,8 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 
 from app.core.config import get_settings          # noqa: E402
-from app.core.storage import artifacts_dir        # noqa: E402
-from app.ml.artifacts import load_artifacts       # noqa: E402
+from app.ml.artifacts import load_artifacts, resolve_artifacts_dir   # noqa: E402
 
 # A successor further away in time than this is a different player, not the
 # same one reappearing.
@@ -39,12 +38,22 @@ MAX_HANDOVER_S = 3.0
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("match_id")
+    parser.add_argument(
+        "match_id",
+        help="id della partita, un suo prefisso, oppure 'latest' per l'ultima analizzata",
+    )
     parser.add_argument("--artifacts", default=None)
     args = parser.parse_args()
 
     settings = get_settings()
-    directory = Path(args.artifacts) if args.artifacts else artifacts_dir(args.match_id)
+    if args.artifacts:
+        directory = Path(args.artifacts)
+    else:
+        try:
+            directory = resolve_artifacts_dir(args.match_id, settings.artifacts_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
     if not directory.exists():
         print(f"Artefatti non trovati in {directory}.", file=sys.stderr)
         return 1
@@ -65,6 +74,9 @@ def main() -> int:
 
     period = 1.0 / artifacts.sample_hz if artifacts.sample_hz else 0.2
     one_step_gate = settings.max_player_speed_ms * period + 0.6
+    # The tracker can only re-associate while the old track is alive; past
+    # its memory the split is the detector's, and identity linking's to mend.
+    max_age = artifacts.meta.get("config", {}).get("track_max_age_s", settings.track_max_age_s)
 
     print(f"{len(tracklets)} tracce · campionamento {artifacts.sample_hz:.1f} Hz · "
           f"{artifacts.analysed_s / 60:.1f} min analizzati")
@@ -75,10 +87,12 @@ def main() -> int:
 
     starts = sorted(tracklets, key=lambda t: t.start_s)
     orphaned = 0
+    within_age = 0
     reachable_one_step = 0
     reachable_per_track = 0
     needed_windows: list[float] = []
     box_changes: list[float] = []
+    shrunk = grown = 0
     gap_hist: Counter[int] = Counter()
 
     for track in tracklets:
@@ -105,13 +119,21 @@ def main() -> int:
 
         gap, distance, ratio = best
         gap_hist[round(gap / period)] += 1
-        if distance <= one_step_gate:
-            reachable_one_step += 1
-        # Gate as the tracker computes it today: sized on the track's own age.
-        if distance <= settings.max_player_speed_ms * max(gap, period) + 0.6:
-            reachable_per_track += 1
         needed_windows.append(max(distance - 0.6, 0.0) / settings.max_player_speed_ms)
         box_changes.append(abs(ratio - 1.0))
+        if ratio < 0.8:
+            shrunk += 1
+        elif ratio > 1.25:
+            grown += 1
+        if gap > max_age + 1e-6:
+            continue
+        within_age += 1
+        if distance <= one_step_gate:
+            reachable_one_step += 1
+        # Gate as the tracker computes it today: sized on the track's own age,
+        # measured from the last observed position.
+        if distance <= settings.max_player_speed_ms * max(gap, period) + 0.6:
+            reachable_per_track += 1
 
     with_successor = len(tracklets) - orphaned
     print(f"tracce senza successore entro {MAX_HANDOVER_S:.0f}s: {orphaned} "
@@ -121,12 +143,25 @@ def main() -> int:
     print()
 
     if with_successor:
-        print("quante di quelle ri-associazioni accetta ciascun gate:")
-        print(f"  un passo fisso ({one_step_gate:.1f} m, com'era prima): "
-              f"{reachable_one_step:>5} ({100 * reachable_one_step / with_successor:.0f}%)")
-        print(f"  età della traccia (come adesso):               "
-              f"{reachable_per_track:>5} ({100 * reachable_per_track / with_successor:.0f}%)")
+        beyond = with_successor - within_age
+        label = f"nati entro la memoria della traccia ({max_age:.1f}s):"
+        print(f"  {label:<46}{within_age:>5}  → la traccia era viva: toccava al tracker")
+        print(f"  {'nati dopo:':<46}{beyond:>5}  → perdita del detector: tocca al")
+        print(f"  {'':<46}{'':>5}    collegamento delle identità")
         print()
+
+    if within_age:
+        print(f"quante delle {within_age} ri-associazioni possibili accetta ciascun gate:")
+        for label, count in (
+            (f"un passo fisso ({one_step_gate:.1f} m):", reachable_one_step),
+            ("età della traccia, dall'ultima posizione:", reachable_per_track),
+        ):
+            print(f"  {label:<46}{count:>5} ({100 * count / within_age:.0f}%)")
+        print("  (se il gate le accetta e la traccia si è spezzata lo stesso, confronta")
+        print("   col codice attuale: scripts/retrack.py)")
+        print()
+
+    if with_successor:
 
         needed = sorted(needed_windows)
         print("finestra di associazione che sarebbe servita (secondi di movimento):")
@@ -138,7 +173,9 @@ def main() -> int:
         print("variazione di altezza del riquadro fra una traccia e la successiva:")
         for label, q in (("mediana", 0.5), ("p75", 0.75), ("p90", 0.90)):
             print(f"  {label:>8}: {100 * changes[int(q * (len(changes) - 1))]:.0f}%")
-        print("  (una variazione forte indica occlusione: cambia il riquadro, non il giocatore)")
+        print(f"  più basso di oltre il 20%: {shrunk} · più alto di oltre il 25%: {grown}")
+        print("  (più basso: piedi coperti, il punto a terra sale; più alto: due giocatori")
+        print("   fusi in un riquadro. In entrambi i casi cambia il riquadro, non il giocatore)")
         print()
 
         print("distanza in campioni fra la morte di una traccia e la nascita della successiva:")
@@ -147,12 +184,12 @@ def main() -> int:
 
     print()
     print("Lettura:")
-    print("  · molti successori già raggiungibili col gate di un passo → il problema è")
-    print("    la resa del detector, non l'associazione")
-    print("  · il gate per età accetta molto più del gate fisso → la frammentazione era")
-    print("    l'associazione, e il rimedio è già attivo")
-    print("  · restano fuori soprattutto i buchi da un campione → non è velocità del")
-    print("    giocatore ma rumore di posizione, spesso da riquadri tagliati")
+    print("  · la maggior parte nasce dopo la memoria della traccia → è la resa del")
+    print("    detector: input più grande, soglia più bassa, modello più grande")
+    print("  · la maggior parte nasce mentre la traccia è viva ed è raggiungibile →")
+    print("    è l'associazione: misura il codice attuale con scripts/retrack.py")
+    print("  · molti riquadri più bassi al cambio di traccia → il punto a terra salta")
+    print("    per occlusione: non è velocità del giocatore ma rumore di posizione")
     print()
     print("Attenzione: il successore è scelto come il più vicino nel tempo e nello")
     print("spazio, quindi in campo affollato può appartenere a un altro giocatore.")

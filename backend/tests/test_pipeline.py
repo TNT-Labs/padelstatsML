@@ -292,6 +292,22 @@ def test_replaying_the_artifacts_reproduces_the_analysis(result, artifacts_dir):
         assert replayed["summary"][key] == pytest.approx(result["summary"][key], abs=0.05)
 
 
+def test_replaying_the_tracker_reproduces_the_stored_tracklets(result, artifacts_dir):
+    """scripts/retrack.py compares a stored run with a replay of the current
+    tracker. That comparison only means something if, with unchanged code,
+    the replay gives back exactly the tracklets the live pass produced."""
+    from app.ml.artifacts import load_artifacts
+    from app.ml.replay import replay_tracking
+
+    artifacts = load_artifacts(artifacts_dir)
+    replayed = replay_tracking(artifacts)
+
+    def partition(tracklets):
+        return sorted(tuple(o.frame_index for o in t.observations) for t in tracklets)
+
+    assert partition(replayed) == partition(artifacts.tracklets)
+
+
 def test_retuning_a_threshold_changes_the_outcome(result, artifacts_dir):
     """A sanity check on the tuning loop itself: a much stricter rally
     threshold must find fewer points than the default."""

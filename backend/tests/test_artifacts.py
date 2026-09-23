@@ -12,7 +12,7 @@ import json
 import numpy as np
 import pytest
 
-from app.ml.artifacts import ArtifactWriter, load_artifacts
+from app.ml.artifacts import ArtifactWriter, load_artifacts, resolve_artifacts_dir
 from app.ml.tracking import Tracklet
 from tests.synthetic import walk
 
@@ -176,3 +176,50 @@ def test_an_incomplete_run_is_reported_as_such(written, calibration):
     (directory / "meta.json").write_text(json.dumps(meta))
 
     assert load_artifacts(directory).complete is False
+
+
+# ── Individuare una partita senza conoscerne l'UUID ──────────────────────────
+
+def _match_dirs(root, *names):
+    for name in names:
+        (root / name).mkdir(parents=True)
+    return root
+
+
+def test_latest_picks_the_most_recent_run(tmp_path):
+    import os
+    import time
+
+    root = _match_dirs(tmp_path, "aaaa1111-old", "bbbb2222-new")
+    old = time.time() - 3600
+    os.utime(root / "aaaa1111-old", (old, old))
+
+    assert resolve_artifacts_dir("latest", root).name == "bbbb2222-new"
+
+
+def test_an_unambiguous_prefix_is_enough(tmp_path):
+    """Gli id sono UUID e l'interfaccia non li mostrava: chiedere di digitarne
+    uno per intero equivale a chiedere di non usare lo strumento."""
+    root = _match_dirs(tmp_path, "aaaa1111-2222-3333", "bbbb4444-5555-6666")
+    assert resolve_artifacts_dir("aaaa", root).name == "aaaa1111-2222-3333"
+    assert resolve_artifacts_dir("aaaa1111-2222-3333", root).name == "aaaa1111-2222-3333"
+
+
+def test_an_ambiguous_prefix_is_refused_with_the_candidates(tmp_path):
+    root = _match_dirs(tmp_path, "aaaa1111", "aaaa2222")
+    with pytest.raises(ValueError, match="più partite"):
+        resolve_artifacts_dir("aaaa", root)
+
+
+def test_an_unknown_id_lists_what_is_available(tmp_path):
+    root = _match_dirs(tmp_path, "aaaa1111", "bbbb2222")
+    with pytest.raises(FileNotFoundError, match="aaaa1111|bbbb2222"):
+        resolve_artifacts_dir("zzzz", root)
+
+
+def test_an_empty_or_missing_root_fails_clearly(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Nessuna cartella"):
+        resolve_artifacts_dir("latest", tmp_path / "assente")
+    (tmp_path / "vuota").mkdir()
+    with pytest.raises(FileNotFoundError, match="Nessun artefatto"):
+        resolve_artifacts_dir("latest", tmp_path / "vuota")

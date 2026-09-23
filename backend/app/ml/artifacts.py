@@ -141,6 +141,46 @@ class LoadedArtifacts:
         return out
 
 
+def resolve_artifacts_dir(match_id: str, artifacts_root: Path) -> Path:
+    """Find a match's artifacts from a partial id, or from the word "latest".
+
+    Match ids are UUIDs and the UI never shows them, so asking a person to
+    type one in full to run a diagnostic is asking them not to run it. Accepts
+    the full id, any unambiguous prefix of it, or "latest" for the most
+    recently written run.
+    """
+    if not artifacts_root.exists():
+        raise FileNotFoundError(f"Nessuna cartella artefatti in {artifacts_root}")
+
+    candidates = sorted(
+        (p for p in artifacts_root.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise FileNotFoundError(f"Nessun artefatto in {artifacts_root}")
+
+    if match_id == "latest":
+        return candidates[0]
+
+    exact = [p for p in candidates if p.name == match_id]
+    if exact:
+        return exact[0]
+
+    matching = [p for p in candidates if p.name.startswith(match_id)]
+    if len(matching) == 1:
+        return matching[0]
+    if len(matching) > 1:
+        names = ", ".join(p.name[:12] for p in matching[:5])
+        raise ValueError(f"'{match_id}' corrisponde a più partite: {names}")
+
+    available = ", ".join(p.name[:8] for p in candidates[:5])
+    raise FileNotFoundError(
+        f"Nessuna partita corrisponde a '{match_id}'. Disponibili: {available} "
+        f"(oppure usa 'latest')"
+    )
+
+
 def load_artifacts(directory: str | Path) -> LoadedArtifacts:
     """Rebuild tracklets and calibration from a previous run."""
     path = Path(directory)
@@ -229,21 +269,34 @@ def _decode(record: dict) -> tuple[int, Observation]:
     )
 
 
-def _read_tracklets(path: Path, min_observations: int) -> list[Tracklet]:
+def read_observations(directory: str | Path) -> list[tuple[int, Observation]]:
+    """Every stored observation, in file order, short tracks included.
+
+    `load_artifacts` drops tracks below the minimum length, as the pipeline
+    does. Replaying the tracker needs the opposite: every detection it was
+    fed, since which tracks end up short is exactly what a replay recomputes.
+    """
+    path = Path(directory) / "tracks.jsonl"
     if not path.exists():
         raise FileNotFoundError(f"tracks.jsonl non trovato in {path.parent}")
 
-    grouped: dict[int, list[Observation]] = defaultdict(list)
+    records: list[tuple[int, Observation]] = []
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
-                track_id, obs = _decode(json.loads(line))
+                records.append(_decode(json.loads(line)))
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{path}:{line_number} record illeggibile: {exc}") from exc
-            grouped[track_id].append(obs)
+    return records
+
+
+def _read_tracklets(path: Path, min_observations: int) -> list[Tracklet]:
+    grouped: dict[int, list[Observation]] = defaultdict(list)
+    for track_id, obs in read_observations(path.parent):
+        grouped[track_id].append(obs)
 
     tracklets: list[Tracklet] = []
     for track_id, observations in grouped.items():

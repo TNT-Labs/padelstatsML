@@ -27,8 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings                # noqa: E402
-from app.core.storage import artifacts_dir              # noqa: E402
-from app.ml.artifacts import load_artifacts             # noqa: E402
+from app.ml.artifacts import load_artifacts, resolve_artifacts_dir  # noqa: E402
 from app.ml.pipeline import PipelineConfig, analyse_tracklets   # noqa: E402
 
 SWEEPABLE = {
@@ -41,7 +40,10 @@ SWEEPABLE = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("match_id")
+    parser.add_argument(
+        "match_id",
+        help="id della partita, un suo prefisso, oppure 'latest' per l'ultima analizzata",
+    )
     parser.add_argument("--artifacts", default=None)
     parser.add_argument("--rally-speed", type=float, default=None, help="m/s (default da .env)")
     parser.add_argument("--rally-min", type=float, default=None, help="durata minima scambio, s")
@@ -52,8 +54,16 @@ def main() -> int:
         help=f"confronta più valori di un parametro ({', '.join(SWEEPABLE)})",
     )
     args = parser.parse_args()
+    settings = get_settings()
 
-    directory = Path(args.artifacts) if args.artifacts else artifacts_dir(args.match_id)
+    if args.artifacts:
+        directory = Path(args.artifacts)
+    else:
+        try:
+            directory = resolve_artifacts_dir(args.match_id, settings.artifacts_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
     if not directory.exists():
         print(f"Artefatti non trovati in {directory}.", file=sys.stderr)
         return 1
@@ -67,10 +77,10 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    print(f"Partita {args.match_id[:8]} · {len(artifacts.tracklets)} tracce · "
+    print(f"Partita {directory.name[:8]} · {len(artifacts.tracklets)} tracce · "
           f"{artifacts.analysed_s / 60:.1f} min · {artifacts.sample_hz:.1f} Hz\n")
 
-    base = _base_config(get_settings(), args)
+    base = _base_config(settings, args)
 
     if args.sweep:
         return _sweep(artifacts, base, args.sweep)

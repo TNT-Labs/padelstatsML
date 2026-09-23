@@ -59,7 +59,7 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename }) => {
       </div>
 
       <div style={{ marginBottom: '1.25rem' }}>
-        <DataQualityPanel quality={stats.data_quality} />
+        <DataQualityPanel quality={stats.data_quality} matchId={stats.match_id} />
       </div>
 
       <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
