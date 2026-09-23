@@ -128,6 +128,18 @@ def main() -> int:
         print(f"  {len(cluster.observations):>5} oss · {covered / 60:4.1f} min │ " + " │ ".join(cells))
     print()
 
+    # Where each of them stands and how much it moves. A player covers the
+    # court at running pace; a coach, a spectator by the side glass or a
+    # reflection in it stands still, near or past the lines.
+    print("dove stanno e quanto si muovono (x 0-10 m, y 0-20 m; rete a y=10):")
+    print(f"  {'':>12} {'x':>5} {'y':>5}  {'fuori linee':>11}  {'fermo':>6}  {'velocità':>9}")
+    for label, cluster in [(f"G{i + 1}", c) for i, c in enumerate(players)] + \
+            [(f"escluso {i + 1}", c) for i, c in enumerate(leftovers[:6])]:
+        where = _whereabouts(cluster)
+        print(f"  {label:>12} {where['x']:5.1f} {where['y']:5.1f}  {100 * where['outside']:10.0f}%"
+              f"  {100 * where['still']:5.0f}%  {where['kmh']:6.1f} km/h")
+    print()
+
     if overlap_shares:
         print(f"coppie bloccate perché viste insieme: {len(overlap_shares)} · "
               f"densità mediana {100 * statistics.median(overlap_shares):.0f}% "
@@ -135,18 +147,53 @@ def main() -> int:
         # Seen together with all four players means a fifth person — or four
         # clusters that are not four people. Which one is a count, not a guess:
         # a fifth person needs frames with more than four detections.
+        #
+        # The count has to be read against the detector's recall: with five
+        # people present, five detections in one frame need all five seen at
+        # once. Each person is seen in a share r of the frames, so that
+        # happens in about r^5 of them — a few percent, not most.
         per_frame = Counter(o.frame_index for _, o in read_observations(directory))
+        frames = max(artifacts.frames_sampled or len(per_frame), 1)
         crowded = sum(1 for n in per_frame.values() if n > identity.N_PLAYERS)
-        share = crowded / max(len(per_frame), 1)
-        print(f"  frame con più di {identity.N_PLAYERS} rilevazioni: {crowded} di {len(per_frame)} "
-              f"({100 * share:.0f}%)")
-        if share < 0.10:
+        share = crowded / frames
+        per_person = sum(per_frame.values()) / frames / (identity.N_PLAYERS + 1)
+        expected = per_person ** (identity.N_PLAYERS + 1)
+        print(f"  frame con più di {identity.N_PLAYERS} rilevazioni: {crowded} di {frames} "
+              f"({100 * share:.1f}%)")
+        print(f"  con una quinta persona sempre presente ci si aspetterebbe circa il "
+              f"{100 * expected:.1f}% (ogni persona vista nel {100 * per_person:.0f}% dei frame)")
+        if share >= 0.5 * expected:
+            print("  Compatibile con una quinta persona in campo o appena fuori per buona parte")
+            print("  della partita: guarda sotto dove sta e quanto si muove il primo escluso.")
+        else:
             print("  Troppo pochi per una quinta persona: i cluster esclusi sono gli stessi")
             print("  quattro giocatori, mescolati. L'aspetto non basta a distinguerli.")
-        else:
-            print("  Una quinta persona è in campo o appena fuori per una parte rilevante")
-            print("  della partita: controlla la calibrazione e il margine del campo.")
     return 0
+
+
+def _whereabouts(cluster) -> dict:
+    """Median position, share outside the lines, share of time standing
+    still (under 1 km/h) and median speed while moving."""
+    import numpy as np
+
+    obs = cluster.observations
+    xy = np.array([o.foot_court for o in obs], dtype=float)
+    outside = ((xy[:, 0] < 0) | (xy[:, 0] > 10) | (xy[:, 1] < 0) | (xy[:, 1] > 20)).mean()
+    speeds = []
+    for a, b in zip(obs, obs[1:]):
+        dt = b.timestamp_s - a.timestamp_s
+        if 0 < dt <= 0.5:
+            speeds.append(float(np.hypot(b.foot_court[0] - a.foot_court[0],
+                                         b.foot_court[1] - a.foot_court[1])) / dt * 3.6)
+    speeds_arr = np.array(speeds) if speeds else np.zeros(1)
+    moving = speeds_arr[speeds_arr >= 1.0]
+    return {
+        "x": float(np.median(xy[:, 0])),
+        "y": float(np.median(xy[:, 1])),
+        "outside": float(outside),
+        "still": float((speeds_arr < 1.0).mean()),
+        "kmh": float(np.median(moving)) if moving.size else 0.0,
+    }
 
 
 def _covered_s(cluster) -> float:
