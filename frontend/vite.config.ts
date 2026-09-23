@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/matches': { target: 'http://localhost:8000', changeOrigin: true },
-      '/health':  { target: 'http://localhost:8000', changeOrigin: true },
+      // Every route is under /api; the old /matches and /health entries
+      // predate that and proxied nothing.
+      '/api': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 })

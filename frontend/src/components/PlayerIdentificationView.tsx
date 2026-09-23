@@ -1,5 +1,6 @@
 import { useState, type FC } from 'react'
 import { api, type MatchStats } from '../api'
+import { PlayerThumb } from './PlayerThumb'
 
 const TEAM_LABEL = ['Coppia vicina (metà campo verso la camera)', 'Coppia lontana']
 
@@ -50,15 +51,7 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
       <div className="grid-2" style={{ marginBottom: '2rem' }}>
         {players.map(([pid, player], index) => (
           <div key={pid} className="card" style={{ textAlign: 'center' }}>
-            {player.crop_url ? (
-              <img
-                src={player.crop_url}
-                alt={`Giocatore ${index + 1}`}
-                className="identify-thumb"
-              />
-            ) : (
-              <div className="identify-thumb identify-thumb-empty">👤</div>
-            )}
+            <PlayerThumb url={player.crop_url} alt={`Giocatore ${index + 1}`} className="identify-thumb" />
             <div className="muted-note" style={{ marginBottom: '.5rem' }}>
               {TEAM_LABEL[player.team] ?? `Giocatore ${index + 1}`}
             </div>

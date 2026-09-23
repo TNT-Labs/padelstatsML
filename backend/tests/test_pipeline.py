@@ -560,3 +560,51 @@ def test_a_run_with_a_re_id_model_stores_embeddings(synthetic_match, calibration
     assert observations and all(obs.embedding is not None for _, obs in observations)
     assert json.loads((tmp_path / "run" / "meta.json").read_text())["config"]["reid_model"] == model.name
     assert len(output["per_player"]) == 4
+
+
+# ── Player thumbnails ────────────────────────────────────────────────────────
+
+
+def _crop_obs(frame_index, bbox, confidence=0.9):
+    from app.ml.tracking import Observation
+
+    x1, y1, x2, y2 = bbox
+    return Observation(frame_index, frame_index / 5.0, bbox, ((x1 + x2) / 2, y2),
+                       (5.0, float(frame_index)), confidence, np.full(72, 1 / 72, np.float32))
+
+
+def test_a_player_far_from_the_camera_still_gets_a_thumbnail():
+    """Candidates used to be capped at 32 for the whole match, ranked by box
+    size. On a fragmented match the near players' many tracks filled the
+    cap, and the far players — small boxes — ended up with no picture."""
+    from app.ml.identity import PlayerTrack
+    from app.ml.pipeline import _collect_crops, _encode_player_crops
+
+    frame = np.full((1080, 1920, 3), 90, dtype=np.uint8)
+    crops: dict = {}
+    for track_id in range(40):                       # near side: big boxes
+        _collect_crops(crops, [(track_id, _crop_obs(track_id, (100.0 + 40 * track_id, 600.0, 180.0 + 40 * track_id, 900.0)))], frame)
+    far = _crop_obs(99, (900.0, 200.0, 925.0, 260.0))  # 60 px tall
+    _collect_crops(crops, [(500, far)], frame)
+
+    player = PlayerTrack(player_id=2, team=1, observations=[far], source_tracklets=[500])
+    thumbnails = _encode_player_crops([player], crops)
+
+    assert 2 in thumbnails
+
+
+def test_a_thumbnail_keeps_the_player_proportions():
+    """The box used to be stretched to the thumbnail's 2:3, squashing or
+    elongating the player; it is framed at 2:3 around the player instead."""
+    from app.ml.pipeline import _CROP_H, _CROP_W, _thumbnail
+
+    frame = np.full((1080, 1920, 3), 90, dtype=np.uint8)
+    frame[300:700, 900:1000] = (40, 40, 220)          # a 100 x 400 player: 1:4
+    jpeg = _thumbnail(frame, (900.0, 300.0, 1000.0, 700.0))
+    image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+
+    assert image.shape[:2] == (_CROP_H, _CROP_W)
+    red = (image[:, :, 2] > 150) & (image[:, :, 0] < 100)
+    rows, cols = np.where(red)
+    ratio = (cols.max() - cols.min() + 1) / (rows.max() - rows.min() + 1)
+    assert ratio == pytest.approx(0.25, rel=0.1)

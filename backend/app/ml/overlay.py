@@ -160,7 +160,7 @@ def _draw_player(canvas, track_id: int, player_id: int | None, obs, color, ctx: 
     label = f"G{player_id + 1}" if player_id is not None else f"t{track_id}?"
     detail = f"{obs.foot_court[0]:.1f},{obs.foot_court[1]:.1f}m"
     if speed is not None:
-        detail += f"  {speed:.1f}m/s"
+        detail += f"  {speed * 3.6:.0f} km/h"
 
     # Players on the far baseline sit near the top of the frame, where a label
     # above the box would be hidden by the banner. Flip it inside the box

@@ -3,6 +3,8 @@ import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
 import { ZoneChart } from './ZoneChart'
+import { PlayerThumb } from './PlayerThumb'
+import { kmh } from '../lib/format'
 
 const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6']
 const TEAM_LABEL = ['Coppia vicina', 'Coppia lontana']
@@ -104,11 +106,7 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
           return (
             <div key={pid} className="card">
               <div className="player-header">
-                {player.crop_url ? (
-                  <img src={player.crop_url} alt={name} className="player-thumb" />
-                ) : (
-                  <div className="player-thumb player-thumb-empty">👤</div>
-                )}
+                <PlayerThumb url={player.crop_url} alt={name} className="player-thumb" />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '.4rem' }}>
                     <span className="player-dot" style={{ background: PLAYER_COLORS[index % 4] }} />
@@ -137,11 +135,11 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
                   </tr>
                   <tr>
                     <td>Velocità media negli scambi</td>
-                    <td>{player.avg_speed_ms.toFixed(1)} m/s</td>
+                    <td>{kmh(player.avg_speed_ms)}</td>
                   </tr>
                   <tr>
                     <td>Velocità di punta</td>
-                    <td>{player.peak_speed_ms.toFixed(1)} m/s</td>
+                    <td>{kmh(player.peak_speed_ms)}</td>
                   </tr>
                   <tr>
                     <td>Area di campo coperta</td>

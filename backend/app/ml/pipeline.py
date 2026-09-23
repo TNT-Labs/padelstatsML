@@ -43,9 +43,7 @@ ProgressCallback = Callable[[int, str], None]
 
 _CROP_W, _CROP_H = 160, 240
 _CROP_PAD = 20
-# Upper bound on buffered thumbnail candidates. Each is ~115 KB, so this caps
-# thumbnail memory at ~4 MB regardless of how fragmented tracking gets.
-_MAX_CROP_CANDIDATES = 32
+_CROP_JPEG_QUALITY = 85
 
 
 @dataclass
@@ -71,7 +69,11 @@ class PipelineConfig:
 class _CropCandidate:
     track_id: int
     score: float
-    image: np.ndarray = field(repr=False)
+    # Already a finished thumbnail: resized and JPEG-encoded, ~8 KB. Keeping
+    # one per track costs ~10-20 MB on a fragmented match; keeping raw crops
+    # did not fit, which is why there used to be a cap of 32 for the whole
+    # match — and it left the players far from the camera without a picture.
+    jpeg: bytes = field(repr=False)
     # The detection the crop was cut from: a tracklet split by identity can
     # belong to two players, so the crop goes to whoever owns this sample.
     observation: Observation | None = field(default=None, repr=False)
@@ -374,12 +376,13 @@ def _collect_crops(
     tracked: list[tuple[int, Observation]],
     frame: np.ndarray,
 ) -> None:
-    """Keep the single best-looking crop per track while the frame is hot.
+    """Keep the single best-looking crop of every track while the frame is hot.
 
     Score favours confident detections of a large, upright box: those are the
-    unoccluded frames, which is exactly what makes a usable thumbnail.
+    unoccluded frames, which is exactly what makes a usable thumbnail. The
+    comparison is within a track only, so a player always far from the
+    camera, whose boxes are small, still gets their best picture.
     """
-    height, width = frame.shape[:2]
     for track_id, obs in tracked:
         x1, y1, x2, y2 = obs.bbox
         box_h, box_w = y2 - y1, x2 - x1
@@ -393,23 +396,39 @@ def _collect_crops(
         existing = crops.get(track_id)
         if existing is not None and existing.score >= score:
             continue
-        if existing is None and len(crops) >= _MAX_CROP_CANDIDATES:
-            weakest = min(crops.values(), key=lambda c: c.score)
-            if weakest.score >= score:
-                continue
-            crops.pop(weakest.track_id, None)
+        jpeg = _thumbnail(frame, obs.bbox)
+        if jpeg is not None:
+            crops[track_id] = _CropCandidate(track_id, score, jpeg, obs)
 
-        cx1 = int(np.clip(x1 - _CROP_PAD, 0, width - 1))
-        cy1 = int(np.clip(y1 - _CROP_PAD, 0, height - 1))
-        cx2 = int(np.clip(x2 + _CROP_PAD, 1, width))
-        cy2 = int(np.clip(y2 + _CROP_PAD, 1, height))
-        if cx2 - cx1 < 8 or cy2 - cy1 < 8:
-            continue
-        crops[track_id] = _CropCandidate(track_id, score, frame[cy1:cy2, cx1:cx2].copy(), obs)
+
+def _thumbnail(frame: np.ndarray, bbox: tuple[float, float, float, float]) -> bytes | None:
+    """The player framed at the thumbnail's own 2:3 proportions, then scaled.
+
+    The box is widened or heightened around its centre to 2:3 before resizing
+    — stretching the box itself squashed or elongated the player.
+    """
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = bbox
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    box_w, box_h = (x2 - x1) + 2 * _CROP_PAD, (y2 - y1) + 2 * _CROP_PAD
+    target = _CROP_W / _CROP_H
+    if box_w / box_h < target:
+        box_w = box_h * target
+    else:
+        box_h = box_w / target
+    cx1 = int(np.clip(cx - box_w / 2.0, 0, width - 1))
+    cy1 = int(np.clip(cy - box_h / 2.0, 0, height - 1))
+    cx2 = int(np.clip(cx + box_w / 2.0, 1, width))
+    cy2 = int(np.clip(cy + box_h / 2.0, 1, height))
+    if cx2 - cx1 < 8 or cy2 - cy1 < 8:
+        return None
+    resized = cv2.resize(frame[cy1:cy2, cx1:cx2], (_CROP_W, _CROP_H), interpolation=cv2.INTER_AREA)
+    ok, buffer = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, _CROP_JPEG_QUALITY])
+    return buffer.tobytes() if ok else None
 
 
 def _encode_player_crops(players, crops: dict[int, _CropCandidate]) -> dict[int, bytes]:
-    """Pick the best buffered crop for each player and JPEG-encode it."""
+    """The best thumbnail among the tracks each player was built from."""
     out: dict[int, bytes] = {}
     for player in players:
         candidates = [
@@ -418,9 +437,5 @@ def _encode_player_crops(players, crops: dict[int, _CropCandidate]) -> dict[int,
         ]
         if not candidates:
             continue
-        best = max(candidates, key=lambda c: c.score)
-        resized = cv2.resize(best.image, (_CROP_W, _CROP_H), interpolation=cv2.INTER_AREA)
-        ok, buffer = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ok:
-            out[player.player_id] = buffer.tobytes()
+        out[player.player_id] = max(candidates, key=lambda c: c.score).jpeg
     return out
