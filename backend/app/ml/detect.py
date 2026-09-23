@@ -181,6 +181,13 @@ class PersonDetector:
             return []
         idxs = np.asarray(idxs).reshape(-1)
 
+        # NMS keeps a box of part of a person — the upper body, the legs —
+        # next to the whole one: it overlaps too little to be suppressed. It
+        # is a phantom player, and its foot point, at the waist, lands metres
+        # further up the court.
+        drop = part_of_another([(x1[i], y1[i], x2[i], y2[i]) for i in idxs])
+        idxs = idxs[~drop]
+
         fh, fw = frame_shape
         ox, oy = offset
         out: list[Detection] = []
@@ -198,6 +205,46 @@ class PersonDetector:
             )
         out.sort(key=lambda d: -d.confidence)
         return out
+
+
+# A box is part of another person's box when this much of it lies inside…
+PART_CONTAINMENT = 0.8
+# …and it shares that box's top (a head-and-torso box) or bottom (a legs box)
+# to within this share of the larger box's height. A different player standing
+# behind, fully inside the box but at neither edge, is kept.
+PART_EDGE_TOLERANCE = 0.15
+# …and it is clearly shorter: a torso or a pair of legs is about half a
+# person. Two players one just behind the other are nearly the same height
+# on screen and share the bottom edge; without this they read as a duplicate.
+PART_MAX_HEIGHT_RATIO = 0.8
+
+
+def part_of_another(bboxes: list[tuple[float, float, float, float]]) -> np.ndarray:
+    """Mask of boxes that are a part of another, taller box: the same person
+    detected twice. The taller, whole-body box is the one kept."""
+    boxes = np.asarray(bboxes, dtype=np.float64).reshape(-1, 4)
+    n = len(boxes)
+    drop = np.zeros(n, dtype=bool)
+    if n < 2:
+        return drop
+    heights = boxes[:, 3] - boxes[:, 1]
+    areas = (boxes[:, 2] - boxes[:, 0]) * heights
+    for j in range(n):
+        for i in range(n):
+            if i == j or heights[j] > PART_MAX_HEIGHT_RATIO * heights[i] or areas[j] <= 0:
+                continue
+            inter_w = min(boxes[i, 2], boxes[j, 2]) - max(boxes[i, 0], boxes[j, 0])
+            inter_h = min(boxes[i, 3], boxes[j, 3]) - max(boxes[i, 1], boxes[j, 1])
+            if inter_w <= 0 or inter_h <= 0:
+                continue
+            if inter_w * inter_h / areas[j] < PART_CONTAINMENT:
+                continue
+            tolerance = PART_EDGE_TOLERANCE * heights[i]
+            if (abs(boxes[j, 1] - boxes[i, 1]) <= tolerance
+                    or abs(boxes[j, 3] - boxes[i, 3]) <= tolerance):
+                drop[j] = True
+                break
+    return drop
 
 
 def _letterbox(image: np.ndarray, imgsz: tuple[int, int]) -> tuple[np.ndarray, float, tuple[float, float]]:
