@@ -57,6 +57,13 @@ class Observation:
     color: np.ndarray            # normalised histogram, shape (COLOR_DIM,)
 
 
+def observation_key(obs: Observation) -> tuple[int, tuple[float, float]]:
+    """Identifies one detection across stages: two detections in the same
+    frame never share a floor position. Identity works on pieces of
+    tracklets, so a tracklet id alone no longer says who a detection is."""
+    return obs.frame_index, obs.foot_court
+
+
 @dataclass
 class Tracklet:
     """A contiguous run of observations believed to be one player."""

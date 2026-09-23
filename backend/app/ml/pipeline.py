@@ -66,6 +66,9 @@ class _CropCandidate:
     track_id: int
     score: float
     image: np.ndarray = field(repr=False)
+    # The detection the crop was cut from: a tracklet split by identity can
+    # belong to two players, so the crop goes to whoever owns this sample.
+    observation: Observation | None = field(default=None, repr=False)
 
 
 class AnalysisPipeline:
@@ -371,14 +374,17 @@ def _collect_crops(
         cy2 = int(np.clip(y2 + _CROP_PAD, 1, height))
         if cx2 - cx1 < 8 or cy2 - cy1 < 8:
             continue
-        crops[track_id] = _CropCandidate(track_id, score, frame[cy1:cy2, cx1:cx2].copy())
+        crops[track_id] = _CropCandidate(track_id, score, frame[cy1:cy2, cx1:cx2].copy(), obs)
 
 
 def _encode_player_crops(players, crops: dict[int, _CropCandidate]) -> dict[int, bytes]:
     """Pick the best buffered crop for each player and JPEG-encode it."""
     out: dict[int, bytes] = {}
     for player in players:
-        candidates = [crops[tid] for tid in player.source_tracklets if tid in crops]
+        candidates = [
+            crops[tid] for tid in player.source_tracklets
+            if tid in crops and crops[tid].observation is not None and player.owns(crops[tid].observation)
+        ]
         if not candidates:
             continue
         best = max(candidates, key=lambda c: c.score)
