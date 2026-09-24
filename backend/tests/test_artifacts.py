@@ -178,6 +178,18 @@ def test_an_incomplete_run_is_reported_as_such(written, calibration):
     assert load_artifacts(directory).complete is False
 
 
+def test_the_totals_of_a_run_in_progress_read_as_zero(written):
+    """While the pass runs, meta.json holds the totals as null: reading them
+    must not crash every script pointed at `latest`."""
+    directory, _ = written
+    meta = json.loads((directory / "meta.json").read_text())
+    meta.update(complete=False, analysed_s=None, frames_sampled=None, sample_hz=None)
+    (directory / "meta.json").write_text(json.dumps(meta))
+
+    artifacts = load_artifacts(directory)
+    assert (artifacts.analysed_s, artifacts.frames_sampled, artifacts.sample_hz) == (0.0, 0, 5.0)
+
+
 # ── Individuare una partita senza conoscerne l'UUID ──────────────────────────
 
 def _match_dirs(root, *names):
@@ -223,3 +235,20 @@ def test_an_empty_or_missing_root_fails_clearly(tmp_path):
     (tmp_path / "vuota").mkdir()
     with pytest.raises(FileNotFoundError, match="Nessun artefatto"):
         resolve_artifacts_dir("latest", tmp_path / "vuota")
+
+
+def test_completed_runs_leave_out_a_run_in_progress(tmp_path):
+    import os
+
+    from app.ml.artifacts import completed_runs
+
+    for age, (name, complete) in enumerate([("new", False), ("done", True), ("legacy", None)]):
+        run = tmp_path / name
+        run.mkdir()
+        meta = {} if complete is None else {"complete": complete}
+        (run / "meta.json").write_text(json.dumps(meta))
+        os.utime(run, (1000 - age, 1000 - age))
+    (tmp_path / "empty").mkdir()
+    os.utime(tmp_path / "empty", (2000, 2000))
+
+    assert [p.name for p in completed_runs(tmp_path)] == ["done", "legacy"]

@@ -121,17 +121,22 @@ class LoadedArtifacts:
         """
         return bool(self.meta.get("complete", True))
 
+    # While the pass runs, meta.json holds the totals as null — present but
+    # unknown — so a plain .get(key, default) would hand back None.
     @property
     def sample_hz(self) -> float:
-        return float(self.meta.get("sample_hz", 5.0))
+        value = self.meta.get("sample_hz")
+        return float(value) if value is not None else 5.0
 
     @property
     def analysed_s(self) -> float:
-        return float(self.meta.get("analysed_s", 0.0))
+        value = self.meta.get("analysed_s")
+        return float(value) if value is not None else 0.0
 
     @property
     def frames_sampled(self) -> int:
-        return int(self.meta.get("frames_sampled", 0))
+        value = self.meta.get("frames_sampled")
+        return int(value) if value is not None else 0
 
     def observations_by_frame(self) -> dict[int, list[tuple[int, Observation]]]:
         """Frame index -> [(track_id, observation), ...], for the overlay."""
@@ -180,6 +185,25 @@ def resolve_artifacts_dir(match_id: str, artifacts_root: Path) -> Path:
         f"Nessuna partita corrisponde a '{match_id}'. Disponibili: {available} "
         f"(oppure usa 'latest')"
     )
+
+
+def completed_runs(artifacts_root: Path, limit: int = 5) -> list[Path]:
+    """The most recent runs whose decode pass has finished, newest first.
+    For pointing a person elsewhere when `latest` is still being analysed."""
+    if not artifacts_root.exists():
+        return []
+    out: list[Path] = []
+    for path in sorted((p for p in artifacts_root.iterdir() if p.is_dir()),
+                       key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if meta.get("complete", True):
+            out.append(path)
+            if len(out) == limit:
+                break
+    return out
 
 
 def load_artifacts(directory: str | Path) -> LoadedArtifacts:
