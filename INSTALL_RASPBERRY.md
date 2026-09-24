@@ -228,9 +228,16 @@ da +70% a +125% di tempo di analisi invece di +25%. Conviene solo se
 `diagnose_identity.py` segnala che il re-ID distingue poco i giocatori
 (distanze vicine) o che i cambi di campo trovati non corrispondono al video.
 
+Come ogni export, va fatto nel virtualenv della [sezione 6](#6-esportare-il-modello-onnx):
+PyTorch non è installato sul sistema.
+
 ```bash
+python3 -m venv .export-venv && source .export-venv/bin/activate
+pip install --upgrade pip
+pip install -r backend/requirements.export.txt      # ~10 minuti, ~2 GB
 python backend/scripts/export_reid_onnx.py --arch osnet_x1_0
 # → weights/osnet_x1_0_msmt17.onnx
+deactivate && rm -rf .export-venv
 ```
 
 poi nel `.env`:
