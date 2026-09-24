@@ -150,9 +150,11 @@ def roles_apply(pieces: list[Tracklet]) -> bool:
     return total > 0 and min(near, far) >= MIN_HALF_SHARE * total
 
 
-def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
+def assign_roles(pieces: list[Tracklet], appearance, side_only: bool = False) -> RoleAssignment:
     """Give every piece of track a pair and a side. `appearance` is the
-    match's calibrated re-ID (see identity.Appearance) or None."""
+    match's calibrated re-ID (see identity.Appearance) or None. With
+    `side_only`, appearance still finds the pairs but not who is who within
+    a pair — for the diagnostics, to measure what appearance adds."""
     reid = appearance is not None
     # Pairs are told apart by whichever cue does it more clearly on this
     # match. Kit colour, when the pairs dress differently, is often far
@@ -175,7 +177,7 @@ def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
     noise = float(appearance.same_median) if reid else _colour_noise(pieces)
     for team in (0, 1):
         members = [rp for rp in role_pieces if rp.team == team]
-        if noise is None:
+        if noise is None or side_only:
             _roles_from_side(members)
         else:
             _best_roles(members, max(noise, 1e-3))

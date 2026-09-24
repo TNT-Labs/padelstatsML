@@ -384,10 +384,6 @@ def _report_crowding(directory: Path, artifacts) -> None:
         print("  Troppo pochi per una quinta persona presente a lungo.")
 
 
-# How far past the back walls a detection is tested for exclusion, in metres.
-_BEHIND_MARGINS = (1.0, 0.5, 0.25)
-
-
 def _behind_wall_m(obs) -> float:
     """How far behind the back glass the feet are: 0 on court. The back
     walls stand on the baselines, so a player cannot be there — only people
@@ -402,11 +398,8 @@ def _outside_side_m(obs) -> float:
 
 
 def _report_behind_walls(tracklets, speed: float, expected: int) -> None:
-    """Where the detections outside the lines are, and what excluding the
-    ones behind the back walls would do to the players — measured, before
-    deciding a threshold."""
+    """Where the detections outside the lines are, then the trials."""
     observations = [o for t in tracklets for o in t.observations]
-    total = len(observations)
     behind = np.array([_behind_wall_m(o) for o in observations])
     side = np.array([_outside_side_m(o) for o in observations])
     print()
@@ -423,22 +416,77 @@ def _report_behind_walls(tracklets, speed: float, expected: int) -> None:
         print(f"  ferme: {100 * moving:.0f}% di quelle oltre 0,5 m dai fondi,"
               f" {100 * on_court:.0f}% di quelle in campo")
 
-    print("se si escludessero quelle oltre X m dietro i fondi")
-    print("(prova: richiede circa un minuto)")
-    print(f"  {'X':>10} {'cambi':>5} {'ai 4':>5} {'contese':>7}   tracciati G1-G4")
-    for margin in (None, *_BEHIND_MARGINS):
-        kept = tracklets if margin is None else [
-            Tracklet(id=t.id, observations=[o for o in t.observations if _behind_wall_m(o) <= margin])
-            for t in tracklets
-        ]
-        kept = [t for t in kept if len(t) >= 3]
-        result = identity.resolve_players(kept, max_speed_ms=speed)
-        attributed = sum(len(p) for p in result.players)
-        tracked = " ".join(f"{100 * len(p) / expected:3.0f}%" for p in result.players)
-        label = "nessuna" if margin is None else f"{margin:g} m"
-        print(f"  {label:>10} {len(result.changeovers):>5} {100 * attributed / total:4.0f}%"
-              f" {100 * result.observations_discarded / total:6.0f}%   {tracked}")
-    print("  ai 4, contese: quote di tutte le rilevazioni, escluse comprese")
+    _report_trials(tracklets, expected)
+
+
+def _report_trials(tracklets, expected: int) -> None:
+    """What would change the players: appearance switched off within the
+    pairs (roles by side alone), the detections behind the back glass left
+    out, or both — measured on this match before changing the analysis."""
+    usable = [t for t in tracklets if len(t) >= 3]
+    appearance, _ = identity.calibrate_appearance(usable)
+    total = sum(len(t) for t in usable)
+    no_glass = [
+        Tracklet(id=t.id, observations=[o for o in t.observations if _behind_wall_m(o) <= 1.0])
+        for t in usable
+    ]
+    no_glass = [t for t in no_glass if len(t) >= 3]
+
+    print()
+    print("prove (richiedono circa un minuto)")
+    print("  solo lato: chi è chi nella coppia deciso dal lato, senza aspetto")
+    print("  senza vetro: escluse le rilevazioni oltre 1 m dietro i fondi")
+    print(f"  {'':>12} {'cambi':>5} {'ai 4':>5} {'contese':>7}   tracciati G1-G4")
+    separation = None
+    for label, source, side_only in (("attuale", usable, False), ("solo lato", usable, True),
+                                     ("senza vetro", no_glass, False), ("entrambe", no_glass, True)):
+        pieces = [Tracklet(id=t.id, observations=part)
+                  for t in source for part in identity._split_identity_switches(t.observations, appearance)]
+        assignment = assign_roles(pieces, appearance, side_only=side_only)
+        players = [identity.one_per_frame([rp.tracklet for rp in assignment.players.get(key, [])])
+                   for key in identity._ROLE_ORDER]
+        kept = sum(len(p) for p in players)
+        given = sum(len(rp.tracklet) for group in assignment.players.values() for rp in group)
+        tracked = " ".join(f"{100 * len(p) / expected:3.0f}%" for p in players)
+        print(f"  {label:>12} {len(assignment.changeovers):>5} {100 * kept / total:4.0f}%"
+              f" {100 * (given - kept) / total:6.0f}%   {tracked}")
+        if label == "solo lato":
+            separation = [_pair_separation(assignment, team) for team in (0, 1)]
+    print("  ai 4, contese: quote di tutte le rilevazioni")
+
+    if separation:
+        print("l'aspetto distingue i due compagni? (lato contro lato)")
+        for team, result in zip(("vicina", "lontana"), separation):
+            if result is None:
+                continue
+            real, chance, p_value = result
+            verdict = "sì" if p_value < 0.01 else "no, non più del caso"
+            print(f"  coppia {team:<8} distanza {real:.4f} · a caso {chance:.4f}"
+                  f" · p={p_value:.3f}: {verdict}")
+
+
+def _pair_separation(assignment, team: int, rounds: int = 200):
+    """How far apart the looks of the pair's two sides are, against the
+    same pieces split at random: a permutation test. None without looks."""
+    members = [rp for key, group in assignment.players.items() if key[0] == team
+               for rp in group if rp.look is not None]
+    if len(members) < 4:
+        return None
+    looks = np.stack([rp.look for rp in members])
+    weights = np.array([len(rp.tracklet) for rp in members], dtype=float)
+    right = np.array([rp.side_score > 0 for rp in members])
+    if right.all() or not right.any():
+        return None
+
+    def distance(labels) -> float:
+        a = (looks[labels] * weights[labels, None]).sum(axis=0)
+        b = (looks[~labels] * weights[~labels, None]).sum(axis=0)
+        return float(1.0 - a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+    real = distance(right)
+    rng = np.random.default_rng(0)
+    shuffled = np.array([distance(rng.permutation(right)) for _ in range(rounds)])
+    return real, float(shuffled.mean()), float((np.sum(shuffled >= real) + 1) / (rounds + 1))
 
 
 def _still_share(tracklets, selected) -> float | None:
