@@ -608,3 +608,22 @@ def test_a_thumbnail_keeps_the_player_proportions():
     rows, cols = np.where(red)
     ratio = (cols.max() - cols.min() + 1) / (rows.max() - rows.min() + 1)
     assert ratio == pytest.approx(0.25, rel=0.1)
+
+
+def test_the_players_boxes_for_the_video_are_ready_at_the_end(result, artifacts_dir):
+    """Written by the analysis from the identity it computed, so the web
+    player opens at once, and says that the boxes are the players of the
+    statistics."""
+    import gzip
+    import json
+
+    from app.ml.player_boxes import player_boxes_gz
+
+    cached = list(artifacts_dir.glob("players-*.json.gz"))
+    assert len(cached) == 1
+    # The API finds it from the statistics, without recomputing anything.
+    data = player_boxes_gz(artifacts_dir, result["per_player"], default_speed_ms=8.0)
+    assert data == cached[0].read_bytes()
+    payload = json.loads(gzip.decompress(data))
+    assert payload["matches_stats"] is True
+    assert {str(p["id"]) for p in payload["players"]} == set(result["per_player"])

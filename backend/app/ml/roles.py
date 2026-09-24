@@ -74,6 +74,8 @@ LOOK_SPLIT_MIN_APART = 0.8
 SHARED_MIN_FRAMES = 3
 
 REVES, DRIVE = 0, 1
+# As the API and the web UI name them.
+ROLE_NAMES = {DRIVE: "drive", REVES: "reves"}
 
 
 @dataclass

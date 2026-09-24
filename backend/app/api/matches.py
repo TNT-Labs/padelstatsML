@@ -18,17 +18,22 @@ produces confident, wrong numbers.
 """
 from __future__ import annotations
 
+import asyncio
+import gzip
 import logging
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.api.ranges import file_range_response
 from app.core.storage import (
+    artifacts_dir,
     crop_path,
     crop_url,
     delete_match_files,
@@ -43,6 +48,7 @@ from app.ml.court import (
     build_calibration,
     suggest_corners,
 )
+from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
 from app.ml.video import VideoError, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus
 from app.schemas.match import (
@@ -64,6 +70,10 @@ HTTP_UNPROCESSABLE = 422
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
 _UPLOAD_CHUNK_GUARD_BYTES = 8 * 1024 * 1024   # keep this much headroom free
+# Building the players' boxes loads a match's artifacts (a few hundred MB at
+# peak): one at a time, which also keeps two viewers from building the same
+# cache file at once.
+_BOXES_LOCK = asyncio.Lock()
 
 
 # ── Creation and upload ──────────────────────────────────────────────────────
@@ -440,6 +450,47 @@ async def get_crop(
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Anteprima non disponibile.")
     return FileResponse(str(path), media_type="image/jpeg")
+
+
+@router.get("/{match_id}/video")
+async def get_video(match_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """The uploaded video, in byte ranges so the browser can seek in it."""
+    await _get_match(db, match_id)
+    path = video_path(match_id)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Video non disponibile.")
+    # Stored as .mp4 whatever the upload was; browsers sniff the container.
+    return file_range_response(path, request.headers.get("range"), "video/mp4")
+
+
+@router.get("/{match_id}/tracks")
+async def get_player_tracks(
+    match_id: str, request: Request, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Each player's box through the video, for the web player's overlay:
+    see app/ml/player_boxes.py."""
+    await _get_match(db, match_id)
+    stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
+    per_player = stats.per_player if stats is not None else None
+    try:
+        async with _BOXES_LOCK:
+            data = await run_in_threadpool(
+                player_boxes_gz, artifacts_dir(match_id), per_player,
+                get_settings().max_player_speed_ms,
+            )
+    except BoxesUnavailable as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("Riquadri dei giocatori per %s non calcolabili: %s", match_id, exc)
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"Riquadri non disponibili: {exc}"
+        ) from exc
+
+    headers = {"Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(data, media_type="application/json",
+                        headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(data), media_type="application/json", headers=headers)
 
 
 # A 204 route must declare `response_model=None`. These modules use

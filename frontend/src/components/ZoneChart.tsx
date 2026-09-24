@@ -9,6 +9,7 @@
  */
 import type { FC } from 'react'
 import type { PlayerStats } from '../api'
+import { PLAYER_COLORS } from '../lib/players'
 
 const ZONES = [
   { key: 'net', label: 'Rete', color: '#16a34a' },
@@ -16,7 +17,6 @@ const ZONES = [
   { key: 'back', label: 'Fondo', color: '#64748b' },
 ] as const
 
-const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6']
 
 interface Props {
   perPlayer: Record<string, PlayerStats>
