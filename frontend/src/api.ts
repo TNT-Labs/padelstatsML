@@ -139,6 +139,28 @@ export interface MatchStats {
   data_quality: DataQuality
 }
 
+/** Each player's box through the video, sampled a few times a second. */
+export interface PlayerBoxes {
+  id: number
+  team: number
+  role?: 'drive' | 'reves' | null
+  /** Video time of each sample, in seconds. */
+  t: number[]
+  /** x1, y1, x2, y2 of each sample, in the video's pixels, one after another. */
+  box: number[]
+}
+
+export interface PlayerTracks {
+  sample_hz: number
+  frame: { width: number | null; height: number | null }
+  players: PlayerBoxes[]
+  /** Seconds at which the pairs changed ends. */
+  changeovers: number[]
+  /** False when the boxes were recomputed with a newer version of the code
+   *  than the statistics on screen: the numbering may differ. */
+  matches_stats: boolean
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message)
@@ -185,6 +207,8 @@ export const api = {
   deleteMatch: (id: string) => req<void>(`/api/matches/${id}`, { method: 'DELETE' }),
 
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
+  videoUrl: (id: string) => `${BASE}/api/matches/${id}/video`,
+  getPlayerTracks: (id: string) => req<PlayerTracks>(`/api/matches/${id}/tracks`),
 
   getSuggestion: (id: string) =>
     req<CalibrationSuggestion>(`/api/matches/${id}/calibration/suggestion`),

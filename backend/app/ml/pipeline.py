@@ -31,6 +31,7 @@ from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
 from app.ml.detect import PersonDetector
 from app.ml.identity import IdentityResult, resolve_players
+from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.rallies import Rally, detect_rallies
 from app.ml.reid import ReidEmbedder
@@ -232,6 +233,13 @@ class AnalysisPipeline:
 
         if artifacts_dir is not None:
             ArtifactWriter(artifacts_dir).write_result(result)
+            try:
+                save_player_boxes(artifacts_dir, identity, sampler.effective_hz,
+                                  {"width": info.width, "height": info.height}, result["per_player"])
+            except Exception as exc:              # noqa: BLE001
+                # Only the web player's overlay needs it, and the API can
+                # rebuild it: never fail an hour of analysis over it.
+                logger.warning("Riquadri per il video non salvati: %s", exc)
 
         report(100, "Analisi completata")
         return result

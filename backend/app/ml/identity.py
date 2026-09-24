@@ -152,6 +152,9 @@ class IdentityResult:
     # Which appearance cue told the players apart, and how well: see
     # `Appearance.summary`. For the data-quality panel and the diagnostics.
     appearance: dict = field(default_factory=lambda: {"cue": "colore"})
+    # Seconds at which the pairs changed ends, when players were found by
+    # role; linking only counts them (side_changes).
+    changeovers: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -857,6 +860,7 @@ def _resolve_by_role(
         clusters_found=len(pieces),
         observations_discarded=discarded,
         appearance=appearance_summary,
+        changeovers=list(assignment.changeovers),
     )
 
 

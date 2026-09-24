@@ -1,12 +1,16 @@
-import type { FC } from 'react'
+import { useCallback, useRef, type FC } from 'react'
 import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
+import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
 import { kmh, playerPlace } from '../lib/format'
+import { clock } from '../lib/videoOverlay'
+import { PLAYER_COLORS } from '../lib/players'
 
-const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6']
+const RALLY_LEAD_S = 2
+
 interface Props {
   stats: MatchStats
   onBack: () => void
@@ -25,6 +29,15 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const seek = useCallback((seconds: number) => {
+    const video = videoRef.current
+    if (!video) return
+    video.currentTime = seconds
+    video.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    void video.play().catch(() => undefined)
+  }, [])
 
   return (
     <div className="layout">
@@ -77,6 +90,8 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
       <div style={{ marginBottom: '1.25rem' }}>
         <DataQualityPanel quality={stats.data_quality} matchId={stats.match_id} />
       </div>
+
+      <MatchVideo matchId={stats.match_id} names={names} videoRef={videoRef} onSeek={seek} />
 
       <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
         <div className="card">
@@ -163,16 +178,17 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
           <h2 style={{ marginBottom: '.75rem' }}>Scambi</h2>
           <div className="rally-strip">
             {stats.rallies.map(rally => (
-              <div
+              <button
                 key={rally.index}
+                type="button"
                 className="rally-chip"
-                title={`Dal minuto ${Math.floor(rally.start_s / 60)}:${String(
-                  Math.floor(rally.start_s % 60),
-                ).padStart(2, '0')}`}
+                // A couple of seconds early, to see the serve.
+                onClick={() => seek(Math.max(0, rally.start_s - RALLY_LEAD_S))}
+                title={`Guarda lo scambio, dal minuto ${clock(rally.start_s)}`}
               >
                 <span className="rally-num">#{rally.index + 1}</span>
                 <span className="rally-dur">{formatDuration(rally.duration_s)}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>

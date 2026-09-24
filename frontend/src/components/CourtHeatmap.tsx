@@ -9,8 +9,8 @@
  * per player.
  */
 import type { FC } from 'react'
+import { PLAYER_COLORS } from '../lib/players'
 
-const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6']
 const CELL_M = 0.5
 const SERVICE_OFFSET = 6.95
 

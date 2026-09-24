@@ -116,6 +116,11 @@ heatmap sbilanciata verso la rete sono indistinguibili da quelle giuste,
 anche se due giocatori sono stati scambiati per metà partita. L'unico modo
 per saperlo è **guardare i fotogrammi**.
 
+Il modo più diretto è dalla pagina delle statistiche: **Video della partita**
+riproduce il video caricato con il riquadro e il nome di ogni giocatore
+sopra. Si segue a colpo d'occhio se un nome resta sulla stessa persona; un
+clic su uno scambio o su un cambio di campo porta il video a quel momento.
+
 Ogni analisi salva le osservazioni grezze (~30 MB per ora di video). Da quelle:
 
 ```bash

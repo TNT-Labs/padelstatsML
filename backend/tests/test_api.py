@@ -369,3 +369,134 @@ async def test_player_thumbnails_are_served_from_a_relative_url(uploaded_match, 
     image = await client.get(url)
     assert image.status_code == 200
     assert image.headers["content-type"] == "image/jpeg"
+
+
+# ── Watching the match ───────────────────────────────────────────────────────
+
+async def test_the_video_is_served_whole_and_in_ranges(uploaded_match, client):
+    """A <video> element seeks by asking for byte ranges; without 206 replies
+    it can only play from the start."""
+    match_id, _ = uploaded_match
+    from app.core.storage import video_path
+
+    content = video_path(match_id).read_bytes()
+    size = len(content)
+
+    whole = await client.get(f"/api/matches/{match_id}/video")
+    assert whole.status_code == 200
+    assert whole.headers["accept-ranges"] == "bytes"
+    assert whole.content == content
+
+    part = await client.get(f"/api/matches/{match_id}/video", headers={"Range": "bytes=10-19"})
+    assert part.status_code == 206
+    assert part.headers["content-range"] == f"bytes 10-19/{size}"
+    assert part.content == content[10:20]
+
+    tail = await client.get(f"/api/matches/{match_id}/video", headers={"Range": f"bytes={size - 5}-"})
+    assert tail.status_code == 206 and tail.content == content[-5:]
+
+    past = await client.get(f"/api/matches/{match_id}/video", headers={"Range": f"bytes={size}-"})
+    assert past.status_code == 416
+    assert past.headers["content-range"] == f"bytes */{size}"
+
+
+async def test_a_match_without_its_video_says_so(client):
+    match_id = (await client.post("/api/matches", json={"title": "Senza video"})).json()["match_id"]
+    response = await client.get(f"/api/matches/{match_id}/video")
+    assert response.status_code == 404
+    assert "Video non disponibile" in response.json()["detail"]
+
+
+def _write_match_artifacts(match_id: str, calibration) -> None:
+    """Four players over twenty seconds, stored the way the pipeline stores
+    them."""
+    from app.core.storage import artifacts_dir
+    from app.ml.artifacts import ArtifactWriter
+    from tests.synthetic import walk
+
+    paths = [((2.5, 5.0), (3.0, 6.0)), ((7.5, 5.0), (7.0, 6.0)),
+             ((2.5, 15.0), (3.0, 14.0)), ((7.5, 15.0), (7.0, 14.0))]
+    pairs = []
+    for track_id, (start, end) in enumerate(paths):
+        pairs.extend((track_id, obs) for obs in walk(calibration, track_id, start, end, 0.0, 20.0))
+    pairs.sort(key=lambda p: p[1].timestamp_s)
+    with ArtifactWriter(artifacts_dir(match_id)) as writer:
+        writer.write_observations(pairs)
+        writer.write_meta({
+            "complete": True, "calibration": calibration.to_dict(), "sample_hz": 5.0,
+            "frames_sampled": 101, "analysed_s": 20.0, "min_observations": 3,
+            "video": {"width": 1920, "height": 1080},
+            "config": {"max_player_speed_ms": 8.0},
+        })
+
+
+def _store_stats(match_id: str, samples: dict[str, int]) -> None:
+    from app.core.database import sync_session
+    from app.models import MatchStats
+
+    player = {"team": 0, "tracked_ratio": 0.8, "distance_m": 1.0, "distance_rally_m": 1.0,
+              "avg_speed_ms": 1.0, "peak_speed_ms": 1.0, "coverage_m2": 1.0,
+              "zone_pct": {"net": 0.3, "mid": 0.3, "back": 0.4}}
+    with sync_session() as session:
+        existing = session.get(MatchStats, match_id)
+        if existing is not None:
+            session.delete(existing)
+            session.flush()
+        session.add(MatchStats(
+            match_id=match_id, per_player={k: {**player, "samples": n} for k, n in samples.items()},
+            heatmaps={}, rallies=[], summary={}, data_quality={}, player_crops={},
+        ))
+
+
+async def test_the_players_boxes_follow_the_video(uploaded_match, client, calibration):
+    match_id, _ = uploaded_match
+    _write_match_artifacts(match_id, calibration)
+
+    response = await client.get(f"/api/matches/{match_id}/tracks")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-encoding"] == "gzip"
+    payload = response.json()
+    assert payload["frame"] == {"width": 1920, "height": 1080}
+    assert [p["id"] for p in payload["players"]] == [0, 1, 2, 3]
+    for player in payload["players"]:
+        assert len(player["box"]) == 4 * len(player["t"])
+        assert player["t"] == sorted(player["t"])
+    # No statistics yet: nothing says these are the players on screen.
+    assert payload["matches_stats"] is False
+
+    # Statistics from the same identity: the boxes are theirs.
+    _store_stats(match_id, {str(p["id"]): len(p["t"]) for p in payload["players"]})
+    same = (await client.get(f"/api/matches/{match_id}/tracks")).json()
+    assert same["matches_stats"] is True
+
+    # Statistics from another identity, as after a code update: said so.
+    _store_stats(match_id, {"0": 1, "1": 2, "2": 3, "3": 4})
+    other = (await client.get(f"/api/matches/{match_id}/tracks")).json()
+    assert other["matches_stats"] is False
+
+
+async def test_the_players_boxes_are_cached_and_sent_plain_on_request(uploaded_match, client, calibration):
+    match_id, _ = uploaded_match
+    _write_match_artifacts(match_id, calibration)
+    from app.core.storage import artifacts_dir
+
+    first = await client.get(f"/api/matches/{match_id}/tracks")
+    cached = list(artifacts_dir(match_id).glob("players-*.json.gz"))
+    assert len(cached) == 1
+
+    plain = await client.get(f"/api/matches/{match_id}/tracks", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers
+    assert plain.json() == first.json()
+
+    # New statistics make a new cache file, and the old one goes.
+    _store_stats(match_id, {"0": 1})
+    await client.get(f"/api/matches/{match_id}/tracks")
+    assert [p.name for p in artifacts_dir(match_id).glob("players-*.json.gz")] != [cached[0].name]
+    assert len(list(artifacts_dir(match_id).glob("players-*.json.gz"))) == 1
+
+
+async def test_without_artifacts_the_boxes_are_missing_with_a_reason(uploaded_match, client):
+    match_id, _ = uploaded_match
+    response = await client.get(f"/api/matches/{match_id}/tracks")
+    assert response.status_code == 404
+    assert "KEEP_ARTIFACTS" in response.json()["detail"]

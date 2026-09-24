@@ -202,7 +202,18 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
   display: flex; flex-direction: column; align-items: center;
   min-width: 56px; padding: .35rem .5rem; border-radius: 8px;
   background: #f0fdf4; border: 1px solid var(--border);
+  font: inherit; color: inherit; cursor: pointer;
 }
+.rally-chip:hover { border-color: var(--green); }
+.rally-chip:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+
+/* ── Match video ────────────────────────────────────────────────────────── */
+.video-wrap { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.video-wrap video { display: block; width: 100%; max-height: 70vh; background: #000; }
+.video-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.toggle { display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer; }
+.toggle input { accent-color: var(--green); }
+.seek-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .75rem; }
 .rally-num { font-size: .68rem; color: var(--muted); }
 .rally-dur { font-size: .82rem; font-weight: 700; color: var(--green-dk); }
 
