@@ -15,7 +15,8 @@ match. So:
 
 1. The pair is the half of the court, with changeovers found from the look
    of each half: averaged over two people and twenty seconds, that is far
-   steadier than any one person's.
+   steadier than any one person's. The look is kit colour or re-ID,
+   whichever tells the two pairs apart more clearly on the match.
 2. The player within the pair is the side: in every frame where both are
    seen, the one further left (from their own point of view) votes revés.
 3. Appearance still counts — re-ID, or kit colour without it. A piece of
@@ -105,6 +106,11 @@ class TeamTimeline:
     # When each changeover happened, to the detection: the windows only say
     # in which twenty seconds (see _refine_changeover).
     change_times: list[float] = field(default_factory=list)
+    cue: str = "colore"          # "reid" or "colore": what the halves were compared by
+    # How clearly the halves told the pairs apart along the chosen history:
+    # mean over windows of the evidence for the chosen arrangement, over its
+    # spread. Scale-free, so the two cues can be compared.
+    clarity: float = 0.0
 
     @property
     def changeovers(self) -> list[float]:
@@ -122,6 +128,8 @@ class RoleAssignment:
     # (team, role) -> pieces
     players: dict[tuple[int, int], list[RolePiece]]
     timeline: TeamTimeline
+    # Every cue's timeline, the chosen one included: for the diagnostics.
+    alternatives: list[TeamTimeline] = field(default_factory=list)
 
     @property
     def changeovers(self) -> list[float]:
@@ -146,7 +154,16 @@ def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
     """Give every piece of track a pair and a side. `appearance` is the
     match's calibrated re-ID (see identity.Appearance) or None."""
     reid = appearance is not None
-    timeline = _team_timeline(pieces, reid)
+    # Pairs are told apart by whichever cue does it more clearly on this
+    # match. Kit colour, when the pairs dress differently, is often far
+    # clearer than re-ID, which is trained to tell people apart, not teams:
+    # on a real match with black against white kits and a weak re-ID, re-ID
+    # alone missed a changeover and swapped the pairs for the rest of it.
+    # With four identical kits colour sees nothing, and re-ID wins.
+    candidates = [_team_timeline(pieces, reid=False)]
+    if reid:
+        candidates.append(_team_timeline(pieces, reid=True))
+    timeline = max(candidates, key=lambda c: c.clarity)
     swapped_at = timeline.swapped_at
 
     role_pieces = [RolePiece(tracklet=p) for p in pieces]
@@ -166,7 +183,7 @@ def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
     players: dict[tuple[int, int], list[RolePiece]] = defaultdict(list)
     for rp in role_pieces:
         players[(rp.team, rp.role)].append(rp)
-    return RoleAssignment(players=dict(players), timeline=timeline)
+    return RoleAssignment(players=dict(players), timeline=timeline, alternatives=candidates)
 
 
 def _best_roles(members: list[RolePiece], noise: float) -> None:
@@ -362,8 +379,10 @@ def _team_timeline(pieces: list[Tracklet], reid: bool) -> TeamTimeline:
             change_times.append(_refine_changeover(
                 observations, reid, team_a, team_b, lo, hi, bool(swapped[w - 1]), w * TEAM_WINDOW_S,
             ))
+    agreeing = (swap_cost - keep_cost)[both] * np.where(swapped[both], -1.0, 1.0)
+    clarity = float(agreeing.mean() / (agreeing.std() + 1e-9)) if len(both) > 1 else 0.0
     return TeamTimeline(swapped=swapped, evidence=evidence_by_window, penalty=penalty,
-                        change_times=change_times)
+                        change_times=change_times, cue="reid" if reid else "colore", clarity=clarity)
 
 
 def _refine_changeover(

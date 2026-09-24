@@ -32,7 +32,8 @@ The approach here
 
 Known limitations, reported rather than hidden:
 
-* changeovers are found from the look of each half. With four identical
+* changeovers are found from the look of each half, by kit colour or
+  re-ID, whichever separates the pairs more clearly. With four identical
   kits and no re-ID the halves look the same, no changeover is seen, and
   after one the two pairs' numbers are exchanged. `side_changes` reports
   the changeovers found, to check against the video.
