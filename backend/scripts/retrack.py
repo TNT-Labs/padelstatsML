@@ -22,7 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 
 from app.core.config import get_settings                             # noqa: E402
-from app.ml.artifacts import load_artifacts, read_observations, resolve_artifacts_dir  # noqa: E402
+from app.ml.artifacts import (  # noqa: E402
+    completed_runs,
+    load_artifacts,
+    read_observations,
+    resolve_artifacts_dir,
+)
 from app.ml.pipeline import PipelineConfig, analyse_tracklets        # noqa: E402
 from app.ml.replay import replay_tracking                            # noqa: E402
 
@@ -53,7 +58,10 @@ def main() -> int:
 
     artifacts = load_artifacts(directory)
     if not artifacts.complete:
+        others = [p.name[:8] for p in completed_runs(directory.parent) if p != directory]
         print("Questa analisi non è conclusa: il confronto non avrebbe senso.", file=sys.stderr)
+        if others:
+            print(f"Analisi concluse: {', '.join(others)} — passa l'id (basta il prefisso).", file=sys.stderr)
         return 1
 
     run_config = artifacts.meta.get("config", {})

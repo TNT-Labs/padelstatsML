@@ -43,7 +43,12 @@ import numpy as np  # noqa: E402
 
 from app.core.config import get_settings                               # noqa: E402
 from app.ml import identity                                            # noqa: E402
-from app.ml.artifacts import load_artifacts, read_observations, resolve_artifacts_dir  # noqa: E402
+from app.ml.artifacts import (  # noqa: E402
+    completed_runs,
+    load_artifacts,
+    read_observations,
+    resolve_artifacts_dir,
+)
 from app.ml.detect import part_of_another                              # noqa: E402
 from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M                 # noqa: E402
 from app.ml.roles import DRIVE, assign_roles                           # noqa: E402
@@ -77,6 +82,13 @@ def main() -> int:
         return 1
 
     artifacts = load_artifacts(directory)
+    if not artifacts.complete:
+        others = [p.name[:8] for p in completed_runs(directory.parent) if p != directory]
+        print(f"L'analisi {directory.name[:8]} è ancora in corso ({len(artifacts.tracklets)} tracce finora): "
+              "riprova quando è finita.", file=sys.stderr)
+        if others:
+            print(f"Analisi concluse: {', '.join(others)} — passa l'id (basta il prefisso).", file=sys.stderr)
+        return 1
     tracklets = [t for t in artifacts.tracklets if len(t) >= 3]
     if not tracklets:
         print("Nessuna traccia negli artefatti.", file=sys.stderr)
