@@ -138,6 +138,8 @@ def main() -> int:
     else:
         _report_linking(pieces, appearance, speed, period, total, expected)
     _report_crowding(directory, artifacts)
+    if identity.roles_apply(pieces) and not args.collegamento:
+        _report_behind_walls(tracklets, speed, expected)
     return 0
 
 
@@ -380,6 +382,78 @@ def _report_crowding(directory: Path, artifacts) -> None:
         print("  per buona parte della partita: vedi i frame contesi sopra.")
     else:
         print("  Troppo pochi per una quinta persona presente a lungo.")
+
+
+# How far past the back walls a detection is tested for exclusion, in metres.
+_BEHIND_MARGINS = (1.0, 0.5, 0.25)
+
+
+def _behind_wall_m(obs) -> float:
+    """How far behind the back glass the feet are: 0 on court. The back
+    walls stand on the baselines, so a player cannot be there — only people
+    behind the glass, reflections in it, or the foot point's error."""
+    y = obs.foot_court[1]
+    return max(-y, y - COURT_LENGTH_M, 0.0)
+
+
+def _outside_side_m(obs) -> float:
+    x = obs.foot_court[0]
+    return max(-x, x - COURT_WIDTH_M, 0.0)
+
+
+def _report_behind_walls(tracklets, speed: float, expected: int) -> None:
+    """Where the detections outside the lines are, and what excluding the
+    ones behind the back walls would do to the players — measured, before
+    deciding a threshold."""
+    observations = [o for t in tracklets for o in t.observations]
+    total = len(observations)
+    behind = np.array([_behind_wall_m(o) for o in observations])
+    side = np.array([_outside_side_m(o) for o in observations])
+    print()
+    print("rilevazioni fuori dalle linee, per distanza in metri")
+    for label, values in (("dietro fondi", behind), ("oltre lati", side)):
+        cells = " · ".join(
+            f"≤{hi:g} {100 * ((values > lo) & (values <= hi)).mean():.1f}%"
+            for lo, hi in ((0, 0.25), (0.25, 0.5), (0.5, 1.0), (1.0, 1.5))
+        )
+        print(f"  {label:<13}{cells}")
+    moving = _still_share(tracklets, lambda o: _behind_wall_m(o) > 0.5)
+    on_court = _still_share(tracklets, lambda o: _behind_wall_m(o) == 0 and _outside_side_m(o) == 0)
+    if moving is not None and on_court is not None:
+        print(f"  ferme: {100 * moving:.0f}% di quelle oltre 0,5 m dai fondi,"
+              f" {100 * on_court:.0f}% di quelle in campo")
+
+    print("se si escludessero quelle oltre X m dietro i fondi")
+    print("(prova: richiede circa un minuto)")
+    print(f"  {'X':>10} {'cambi':>5} {'ai 4':>5} {'contese':>7}   tracciati G1-G4")
+    for margin in (None, *_BEHIND_MARGINS):
+        kept = tracklets if margin is None else [
+            Tracklet(id=t.id, observations=[o for o in t.observations if _behind_wall_m(o) <= margin])
+            for t in tracklets
+        ]
+        kept = [t for t in kept if len(t) >= 3]
+        result = identity.resolve_players(kept, max_speed_ms=speed)
+        attributed = sum(len(p) for p in result.players)
+        tracked = " ".join(f"{100 * len(p) / expected:3.0f}%" for p in result.players)
+        label = "nessuna" if margin is None else f"{margin:g} m"
+        print(f"  {label:>10} {len(result.changeovers):>5} {100 * attributed / total:4.0f}%"
+              f" {100 * result.observations_discarded / total:6.0f}%   {tracked}")
+    print("  ai 4, contese: quote di tutte le rilevazioni, escluse comprese")
+
+
+def _still_share(tracklets, selected) -> float | None:
+    """Share of the selected detections standing still (under 1 km/h)."""
+    still = count = 0
+    for tracklet in tracklets:
+        obs = tracklet.observations
+        for a, b in zip(obs, obs[1:]):
+            dt = b.timestamp_s - a.timestamp_s
+            if not selected(b) or not 0 < dt <= 0.5:
+                continue
+            speed = float(np.hypot(b.foot_court[0] - a.foot_court[0], b.foot_court[1] - a.foot_court[1])) / dt
+            count += 1
+            still += speed * 3.6 < 1.0
+    return still / count if count else None
 
 
 def _whereabouts(obs) -> dict:
