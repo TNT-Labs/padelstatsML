@@ -54,7 +54,9 @@ def main() -> int:
     try:
         import torch
     except ImportError:
-        print("torch non installato. Esegui: pip install -r backend/requirements.export.txt", file=sys.stderr)
+        print("torch non installato. Serve il virtualenv di export (INSTALL_RASPBERRY.md §6):\n"
+              "  python3 -m venv .export-venv && source .export-venv/bin/activate\n"
+              "  pip install -r backend/requirements.export.txt", file=sys.stderr)
         return 1
 
     try:
