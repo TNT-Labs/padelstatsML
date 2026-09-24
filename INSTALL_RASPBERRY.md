@@ -191,10 +191,11 @@ farà il worker.
 
 `export_reid_onnx.py` produce il secondo modello, **OSNet** (x0_25, addestrato
 su MSMT17): riconosce una persona dall'aspetto complessivo, non solo dal
-colore della divisa. Serve soprattutto quando i compagni sono vestiti uguali
-o le divise sono di tinte simili: sulle partite simulate con compagni
-vestiti uguali l'identità passa dal 25% al 91-94% di rilevazioni attribuite
-al giocatore giusto.
+colore della divisa. I giocatori si riconoscono soprattutto da dove stanno
+(coppia e lato in campo); l'aspetto serve a seguire i cambi di campo e gli
+scambi di lato fra compagni. Sulle partite simulate con cambi di campo e
+scambi di lato, con compagni vestiti uguali, le rilevazioni attribuite al
+giocatore giusto sono il 96-99% con il re-ID e il 78-87% con il solo colore.
 
 - **È facoltativo.** Senza il file l'analisi funziona come prima e distingue
   i giocatori dal colore; `/api/health` lo segnala alla voce `reid`.
@@ -217,6 +218,30 @@ Dopo la prima analisi con il re-ID, il pannello *Affidabilità dei dati* mostra
 alla voce *Identità* quanto il modello distingue i giocatori di quella partita
 (distanza tipica fra due immagini della stessa persona e fra persone diverse),
 e `scripts/diagnose_identity.py` ne dà il dettaglio.
+
+#### Il modello più grande (facoltativo)
+
+OSNet **x1_0** è più accurato di x0_25 ma costa di più: misurato su un PC,
+2,7 volte il tempo di x0_25 per frame (20 contro 7,5 ms con quattro
+giocatori); sul Pi il rapporto è probabilmente più alto, quindi aspettati
+da +70% a +125% di tempo di analisi invece di +25%. Conviene solo se
+`diagnose_identity.py` segnala che il re-ID distingue poco i giocatori
+(distanze vicine) o che i cambi di campo trovati non corrispondono al video.
+
+```bash
+python backend/scripts/export_reid_onnx.py --arch osnet_x1_0
+# → weights/osnet_x1_0_msmt17.onnx
+```
+
+poi nel `.env`:
+
+```bash
+REID_MODEL=/srv/weights/osnet_x1_0_msmt17.onnx
+```
+
+e `docker compose up -d`. Vale per le analisi nuove: per le partite già
+analizzate usa **Rianalizza**. Per tornare indietro basta rimettere il valore
+precedente.
 
 ---
 
@@ -533,8 +558,10 @@ prima di spendere un'ora a rianalizzarla:
 $C python scripts/retrack.py latest
 ```
 
-Se i giocatori risultano tracciati per una piccola parte della partita,
-`diagnose_identity.py` mostra cosa tiene fuori le rilevazioni scartate:
+Per capire come sono stati trovati i quattro giocatori — coppia e lato di
+ciascuno, per quanta parte della partita è tracciato, dove sta, quanti cambi
+di campo sono stati trovati (da confrontare con il video) e quanto ha deciso
+l'aspetto rispetto al lato — usa `diagnose_identity.py`:
 
 ```bash
 $C python scripts/diagnose_identity.py latest

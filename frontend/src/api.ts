@@ -78,6 +78,8 @@ export interface PlayerStats {
   zone_pct: ZoneShare
   rejected_steps: number
   source_tracklets: number
+  /** Side within the pair; absent when players were found by linking alone. */
+  role?: 'drive' | 'reves' | null
   crop_url?: string | null
 }
 
@@ -98,6 +100,8 @@ export interface IdentityCue {
   different?: number
   veto?: number
   reason?: string
+  /** How the four players were found: by their place on court, or by linking tracks. */
+  method?: 'ruoli' | 'collegamento'
 }
 
 export interface DataQuality {

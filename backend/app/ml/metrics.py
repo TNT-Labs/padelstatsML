@@ -23,6 +23,7 @@ import numpy as np
 from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M, NET_Y_M, CourtCalibration
 from app.ml.identity import IdentityResult, PlayerTrack
 from app.ml.rallies import Rally
+from app.ml.roles import DRIVE, REVES
 
 # Heatmap resolution. 0.5 m cells give 20x40 = 800 cells, detailed enough to
 # show whether a player holds the net position and small enough to serialise.
@@ -134,8 +135,12 @@ def _player_metrics(
         "zone_pct": zone,
         "rejected_steps": rejected_steps,
         "source_tracklets": len(player.source_tracklets),
+        "role": _ROLE_NAMES.get(player.role),
     }
     return stats, grid
+
+
+_ROLE_NAMES = {DRIVE: "drive", REVES: "reves"}
 
 
 def _zone_distribution(ys: np.ndarray) -> dict[str, float]:

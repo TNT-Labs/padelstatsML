@@ -1,8 +1,7 @@
 import { useState, type FC } from 'react'
 import { api, type MatchStats } from '../api'
+import { playerPlace } from '../lib/format'
 import { PlayerThumb } from './PlayerThumb'
-
-const TEAM_LABEL = ['Coppia vicina (metà campo verso la camera)', 'Coppia lontana']
 
 interface Props {
   stats: MatchStats
@@ -53,7 +52,7 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
           <div key={pid} className="card" style={{ textAlign: 'center' }}>
             <PlayerThumb url={player.crop_url} alt={`Giocatore ${index + 1}`} className="identify-thumb" />
             <div className="muted-note" style={{ marginBottom: '.5rem' }}>
-              {TEAM_LABEL[player.team] ?? `Giocatore ${index + 1}`}
+              {playerPlace(player.team, player.role)}
             </div>
             <input
               type="text"

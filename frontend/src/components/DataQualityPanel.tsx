@@ -85,6 +85,7 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                     ? `re-ID · stessa persona ${quality.identity_cue.same?.toFixed(2)} · ` +
                       `persone diverse ${quality.identity_cue.different?.toFixed(2)}`
                     : `colore della divisa${quality.identity_cue.reason ? ` · ${quality.identity_cue.reason}` : ''}`}
+                  {quality.identity_cue.method === 'ruoli' && ' · coppia e lato in campo'}
                 </dd>
               </div>
             )}

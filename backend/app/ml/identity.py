@@ -15,40 +15,48 @@ The approach here
    how far apart the embeddings of one person and of two people are
    (`calibrate_appearance`); without one, kit colour.
 1. Cut tracklets where the look changes: a track that switched person
-   when two players crossed carries both, and would poison any cluster.
-2. Link the pieces into clusters, using appearance, a physical
+   when two players crossed carries both, and would poison any player.
+2. Give every piece a pair and a side (roles.py): the pair from the half
+   it plays in, following the changeovers; the player from the side of the
+   pair — drive or revés — corrected by appearance where a piece clearly
+   looks like the team-mate. Appearance alone could not tell team-mates
+   apart on a real match; where they stand does. This is the main path,
+   and it numbers players by role: near pair at kick-off revés = 0,
+   drive = 1; far pair drive = 2, revés = 3 — left to right on screen.
+3. When the video does not show two pairs (a practice on one half), link
+   the pieces into clusters instead, using appearance, a physical
    reachability test at every hand-over, and coexistence: two clusters seen
-   in the same frames while both on court are two people. A cluster is a set
-   of pieces with gaps, and a piece can fill a gap. This is the step that
-   repairs occlusions.
-3. Take as players the four largest clusters that coexist with one another
-   — four people on court at once — not simply the four largest.
-4. Assign teams from which half of the court each cluster lives in. Padel
-   teams hold their half for a whole game, so the side histogram is a strong
-   and cheap team signal.
-5. Number the players deterministically so the same person keeps the same id
-   between re-runs: near team left-to-right = 0,1; far team = 2,3.
+   in the same frames while both on court are two people. Take as players
+   the four largest clusters that coexist with one another, teams from the
+   half each lives in, numbered near team left-to-right = 0,1, far = 2,3.
 
 Known limitations, reported rather than hidden:
 
-* players swap ends at changeovers. A swap that happens while both players
-  are untracked can split one person into two clusters. `side_changes` and
-  the warnings list expose this instead of silently degrading the numbers.
-* without a re-ID model, kit colour is the only appearance cue, and
-  team-mates in the same kit are told apart only by where they are: when
-  the tracker swaps them while crossing, their numbers mix. On simulated
-  matches with two kits, 25% of detections reach the right player against
-  91-94% with re-ID; with four distinct kits, colour alone reaches 91-98%.
+* changeovers are found from the look of each half. With four identical
+  kits and no re-ID the halves look the same, no changeover is seen, and
+  after one the two pairs' numbers are exchanged. `side_changes` reports
+  the changeovers found, to check against the video.
+* when team-mates swap sides and appearance cannot tell them apart —
+  same kit, no re-ID — the swap is not seen and their numbers mix for its
+  duration.
+* on simulated matches with changeovers and side swaps, with a re-ID as
+  weak as the one measured on a real match, 96-99% of detections reach the
+  right player (linking alone: 64-94%), and at most 1.3% the wrong one;
+  with kit colour only, 78-87% with team-mates in one kit and 97-98% with
+  four different kits. With four identical kits, no re-ID and changeovers,
+  under half: the case the first limitation describes.
 """
 from __future__ import annotations
 
 import heapq
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from app.ml.court import COURT_LENGTH_M
+from app.ml.roles import DRIVE, REVES, assign_roles, roles_apply
 from app.ml.tracking import Observation, Tracklet, observation_key
 
 # (fusioni completate, totale tracce di partenza) — serve solo a far avanzare
@@ -106,9 +114,12 @@ _POSITIVE_MAX_DURATION_S = 20.0
 @dataclass
 class PlayerTrack:
     player_id: int
-    team: int                     # 0 = near half (Y < 10 m), 1 = far half
+    team: int                     # 0 = near half (Y < 10 m) at kick-off, 1 = far half
     observations: list[Observation]
     source_tracklets: list[int] = field(default_factory=list)
+    # Side within the pair, when identity was built by role: roles.DRIVE or
+    # roles.REVES. None when players were found by linking alone.
+    role: int | None = None
     _keys: set | None = field(default=None, repr=False, compare=False)
 
     def owns(self, obs: Observation) -> bool:
@@ -289,8 +300,13 @@ def resolve_players(
     tracklets: list[Tracklet],
     max_speed_ms: float = 8.0,
     progress: ProgressCallback | None = None,
+    method: str = "auto",
 ) -> IdentityResult:
-    """Link tracklets into four players and assign teams and stable ids."""
+    """Find the four players among the tracklets, with teams and stable ids.
+
+    `method`: "roles" finds players by their place on court (see roles.py),
+    "link" by linking tracklets; "auto" uses roles whenever both halves of
+    the court are populated, which is every real match."""
     warnings: list[str] = []
     usable = [t for t in tracklets if len(t) >= 3]
     if not usable:
@@ -307,12 +323,15 @@ def resolve_players(
         for t in usable
         for part in _split_identity_switches(t.observations, appearance)
     ]
-    clusters = _link_tracklets(pieces, max_speed_ms, progress=progress, appearance=appearance)
-    clusters.sort(key=lambda c: -len(c.observations))
-
     # Counted from the input: frames dropped as shared while merging are
     # discarded observations too.
     total_obs = sum(len(t) for t in usable)
+    if method == "roles" or (method == "auto" and roles_apply(pieces)):
+        return _resolve_by_role(pieces, appearance, appearance_summary, total_obs)
+    appearance_summary["method"] = "collegamento"
+
+    clusters = _link_tracklets(pieces, max_speed_ms, progress=progress, appearance=appearance)
+    clusters.sort(key=lambda c: -len(c.observations))
     selected = _select_players(clusters, _sample_period(usable))
     discarded = total_obs - sum(len(c.observations) for c in selected)
 
@@ -783,6 +802,73 @@ def _junctions(
                 out.append((gap, travel_s, distance))
             break
     return out
+
+
+# ── Players by role ──────────────────────────────────────────────────────────
+
+# Ids in the order of the linking path's numbering at kick-off: the near pair
+# left to right on screen (revés, then drive: they face away from the camera),
+# then the far pair left to right (drive, then revés: they face it).
+_ROLE_ORDER = ((0, REVES), (0, DRIVE), (1, DRIVE), (1, REVES))
+
+
+def _resolve_by_role(
+    pieces: list[Tracklet], appearance: Appearance | None, appearance_summary: dict, total_obs: int,
+) -> IdentityResult:
+    assignment = assign_roles(pieces, appearance)
+    appearance_summary["method"] = "ruoli"
+
+    players: list[PlayerTrack] = []
+    for team, role in _ROLE_ORDER:
+        group = assignment.players.get((team, role), [])
+        if not group:
+            continue
+        observations = one_per_frame([rp.tracklet for rp in group])
+        if not observations:
+            continue
+        sources = list(dict.fromkeys(rp.tracklet.id for rp in group))
+        players.append(PlayerTrack(len(players), team, observations, sources, role=role))
+
+    warnings: list[str] = []
+    if len(players) < N_PLAYERS:
+        warnings.append(
+            f"Rilevati solo {len(players)} giocatori invece di 4: "
+            "controlla che tutto il campo sia inquadrato."
+        )
+    # Here every piece has a player: what is left out are frames in which
+    # two detections were given to one player — somebody else on court, or
+    # one player detected twice.
+    discarded = total_obs - sum(len(p) for p in players)
+    if discarded > 0.20 * max(total_obs, 1):
+        warnings.append(
+            f"Il {discarded * 100 // max(total_obs, 1)}% delle rilevazioni è conteso fra due "
+            "tracce dello stesso giocatore: probabile una persona in più in campo."
+        )
+    side_changes = len(assignment.changeovers)
+    if side_changes:
+        warnings.append(
+            f"Rilevati {side_changes} cambi di campo: le heatmap uniscono "
+            "le posizioni prima e dopo il cambio."
+        )
+    return IdentityResult(
+        players=players,
+        warnings=warnings,
+        side_changes=side_changes,
+        clusters_found=len(pieces),
+        observations_discarded=discarded,
+        appearance=appearance_summary,
+    )
+
+
+def one_per_frame(pieces: list[Tracklet]) -> list[Observation]:
+    """The observations of the pieces given to one player, one per frame.
+    Where two pieces share a frame, one of the two detections is somebody
+    else and nothing says which: both are dropped, as when linking merges."""
+    by_frame: dict[int, list[Observation]] = defaultdict(list)
+    for piece in pieces:
+        for obs in piece.observations:
+            by_frame[obs.frame_index].append(obs)
+    return [found[0] for _, found in sorted(by_frame.items()) if len(found) == 1]
 
 
 # ── Teams and stable ids ─────────────────────────────────────────────────────

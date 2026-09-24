@@ -138,7 +138,7 @@ def test_linking_reports_progress(calibration):
     tracklets.append(_tracklet(10, walk(calibration, 0, (3.6, 6.2), (2.0, 4.0), 23.0, 40.0)))
 
     seen: list[tuple[int, int]] = []
-    resolve_players(tracklets, progress=lambda done, total: seen.append((done, total)))
+    resolve_players(tracklets, method="link", progress=lambda done, total: seen.append((done, total)))
 
     assert seen, "nessun avanzamento riportato durante il linking"
     assert all(total == len(tracklets) for _, total in seen)
