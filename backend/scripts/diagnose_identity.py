@@ -150,6 +150,11 @@ def _report_roles(pieces, appearance, total: int, expected: int) -> None:
         print("  a " + ", ".join(times[start:start + 8]))
     print("  Confrontali con il video: un cambio mancato scambia i")
     print("  numeri delle due coppie da lì in poi.")
+    names = {"colore": "colore divise", "reid": "re-ID"}
+    for alternative in assignment.alternatives:
+        chosen = " ← usato" if alternative is assignment.timeline else ""
+        print(f"  {names[alternative.cue]:<13} nitidezza {alternative.clarity:6.1f}"
+              f" · {len(alternative.changeovers)} cambi{chosen}")
     print()
     _report_timeline(assignment.timeline)
 
