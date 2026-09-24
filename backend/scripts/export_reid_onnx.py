@@ -35,6 +35,7 @@ from pathlib import Path
 CHECKPOINTS = {
     "osnet_x0_25": "https://drive.google.com/uc?id=1sSwXSUlj4_tHZequ_iZ8w_Jh0VaRQMqF",
     "osnet_x0_5": "https://drive.google.com/uc?id=1UT3AxIaDvS2PdxzZmbkLmjtiqq7AIKCv",
+    "osnet_x1_0": "https://drive.google.com/uc?id=112EMUfBPYeYg70w-syK6V6Mx8-Qb9Q1M",
 }
 # OSNet's training resolution: height x width.
 INPUT_H, INPUT_W = 256, 128
@@ -45,7 +46,8 @@ def main() -> int:
     parser.add_argument("--arch", default="osnet_x0_25", choices=sorted(CHECKPOINTS))
     parser.add_argument("--weights", default=None,
                         help="checkpoint .pt/.pth già scaricato (altrimenti lo scarica da Google Drive)")
-    parser.add_argument("--out", default="weights/osnet_x0_25_msmt17.onnx")
+    parser.add_argument("--out", default=None,
+                        help="file .onnx da scrivere (predefinito: weights/<arch>_msmt17.onnx)")
     parser.add_argument("--opset", type=int, default=12)
     args = parser.parse_args()
 
@@ -73,7 +75,7 @@ def main() -> int:
         return 1
     model.eval()
 
-    out = Path(args.out)
+    out = Path(args.out or f"weights/{args.arch}_msmt17.onnx")
     out.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.randn(1, 3, INPUT_H, INPUT_W)
     print(f"Esporto {args.arch} a ONNX ({INPUT_H}x{INPUT_W}, opset {args.opset})…")
@@ -94,7 +96,14 @@ def main() -> int:
         )
         return 1
 
-    return _verify(torch, model, out)
+    status = _verify(torch, model, out)
+    if status == 0:
+        if out.name == "osnet_x0_25_msmt17.onnx":
+            print("È il modello predefinito: se il file è in weights/, non serve altro.")
+        else:
+            print(f"Per usarlo, nel .env: REID_MODEL=/srv/weights/{out.name}\n"
+                  "poi docker compose up -d, e Rianalizza le partite già analizzate.")
+    return status
 
 
 def _load_osnet_module():
@@ -191,7 +200,6 @@ def _verify(torch, model, out: Path) -> int:
 
     print(f"OK: {out} · embedding da {got.shape[1]} valori · scarto torch/onnx {error:.1e} · "
           f"{per_crop_ms:.1f} ms per giocatore su questa macchina")
-    print("Imposta REID_MODEL a questo file (è il valore predefinito se lo lasci in weights/).")
     return 0
 
 

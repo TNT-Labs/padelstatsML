@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh } from './format'
+import { apiAsset, kmh, playerPlace } from './format'
 
 describe('kmh', () => {
   it('converts metres per second', () => {
@@ -21,5 +21,17 @@ describe('apiAsset', () => {
     expect(apiAsset('http://padelpi.local:8000/api/matches/a/crops/1', '')).toBe(
       '/api/matches/a/crops/1',
     )
+  })
+})
+
+describe('playerPlace', () => {
+  it('names the pair by where it started, and the side when known', () => {
+    expect(playerPlace(0, 'reves')).toBe('Coppia vicina a inizio video · lato revés')
+    expect(playerPlace(1, 'drive')).toBe('Coppia lontana a inizio video · lato drive')
+  })
+
+  it('leaves the side out for results found by linking alone', () => {
+    expect(playerPlace(0)).toBe('Coppia vicina a inizio video')
+    expect(playerPlace(1, null)).toBe('Coppia lontana a inizio video')
   })
 })

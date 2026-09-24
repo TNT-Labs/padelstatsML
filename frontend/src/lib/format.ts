@@ -23,3 +23,15 @@ export function apiAsset(url: string, base: string): string {
     return url
   }
 }
+
+/**
+ * Pair and side of a player, for the cards. The pair is the one on the half
+ * near the camera, or far from it, at the start of the video: at changeovers
+ * the pairs trade ends and keep their ids.
+ */
+export function playerPlace(team: number, role?: 'drive' | 'reves' | null): string {
+  const pair = team === 0 ? 'Coppia vicina a inizio video' : team === 1 ? 'Coppia lontana a inizio video' : '—'
+  if (role === 'drive') return `${pair} · lato drive`
+  if (role === 'reves') return `${pair} · lato revés`
+  return pair
+}

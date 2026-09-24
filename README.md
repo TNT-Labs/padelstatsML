@@ -86,7 +86,7 @@ l'analisi non parte.
 decode (una volta, con frame-skip)
    └─▶ detector persone (ONNX, ritagliato sul campo)
         └─▶ tracking in metri sul piano del campo
-             └─▶ ricostruzione identità: 4 giocatori, 2 coppie
+             └─▶ identità: 4 giocatori da coppia e lato in campo
                   └─▶ segmentazione scambi dal movimento
                        └─▶ metriche + qualità del dato
 ```
@@ -100,10 +100,12 @@ Punti chiave:
   giocatore in corsa quasi non si sovrappongono, quindi l'IoU fallisce
   proprio quando conta. Il gate è `velocità_max × Δt`, un vincolo fisico
   uniforme su tutto il campo.
-- **Tracklet corte e ricucite dopo.** Le tracce muoiono e rinascono
-  liberamente; l'identità viene ricostruita a valle con l'istogramma colore
-  della maglia più la raggiungibilità fisica. Una persona occlusa per tre
-  secondi resta la stessa persona.
+- **Tracklet corte, identità dal posto in campo.** Le tracce muoiono e
+  rinascono liberamente; a valle ogni pezzo riceve una coppia (la metà campo
+  in cui gioca, seguendo i cambi di campo) e un lato (drive o revés). L'aspetto
+  — re-ID o colore della divisa — corregge i pezzi che somigliano chiaramente
+  al compagno, così uno scambio di lato viene seguito. L'aspetto da solo non
+  distingueva i compagni su una partita reale; dove stanno sì.
 - **Scambi dal movimento dei giocatori,** non dalla palla: durante il punto
   tutti e quattro si muovono, fra un punto e l'altro no.
 
@@ -133,8 +135,8 @@ python scripts/diagnose_tracking.py latest
 # l'analisi salvata: misura una modifica al tracker prima di rianalizzare
 python scripts/retrack.py latest
 
-# Perché delle rilevazioni restano fuori dai 4 giocatori: per ogni cluster
-# escluso, cosa gli impedisce di unirsi a ciascun giocatore
+# Come sono stati trovati i 4 giocatori: coppia, lato, copertura, cambi di
+# campo trovati, quanto ha deciso l'aspetto; e se c'è una quinta persona
 python scripts/diagnose_identity.py latest
 ```
 

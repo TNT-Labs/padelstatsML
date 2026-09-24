@@ -133,6 +133,8 @@ class PlayerStats(BaseModel):
     zone_pct: ZoneShare
     rejected_steps: int = 0
     source_tracklets: int = 0
+    # "drive" or "reves" when players were found by their side of the pair.
+    role: str | None = None
     crop_url: str | None = None
 
 

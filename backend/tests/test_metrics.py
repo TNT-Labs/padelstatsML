@@ -132,3 +132,14 @@ def test_net_error_above_half_a_metre_is_flagged():
     observations = walk(calib, 0, (5.0, 4.0), (5.0, 6.0), 0.0, 10.0, hz=HZ)
     result = compute_metrics(_input(calib, [PlayerTrack(0, 0, observations, [0])], analysed_s=10.0))
     assert any("rete indicata" in w for w in result["data_quality"]["warnings"])
+
+
+def test_the_side_of_the_pair_is_reported_when_known(calibration):
+    from app.ml.roles import DRIVE
+
+    observations = walk(calibration, 0, (7.0, 5.0), (8.0, 5.0), 0.0, 10.0)
+    by_role = PlayerTrack(0, 0, observations, [0], role=DRIVE)
+    by_link = PlayerTrack(1, 0, observations, [1])
+    result = compute_metrics(_input(calibration, [by_role, by_link], analysed_s=10.0))
+    assert result["per_player"]["0"]["role"] == "drive"
+    assert result["per_player"]["1"]["role"] is None

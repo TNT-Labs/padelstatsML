@@ -4,11 +4,9 @@ import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
-import { kmh } from '../lib/format'
+import { kmh, playerPlace } from '../lib/format'
 
 const PLAYER_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6']
-const TEAM_LABEL = ['Coppia vicina', 'Coppia lontana']
-
 interface Props {
   stats: MatchStats
   onBack: () => void
@@ -112,7 +110,7 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
                     <span className="player-dot" style={{ background: PLAYER_COLORS[index % 4] }} />
                     <h3 style={{ margin: 0 }}>{name}</h3>
                   </div>
-                  <div className="muted-note">{TEAM_LABEL[player.team] ?? '—'}</div>
+                  <div className="muted-note">{playerPlace(player.team, player.role)}</div>
                 </div>
               </div>
 
