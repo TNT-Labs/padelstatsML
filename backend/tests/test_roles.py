@@ -193,3 +193,20 @@ def test_a_player_seen_without_their_team_mate_still_gets_a_side(calibration):
     result = resolve_players(tracklets)
 
     assert _people(result, truth) == [0, 1, 2, 3]
+
+
+def test_a_changeover_is_placed_to_the_second_not_to_the_window(calibration):
+    """The pairs change ends at 67 s, in the middle of a twenty-second
+    window. Placed at the window's edge, the changeover gave the detections
+    between 60 and 67 s to the other pair."""
+    def home(k, t):
+        x, y = HOMES[k]
+        return (10.0 - x, 20.0 - y) if t >= 67.0 else (x, y)
+
+    tracklets, truth = _play(calibration, 140.0, shirts=[0, 0, 1, 1], home=home, breaks=(67.0,))
+
+    result = resolve_players(tracklets)
+
+    assert len(result.changeovers) == 1
+    assert abs(result.changeovers[0] - 67.0) < 1.0
+    assert _people(result, truth) == [0, 1, 2, 3]

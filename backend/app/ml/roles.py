@@ -35,8 +35,9 @@ a changeover cannot be seen either — the halves look the same.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -101,16 +102,19 @@ class TeamTimeline:
     # NaN where a half was empty. For the diagnostics.
     evidence: np.ndarray
     penalty: float               # price of one changeover, in the same units
+    # When each changeover happened, to the detection: the windows only say
+    # in which twenty seconds (see _refine_changeover).
+    change_times: list[float] = field(default_factory=list)
 
     @property
     def changeovers(self) -> list[float]:
-        return [w * TEAM_WINDOW_S for w in range(1, len(self.swapped))
-                if self.swapped[w] != self.swapped[w - 1]]
+        return list(self.change_times)
 
     def swapped_at(self, t: float) -> bool:
         if not len(self.swapped):
             return False
-        return bool(self.swapped[min(int(t // TEAM_WINDOW_S), len(self.swapped) - 1)])
+        flips = bisect_right(self.change_times, t)
+        return bool(self.swapped[0]) != (flips % 2 == 1)
 
 
 @dataclass
@@ -348,7 +352,58 @@ def _team_timeline(pieces: list[Tracklet], reid: bool) -> TeamTimeline:
 
     evidence_by_window = np.full(n_windows, np.nan)
     evidence_by_window[both] = (swap_cost - keep_cost)[both]
-    return TeamTimeline(swapped=swapped, evidence=evidence_by_window, penalty=penalty)
+
+    change_times: list[float] = []
+    for w in range(1, n_windows):
+        if swapped[w] != swapped[w - 1]:
+            # Between the previous changeover and the end of the next window.
+            lo = max((w - 1) * TEAM_WINDOW_S, change_times[-1] if change_times else 0.0)
+            hi = (w + 1) * TEAM_WINDOW_S
+            change_times.append(_refine_changeover(
+                observations, reid, team_a, team_b, lo, hi, bool(swapped[w - 1]), w * TEAM_WINDOW_S,
+            ))
+    return TeamTimeline(swapped=swapped, evidence=evidence_by_window, penalty=penalty,
+                        change_times=change_times)
+
+
+def _refine_changeover(
+    observations: list[Observation], reid: bool, team_a: np.ndarray, team_b: np.ndarray,
+    lo: float, hi: float, swapped_before: bool, fallback: float,
+) -> float:
+    """The moment, between `lo` and `hi`, at which the pairs changed ends.
+
+    The windows place a changeover only to the twenty seconds, and every
+    detection between the real moment and the window edge went to the other
+    pair. Here each detection in the span votes by its own look — near the
+    half's pair or the other — and the split is where the arrangement before
+    and the one after, together, explain the detections best.
+    """
+    picked = [o for o in observations if lo <= o.timestamp_s < hi]
+    picked = [(o, v) for o, v in ((o, _look(o, reid)) for o in picked) if v is not None]
+    if not picked:
+        return fallback
+    picked.sort(key=lambda item: item[0].timestamp_s)
+    times = np.array([o.timestamp_s for o, _ in picked])
+    looks = np.stack([v for _, v in picked])
+    near = np.array([o.foot_court[1] < COURT_LENGTH_M / 2 for o, _ in picked])
+    to_a = 1.0 - looks @ team_a
+    to_b = 1.0 - looks @ team_b
+    # Kick-off arrangement: pair A on the near half. Swapped: pair B there.
+    kept = np.where(near, to_a, to_b)
+    swapped = np.where(near, to_b, to_a)
+    before, after = (swapped, kept) if swapped_before else (kept, swapped)
+
+    # cost[k]: the first k detections in the old arrangement, the rest in
+    # the new one. Splits only between different instants.
+    cost = np.concatenate([[0.0], np.cumsum(before)]) + np.concatenate([np.cumsum(after[::-1])[::-1], [0.0]])
+    candidates = [k for k in range(len(times) + 1)
+                  if k in (0, len(times)) or times[k] != times[k - 1]]
+    k = min(candidates, key=lambda c: cost[c])
+    if k == 0:
+        return lo
+    if k == len(times):
+        return hi
+    return float((times[k - 1] + times[k]) / 2.0)
 
 
 def _two_state_path(keep_cost: np.ndarray, swap_cost: np.ndarray, penalty: float) -> np.ndarray:

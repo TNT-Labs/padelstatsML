@@ -15,9 +15,9 @@ interface Props {
 // tall and a desktop-sized tag would cover them.
 const NARROW_PX = 600
 const TAG = { wide: { font: 12, height: 16 }, narrow: { font: 10, height: 13 } }
-// Changeovers are found to the nearest 20-second window: start that much
-// earlier, to see the players walk to the other end.
-const CHANGEOVER_LEAD_S = 20
+// A changeover's time is when the pairs are found on their new ends: start
+// a little earlier, to see them walk there.
+const CHANGEOVER_LEAD_S = 10
 
 /**
  * The match video, with each player's box and name drawn over it.
