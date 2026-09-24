@@ -51,7 +51,7 @@ from app.ml.artifacts import (  # noqa: E402
 )
 from app.ml.detect import part_of_another                              # noqa: E402
 from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M                 # noqa: E402
-from app.ml.roles import DRIVE, assign_roles                           # noqa: E402
+from app.ml.roles import CHANGEOVER_PENALTY, DRIVE, TEAM_WINDOW_S, assign_roles  # noqa: E402
 from app.ml.tracking import Tracklet                                   # noqa: E402
 
 SHOWN = 12
@@ -122,12 +122,13 @@ def main() -> int:
     # are. The wider the gap, the more re-ID can be trusted on this match.
     if appearance is not None:
         gap = appearance.different_median - appearance.same_median
-        print(f"aspetto: re-ID · stessa persona {appearance.same_median:.2f} · persone diverse "
-              f"{appearance.different_median:.2f} · soglia {appearance.veto:.2f} "
-              f"({appearance.positives} + {appearance.negatives} coppie)")
+        print(f"aspetto: re-ID · stessa persona {appearance.same_median:.2f}"
+              f" · persone diverse {appearance.different_median:.2f}")
+        print(f"  soglia {appearance.veto:.2f}"
+              f" ({appearance.positives} + {appearance.negatives} coppie misurate)")
         if gap < 0.15:
-            print("  Distanze vicine: il re-ID distingue poco questi giocatori (inquadratura")
-            print("  lontana, poca risoluzione o divise molto simili).")
+            print("  Distanze vicine: il re-ID distingue poco questi giocatori")
+            print("  (inquadratura lontana, poca risoluzione, divise simili).")
     else:
         print(f"aspetto: colore della divisa · {appearance_summary.get('reason', '')}")
     print()
@@ -142,15 +143,22 @@ def main() -> int:
 
 def _report_roles(pieces, appearance, total: int, expected: int) -> None:
     assignment = assign_roles(pieces, appearance)
-    times = ", ".join(f"{int(t // 60)}:{int(t % 60):02d}" for t in assignment.changeovers)
-    print(f"metodo: coppia e lato in campo · cambi di campo trovati: {len(assignment.changeovers)}"
-          + (f" ({times})" if times else ""))
-    print("  confrontali con il video: un cambio mancato scambia i numeri delle due coppie.")
+    print("metodo: coppia e lato in campo")
+    print(f"cambi di campo trovati: {len(assignment.changeovers)}")
+    times = [_clock(t) for t in assignment.changeovers]
+    for start in range(0, len(times), 8):
+        print("  a " + ", ".join(times[start:start + 8]))
+    print("  Confrontali con il video: un cambio mancato scambia i")
+    print("  numeri delle due coppie da lì in poi.")
     print()
-    print("giocatori (x dal proprio lato: revés ~2-4 m, drive ~6-8 m, in entrambe le metà;")
-    print("           rete: distanza mediana dalla rete, in metri):")
-    print(f"  {'':>3} {'coppia':>7} {'lato':>6} {'tracciato':>9} {'x':>5} {'rete':>5}  {'fermo':>6}"
-          f"  {'velocità':>9}  {'dall aspetto':>12}")
+    _report_timeline(assignment.timeline)
+
+    print("giocatori")
+    print("  x: mediana dal proprio lato (revés ~2-4 m, drive ~6-8 m)")
+    print("  rete: distanza mediana dalla rete · aspetto: quota data")
+    print("  dall'aspetto contro il lato in cui stava (scambi di lato)")
+    print(f"  {'':>3} {'coppia':>7} {'lato':>5} {'tracc.':>6} {'x':>4} {'rete':>4}"
+          f" {'fermo':>5} {'km/h':>4} {'aspetto':>7}")
     kept = 0
     own_x: dict[tuple[int, int], float] = {}
     for n, (team, role) in enumerate(identity._ROLE_ORDER):
@@ -159,27 +167,126 @@ def _report_roles(pieces, appearance, total: int, expected: int) -> None:
             print(f"  G{n + 1}  nessuna traccia")
             continue
         observations = identity.one_per_frame([rp.tracklet for rp in group])
+        if not observations:
+            print(f"  G{n + 1}  tutte le rilevazioni contese")
+            continue
         kept += len(observations)
         where = _whereabouts(observations)
-        own = [o.foot_court[0] if o.foot_court[1] < COURT_LENGTH_M / 2 else COURT_WIDTH_M - o.foot_court[0]
-               for o in observations]
-        own_x[(team, role)] = float(np.median(own))
+        own_x[(team, role)] = float(np.median([_own_x(o) for o in observations]))
         from_net = float(np.median([abs(o.foot_court[1] - COURT_LENGTH_M / 2) for o in observations]))
         # Pieces whose side said the other role: given here by appearance.
         by_look = sum(len(rp.tracklet) for rp in group if (rp.side_score > 0) != (role == DRIVE))
         by_all = sum(len(rp.tracklet) for rp in group)
-        print(f"  G{n + 1} {'vicina' if team == 0 else 'lontana':>7} {'drive' if role == DRIVE else 'revés':>6}"
-              f" {100 * len(observations) / expected:8.0f}% {own_x[(team, role)]:5.1f} {from_net:5.1f}"
-              f"  {100 * where['still']:5.0f}%  {where['kmh']:6.1f} km/h  {100 * by_look / max(by_all, 1):11.0f}%")
-    print(f"  {kept} di {total} osservazioni ai 4 giocatori ({100 * kept / total:.0f}%): il resto sono frame"
-          " contesi fra due pezzi dello stesso giocatore.")
+        print(f"  G{n + 1} {'vicina' if team == 0 else 'lontana':>7} {'drive' if role == DRIVE else 'revés':>5}"
+              f" {100 * len(observations) / expected:5.0f}% {own_x[(team, role)]:4.1f} {from_net:4.1f}"
+              f" {100 * where['still']:4.0f}% {where['kmh']:4.1f} {100 * by_look / max(by_all, 1):6.0f}%")
+    print(f"  {kept} di {total} osservazioni ai 4 giocatori ({100 * kept / total:.0f}%)")
     for team in (0, 1):
         pair = [own_x.get((team, role)) for role in (0, 1)]
         if None not in pair and abs(pair[1] - pair[0]) < 2.0:
-            print(f"  Coppia {'vicina' if team == 0 else 'lontana'}: i due lati distano meno di 2 m. I compagni"
-                  " non tengono un lato, o i loro pezzi sono mescolati.")
-    print("  'dall aspetto' è la parte data al giocatore dall'aspetto contro il lato in cui stava:")
-    print("  sono gli scambi di lato seguiti. Oltre il 30% l'aspetto decide più del lato.")
+            print(f"  Coppia {'vicina' if team == 0 else 'lontana'}: i due lati distano meno di 2 m:")
+            print("  i compagni non tengono un lato, o i loro pezzi sono mescolati.")
+    print()
+    _report_contested(assignment)
+
+
+def _clock(t: float) -> str:
+    return f"{int(t // 60)}:{int(t % 60):02d}"
+
+
+def _own_x(obs) -> float:
+    """x from the player's own point of view: the far pair faces the camera."""
+    x, y = obs.foot_court
+    return x if y < COURT_LENGTH_M / 2 else COURT_WIDTH_M - x
+
+
+def _report_timeline(timeline) -> None:
+    """One character per window: which arrangement of the pairs was chosen,
+    and whether the look of the two halves agreed. A missed changeover
+    shows as a long run of '!' — strong evidence against the choice."""
+    if not len(timeline.swapped):
+        return
+    typical = timeline.penalty / CHANGEOVER_PENALTY
+    per_line = int(round(600 / TEAM_WINDOW_S))           # ten minutes a line
+    marks = []
+    for swapped, evidence in zip(timeline.swapped, timeline.evidence):
+        letter = "B" if swapped else "A"
+        if np.isnan(evidence):
+            marks.append("?")
+            continue
+        # evidence > 0: the kick-off arrangement fits the look better.
+        agrees = evidence * (-1 if swapped else 1)
+        if agrees >= typical:
+            marks.append(letter)
+        elif agrees <= -typical:
+            marks.append("!")
+        else:
+            marks.append(letter.lower())
+    print("coppie nel tempo (un carattere ogni 20 s, uno spazio al minuto)")
+    print("  A: coppie come all'inizio · B: coppie scambiate")
+    print("  maiuscola: l'aspetto delle metà lo conferma · minuscola:")
+    print("  prova debole · !: l'aspetto dice il contrario · ?: metà vuota")
+    per_minute = int(round(60 / TEAM_WINDOW_S))
+    for start in range(0, len(marks), per_line):
+        chunk = marks[start:start + per_line]
+        text = " ".join("".join(chunk[i:i + per_minute]) for i in range(0, len(chunk), per_minute))
+        print(f"  {int(start * TEAM_WINDOW_S // 60):>3}' {text}")
+    known = [m for m in marks if m != "?"]
+    if known:
+        strong = sum(1 for m in known if m.isupper())
+        against = sum(1 for m in known if m == "!")
+        print(f"  confermate {100 * strong / len(known):.0f}% · contrarie {100 * against / len(known):.0f}%"
+              f" delle finestre")
+        if strong < 0.3 * len(known):
+            print("  L'aspetto distingue poco le due coppie: i cambi di campo")
+            print("  possono sfuggire. Confronta con il video.")
+    print()
+
+
+def _report_contested(assignment) -> None:
+    """Frames in which one player was given two detections, and what the
+    second one is. A few tens of centimetres apart: the same person
+    detected twice. Metres apart with the team-mate seen elsewhere in the
+    same frame: three people on one half — a coach, a spectator, a
+    reflection in the glass. Metres apart without the team-mate: most
+    likely the team-mate, with a piece given to the wrong side."""
+    frames_of = {key: {o.frame_index for rp in group for o in rp.tracklet.observations}
+                 for key, group in assignment.players.items()}
+    same = third = mate = 0
+    contested = []
+    for (team, role), group in assignment.players.items():
+        partner_frames = frames_of.get((team, 1 - role), set())
+        by_frame: dict[int, list] = {}
+        for rp in group:
+            for obs in rp.tracklet.observations:
+                by_frame.setdefault(obs.frame_index, []).append(obs)
+        for frame, found in by_frame.items():
+            if len(found) < 2:
+                continue
+            contested.extend(found)
+            a, b = found[0].foot_court, found[1].foot_court
+            if np.hypot(a[0] - b[0], a[1] - b[1]) < 0.5:
+                same += 1
+            elif frame in partner_frames:
+                third += 1
+            else:
+                mate += 1
+    total = same + third + mate
+    if not total:
+        return
+    print(f"frame contesi (due rilevazioni allo stesso giocatore): {total}")
+    for label, count in (("stessa persona due volte (entro 0,5 m)", same),
+                         ("terza persona nella metà (compagno visto)", third),
+                         ("probabile compagno dal lato sbagliato", mate)):
+        print(f"  {label:<44}{100 * count / total:4.0f}%")
+    xy = np.array([o.foot_court for o in contested])
+    outside = (xy[:, 0] < 0) | (xy[:, 0] > COURT_WIDTH_M) | (xy[:, 1] < 0) | (xy[:, 1] > COURT_LENGTH_M)
+    behind = (xy[:, 1] < 0) | (xy[:, 1] > COURT_LENGTH_M)
+    print(f"  rilevazioni contese fuori dalle linee: {100 * outside.mean():.0f}%"
+          f" (dietro i fondi: {100 * behind.mean():.0f}%)")
+    if third > max(same, mate):
+        print("  Per lo più una persona in più in una metà: qualcuno in")
+        print("  campo o appena fuori, o un riflesso nel vetro.")
     print()
 
 
@@ -257,16 +364,17 @@ def _report_crowding(directory: Path, artifacts) -> None:
     per_person = sum(people_per_frame) / frames / (identity.N_PLAYERS + 1)
     expected = per_person ** (identity.N_PLAYERS + 1)
     print("una quinta persona?")
-    print(f"  rilevazioni doppie (riquadro di una parte di un giocatore): {parts} "
-          f"({100 * parts / max(len(stored), 1):.1f}% delle osservazioni), escluse dal conteggio")
-    print(f"  frame con più di {identity.N_PLAYERS} persone: {crowded} di {frames} ({100 * share:.1f}%)")
-    print(f"  con una quinta persona sempre presente ci si aspetterebbe circa il "
-          f"{100 * expected:.1f}% (ogni persona vista nel {100 * per_person:.0f}% dei frame)")
+    print(f"  rilevazioni doppie (parte di un giocatore): {parts}"
+          f" ({100 * parts / max(len(stored), 1):.1f}%), escluse")
+    print(f"  frame con più di {identity.N_PLAYERS} persone: {crowded} di {frames}"
+          f" ({100 * share:.1f}%)")
+    print(f"  attesi con una quinta persona sempre presente: {100 * expected:.1f}%")
+    print(f"  (ogni persona è vista nel {100 * per_person:.0f}% dei frame)")
     if share >= 0.5 * expected:
-        print("  Compatibile con una quinta persona in campo o appena fuori per buona parte")
-        print("  della partita: i suoi pezzi finiscono a uno dei giocatori della sua metà.")
+        print("  Compatibile con una quinta persona in campo o appena fuori")
+        print("  per buona parte della partita: vedi i frame contesi sopra.")
     else:
-        print("  Troppo pochi per una quinta persona in campo per buona parte della partita.")
+        print("  Troppo pochi per una quinta persona presente a lungo.")
 
 
 def _whereabouts(obs) -> dict:

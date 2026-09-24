@@ -91,10 +91,36 @@ class RolePiece:
 
 
 @dataclass
+class TeamTimeline:
+    """Which pair was on which half, window by window."""
+    swapped: np.ndarray          # per window: pairs on the ends opposite to kick-off
+    # Per window, how much better the kick-off arrangement explains the look
+    # of the two halves than the swapped one (swapped cost minus kept cost);
+    # NaN where a half was empty. For the diagnostics.
+    evidence: np.ndarray
+    penalty: float               # price of one changeover, in the same units
+
+    @property
+    def changeovers(self) -> list[float]:
+        return [w * TEAM_WINDOW_S for w in range(1, len(self.swapped))
+                if self.swapped[w] != self.swapped[w - 1]]
+
+    def swapped_at(self, t: float) -> bool:
+        if not len(self.swapped):
+            return False
+        return bool(self.swapped[min(int(t // TEAM_WINDOW_S), len(self.swapped) - 1)])
+
+
+@dataclass
 class RoleAssignment:
     # (team, role) -> pieces
     players: dict[tuple[int, int], list[RolePiece]]
-    changeovers: list[float]     # times at which the pairs changed ends
+    timeline: TeamTimeline
+
+    @property
+    def changeovers(self) -> list[float]:
+        """Times at which the pairs changed ends."""
+        return self.timeline.changeovers
 
 
 def roles_apply(pieces: list[Tracklet]) -> bool:
@@ -114,7 +140,8 @@ def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
     """Give every piece of track a pair and a side. `appearance` is the
     match's calibrated re-ID (see identity.Appearance) or None."""
     reid = appearance is not None
-    swapped_at, changeovers = _team_timeline(pieces, reid)
+    timeline = _team_timeline(pieces, reid)
+    swapped_at = timeline.swapped_at
 
     role_pieces = [RolePiece(tracklet=p) for p in pieces]
     for rp in role_pieces:
@@ -133,7 +160,7 @@ def assign_roles(pieces: list[Tracklet], appearance) -> RoleAssignment:
     players: dict[tuple[int, int], list[RolePiece]] = defaultdict(list)
     for rp in role_pieces:
         players[(rp.team, rp.role)].append(rp)
-    return RoleAssignment(players=dict(players), changeovers=changeovers)
+    return RoleAssignment(players=dict(players), timeline=timeline)
 
 
 def _best_roles(members: list[RolePiece], noise: float) -> None:
@@ -261,7 +288,7 @@ def _colour_noise(pieces: list[Tracklet]) -> float | None:
 
 # ── Pairs over time ──────────────────────────────────────────────────────────
 
-def _team_timeline(pieces: list[Tracklet], reid: bool):
+def _team_timeline(pieces: list[Tracklet], reid: bool) -> TeamTimeline:
     """For each window, whether the pairs have swapped ends since kick-off.
 
     Each window gives the look of the near half and of the far half. Keeping
@@ -272,7 +299,7 @@ def _team_timeline(pieces: list[Tracklet], reid: bool):
     """
     observations = [o for p in pieces for o in p.observations]
     if not observations:
-        return (lambda t: False), []
+        return TeamTimeline(np.zeros(0, dtype=bool), np.zeros(0), 0.0)
     end = max(o.timestamp_s for o in observations)
     n_windows = int(end // TEAM_WINDOW_S) + 1
 
@@ -296,7 +323,7 @@ def _team_timeline(pieces: list[Tracklet], reid: bool):
     far_d = [describe(v) for v in far]
     both = [w for w in range(n_windows) if near_d[w] is not None and far_d[w] is not None]
     if not both:
-        return (lambda t: False), []
+        return TeamTimeline(np.zeros(0, dtype=bool), np.zeros(0), 0.0)
 
     def distance(a, b):
         return 1.0 - float(a @ b)
@@ -317,12 +344,9 @@ def _team_timeline(pieces: list[Tracklet], reid: bool):
         b_vectors = [far_d[w] if not swapped[w] else near_d[w] for w in both]
         team_a, team_b = describe(a_vectors), describe(b_vectors)
 
-    changeovers = [w * TEAM_WINDOW_S for w in range(1, n_windows) if swapped[w] != swapped[w - 1]]
-
-    def swapped_at(t: float) -> bool:
-        return bool(swapped[min(int(t // TEAM_WINDOW_S), n_windows - 1)])
-
-    return swapped_at, changeovers
+    evidence_by_window = np.full(n_windows, np.nan)
+    evidence_by_window[both] = (swap_cost - keep_cost)[both]
+    return TeamTimeline(swapped=swapped, evidence=evidence_by_window, penalty=penalty)
 
 
 def _two_state_path(keep_cost: np.ndarray, swap_cost: np.ndarray, penalty: float) -> np.ndarray:
