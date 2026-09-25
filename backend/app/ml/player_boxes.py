@@ -87,7 +87,7 @@ def payload_from(identity: IdentityResult, sample_hz: float, frame: dict, stats_
         "frame": frame,
         "players": players,
         "changeovers": [round(float(t), 1) for t in identity.changeovers],
-        "matches_stats": _matches_stats(identity.players, stats_per_player),
+        "matches_stats": matches_stats(identity.players, stats_per_player),
     }
 
 
@@ -102,7 +102,7 @@ def _store(directory: Path, payload: dict, stats_per_player: dict | None) -> byt
     return data
 
 
-def _matches_stats(players, stats_per_player: dict | None) -> bool:
+def matches_stats(players, stats_per_player: dict | None) -> bool:
     """Whether these are the players the statistics describe: the same ids,
     each with the same number of detections."""
     if not stats_per_player:

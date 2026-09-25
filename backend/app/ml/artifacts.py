@@ -147,6 +147,15 @@ class LoadedArtifacts:
         return out
 
 
+def _analysed_at(directory: Path) -> float:
+    """When the run in `directory` was analysed: meta.json's time, which
+    only the analysis writes. The directory's own time also moves when a
+    cache is saved in it — opening an old match's video did — and "latest"
+    then named that match instead of the last one analysed."""
+    meta = directory / "meta.json"
+    return (meta if meta.exists() else directory).stat().st_mtime
+
+
 def resolve_artifacts_dir(match_id: str, artifacts_root: Path) -> Path:
     """Find a match's artifacts from a partial id, or from the word "latest".
 
@@ -160,7 +169,7 @@ def resolve_artifacts_dir(match_id: str, artifacts_root: Path) -> Path:
 
     candidates = sorted(
         (p for p in artifacts_root.iterdir() if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
+        key=_analysed_at,
         reverse=True,
     )
     if not candidates:
@@ -194,7 +203,7 @@ def completed_runs(artifacts_root: Path, limit: int = 5) -> list[Path]:
         return []
     out: list[Path] = []
     for path in sorted((p for p in artifacts_root.iterdir() if p.is_dir()),
-                       key=lambda p: p.stat().st_mtime, reverse=True):
+                       key=_analysed_at, reverse=True):
         try:
             meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):

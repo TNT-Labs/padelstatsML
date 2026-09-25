@@ -596,7 +596,9 @@ def test_a_player_far_from_the_camera_still_gets_a_thumbnail():
 def test_a_thumbnail_keeps_the_player_proportions():
     """The box used to be stretched to the thumbnail's 2:3, squashing or
     elongating the player; it is framed at 2:3 around the player instead."""
-    from app.ml.pipeline import _CROP_H, _CROP_W, _thumbnail
+    from app.ml.thumbnails import CROP_H as _CROP_H
+    from app.ml.thumbnails import CROP_W as _CROP_W
+    from app.ml.thumbnails import thumbnail as _thumbnail
 
     frame = np.full((1080, 1920, 3), 90, dtype=np.uint8)
     frame[300:700, 900:1000] = (40, 40, 220)          # a 100 x 400 player: 1:4
