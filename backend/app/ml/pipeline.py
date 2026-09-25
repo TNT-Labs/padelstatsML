@@ -24,7 +24,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from app.ml.artifacts import ArtifactWriter
@@ -34,6 +33,7 @@ from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.rallies import Rally, detect_rallies
+from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
 from app.ml.tracking import CourtTracker, Observation, Tracklet
 from app.ml.video import FrameSampler, VideoInfo, probe
@@ -41,11 +41,6 @@ from app.ml.video import FrameSampler, VideoInfo, probe
 logger = logging.getLogger("padel.pipeline")
 
 ProgressCallback = Callable[[int, str], None]
-
-_CROP_W, _CROP_H = 160, 240
-_CROP_PAD = 20
-_CROP_JPEG_QUALITY = 85
-
 
 @dataclass
 class PipelineConfig:
@@ -386,64 +381,38 @@ def _collect_crops(
 ) -> None:
     """Keep the single best-looking crop of every track while the frame is hot.
 
-    Score favours confident detections of a large, upright box: those are the
-    unoccluded frames, which is exactly what makes a usable thumbnail. The
-    comparison is within a track only, so a player always far from the
-    camera, whose boxes are small, still gets their best picture.
+    The comparison is within a track only, so a player always far from the
+    camera, whose boxes are small, still gets their best picture. Which
+    track's crop becomes the player's picture is decided after identity
+    (see thumbnails.choose_pictures).
     """
     for track_id, obs in tracked:
-        x1, y1, x2, y2 = obs.bbox
-        box_h, box_w = y2 - y1, x2 - x1
-        if box_h < 40 or box_w < 12:
+        score = crop_score(obs)
+        if score is None:
             continue
-        aspect = box_h / max(box_w, 1e-3)
-        if not (1.2 <= aspect <= 5.0):
-            continue
-        score = obs.confidence * min(box_h / 200.0, 1.0)
-
         existing = crops.get(track_id)
         if existing is not None and existing.score >= score:
             continue
-        jpeg = _thumbnail(frame, obs.bbox)
+        jpeg = thumbnail(frame, obs.bbox)
         if jpeg is not None:
             crops[track_id] = _CropCandidate(track_id, score, jpeg, obs)
 
 
-def _thumbnail(frame: np.ndarray, bbox: tuple[float, float, float, float]) -> bytes | None:
-    """The player framed at the thumbnail's own 2:3 proportions, then scaled.
-
-    The box is widened or heightened around its centre to 2:3 before resizing
-    — stretching the box itself squashed or elongated the player.
-    """
-    height, width = frame.shape[:2]
-    x1, y1, x2, y2 = bbox
-    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    box_w, box_h = (x2 - x1) + 2 * _CROP_PAD, (y2 - y1) + 2 * _CROP_PAD
-    target = _CROP_W / _CROP_H
-    if box_w / box_h < target:
-        box_w = box_h * target
-    else:
-        box_h = box_w / target
-    cx1 = int(np.clip(cx - box_w / 2.0, 0, width - 1))
-    cy1 = int(np.clip(cy - box_h / 2.0, 0, height - 1))
-    cx2 = int(np.clip(cx + box_w / 2.0, 1, width))
-    cy2 = int(np.clip(cy + box_h / 2.0, 1, height))
-    if cx2 - cx1 < 8 or cy2 - cy1 < 8:
-        return None
-    resized = cv2.resize(frame[cy1:cy2, cx1:cx2], (_CROP_W, _CROP_H), interpolation=cv2.INTER_AREA)
-    ok, buffer = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, _CROP_JPEG_QUALITY])
-    return buffer.tobytes() if ok else None
-
-
 def _encode_player_crops(players, crops: dict[int, _CropCandidate]) -> dict[int, bytes]:
-    """The best thumbnail among the tracks each player was built from."""
-    out: dict[int, bytes] = {}
+    """Each player's picture, among the crops of the tracks they were built
+    from: a sample typical of the player and alone in the frame, rather
+    than simply the best-looking one."""
+    owned: dict[int, list[_CropCandidate]] = {}
     for player in players:
-        candidates = [
-            crops[tid] for tid in player.source_tracklets
+        owned[player.player_id] = [
+            crops[tid] for tid in dict.fromkeys(player.source_tracklets)
             if tid in crops and crops[tid].observation is not None and player.owns(crops[tid].observation)
         ]
-        if not candidates:
-            continue
-        out[player.player_id] = max(candidates, key=lambda c: c.score).jpeg
+    chosen = choose_pictures(players, {pid: [c.observation for c in cands] for pid, cands in owned.items()})
+    out: dict[int, bytes] = {}
+    for player_id, obs in chosen.items():
+        for candidate in owned[player_id]:
+            if candidate.observation is obs:
+                out[player_id] = candidate.jpeg
+                break
     return out

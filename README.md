@@ -143,6 +143,9 @@ python scripts/retrack.py latest
 # Come sono stati trovati i 4 giocatori: coppia, lato, copertura, cambi di
 # campo trovati, quanto ha deciso l'aspetto; e se c'è una quinta persona
 python scripts/diagnose_identity.py latest
+
+# Rifà le foto dei giocatori dal video, senza rianalizzare la partita
+python scripts/rethumb.py latest
 ```
 
 Ogni script accetta `latest`, un prefisso dell'id (`4f21e100`) o l'id intero.

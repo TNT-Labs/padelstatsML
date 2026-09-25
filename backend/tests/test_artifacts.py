@@ -247,8 +247,23 @@ def test_completed_runs_leave_out_a_run_in_progress(tmp_path):
         run.mkdir()
         meta = {} if complete is None else {"complete": complete}
         (run / "meta.json").write_text(json.dumps(meta))
-        os.utime(run, (1000 - age, 1000 - age))
+        os.utime(run / "meta.json", (1000 - age, 1000 - age))
     (tmp_path / "empty").mkdir()
     os.utime(tmp_path / "empty", (2000, 2000))
 
     assert [p.name for p in completed_runs(tmp_path)] == ["done", "legacy"]
+
+
+def test_latest_is_the_last_run_analysed_not_the_last_touched(tmp_path):
+    """Opening an older match's video saves a cache in its folder; that must
+    not make it the "latest" match."""
+    import os
+
+    old, new = tmp_path / "old", tmp_path / "new"
+    for age, run in ((200, old), (100, new)):
+        run.mkdir()
+        (run / "meta.json").write_text("{}")
+        os.utime(run / "meta.json", (1000 - age, 1000 - age))
+    (old / "players-cache.json.gz").write_bytes(b"x")     # touched just now
+
+    assert resolve_artifacts_dir("latest", tmp_path) == new
