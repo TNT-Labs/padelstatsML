@@ -404,8 +404,8 @@ sudo systemctl status padelstats-api padelstats-worker
 docker compose exec api curl -s http://localhost:8000/padel/api/health | python3 -m json.tool
 # Senza Docker
 make check
-# Da fuori, attraverso il tunnel
-curl -s https://shopbeautylab.it/padel/api/health | python3 -m json.tool
+# Da fuori, attraverso il tunnel (solo lo stato, senza dettagli)
+curl -s https://shopbeautylab.it/padel/api/health
 ```
 
 Atteso:
@@ -539,8 +539,20 @@ attivo né modificare il proprio account da qui.
 - Sessioni lato server, revocabili; cookie `HttpOnly`, `Secure`,
   `SameSite=Strict`, limitato a `/padel`. Scadenza dopo 12 ore di inattività
   e comunque dopo 7 giorni.
-- Blocco dell'account per 15 minuti dopo 5 password errate; limite di
-  tentativi per indirizzo IP.
+- Blocco dell'account per 15 minuti dopo 5 password errate, anche nel cambio
+  password (chi ruba una sessione non può indovinare la password: al quinto
+  errore l'account si blocca e le sessioni si chiudono); limite di tentativi
+  per indirizzo IP.
+- Richieste oltre 1 MB rifiutate prima di leggerle (salvo i pezzi di video,
+  che arrivano solo dopo il controllo della sessione); gli upload si fermano
+  se sul disco resterebbe meno di 1 GB.
+- `/api/health` da fuori dice solo se il servizio è su; i dettagli (percorsi,
+  spazio libero) solo dalla macchina stessa.
+- Registro accessi conservato 365 giorni (`AUDIT_KEEP_DAYS`): contiene
+  indirizzi IP.
+- Dopo il primo accesso togli `PADEL_ADMIN_PASSWORD` dal `.env`. Le copie di
+  `padel.db` contengono gli hash delle password e i dati di tutti: conservale
+  come i video.
 - Protezione CSRF (header dedicato + controllo dell'origine),
   Content-Security-Policy senza script esterni o inline.
 - Disattivare un utente, cambiarne il ruolo o reimpostarne la password chiude

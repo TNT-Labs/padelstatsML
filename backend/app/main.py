@@ -15,7 +15,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -79,9 +79,15 @@ def create_app(base_path: str | None = None) -> FastAPI:
     app.include_router(presets.router)
 
     @app.get("/api/health")
-    async def health() -> JSONResponse:
+    async def health(request: Request) -> JSONResponse:
         """Readiness of the three things that can actually be broken here:
-        the database, the data directory, and the detector model."""
+        the database, the data directory, and the detector model.
+
+        Anyone may ask whether the service is up, but the details (paths,
+        free space, error text) are only for whoever is on the machine
+        itself: `docker compose exec api curl …` or the container
+        healthcheck. Through the tunnel the caller is cloudflared, never
+        loopback."""
         from sqlalchemy import text
 
         from app.core.database import async_engine
@@ -121,10 +127,10 @@ def create_app(base_path: str | None = None) -> FastAPI:
         else:
             checks["reid"] = "assente · giocatori distinti dal solo colore della divisa"
 
-        return JSONResponse(
-            {"status": "ok" if healthy else "degraded", "checks": checks},
-            status_code=200 if healthy else 503,
-        )
+        body: dict = {"status": "ok" if healthy else "degraded"}
+        if request.client is not None and request.client.host in ("127.0.0.1", "::1"):
+            body["checks"] = checks
+        return JSONResponse(body, status_code=200 if healthy else 503)
 
     _mount_web_ui(app)
     if not prefix:

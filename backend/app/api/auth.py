@@ -35,7 +35,7 @@ from app.core.security import (
     utcnow,
     verify_password,
 )
-from app.models import AuthSession, User
+from app.models import AuditEntry, AuthSession, User
 from app.schemas.auth import LoginRequest, Me, PasswordChange
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -95,8 +95,17 @@ async def login(
         ip=ip,
         user_agent=(request.headers.get("user-agent") or "")[:200] or None,
     ))
-    # Housekeeping: sessions past their absolute expiry, of anyone.
-    await db.execute(delete(AuthSession).where(AuthSession.expires_at <= now))
+    # Housekeeping: sessions expired by age or inactivity, of anyone, and
+    # access-log entries past their retention (they hold IP addresses).
+    await db.execute(
+        delete(AuthSession).where(
+            (AuthSession.expires_at <= now)
+            | (AuthSession.last_seen_at <= now - timedelta(hours=settings.session_idle_hours))
+        )
+    )
+    await db.execute(
+        delete(AuditEntry).where(AuditEntry.at < now - timedelta(days=settings.audit_keep_days))
+    )
     record(db, "login", user.username, None, ip)
     await db.flush()
     set_session_cookie(request, response, token)
@@ -131,8 +140,24 @@ async def change_password(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sessione scaduta: accedi di nuovo.")
     session, user = found
     ip = client_ip(request)
+    if login_limiter.blocked(ip):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Troppi tentativi da questo indirizzo: riprova tra qualche minuto.",
+        )
     if not await run_in_threadpool(verify_password, payload.current_password, user.password_hash):
-        record(db, "cambio_password_fallito", user.username, None, ip)
+        # Same budget as the login: a stolen session must not become an
+        # unlimited oracle for the password behind it.
+        settings = get_settings()
+        login_limiter.hit(ip)
+        user.failed_attempts += 1
+        detail = None
+        if user.failed_attempts >= settings.max_login_attempts:
+            user.locked_until = utcnow() + timedelta(minutes=settings.lock_minutes)
+            user.failed_attempts = 0
+            await db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+            detail = f"account bloccato per {settings.lock_minutes} minuti, sessioni chiuse"
+        record(db, "cambio_password_fallito", user.username, detail, ip)
         await db.commit()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "La password attuale non è corretta.")
     problem = password_problem(payload.new_password, user.username)
@@ -143,6 +168,7 @@ async def change_password(
 
     user.password_hash = await run_in_threadpool(hash_password, payload.new_password)
     user.must_change_password = False
+    user.failed_attempts = 0
     # Whoever knew the old password is signed out everywhere else.
     await db.execute(
         delete(AuthSession).where(
