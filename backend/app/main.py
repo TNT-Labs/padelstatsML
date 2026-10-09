@@ -37,6 +37,9 @@ async def lifespan(_app: FastAPI):
 
     from app.core.accounts import adopt_orphans, ensure_admin
     from app.core.database import sync_session
+    from app.core.storage import purge_orphan_files
+    from app.models import Match
+    from sqlalchemy import select
 
     settings = get_settings()
     settings.ensure_dirs()
@@ -44,6 +47,10 @@ async def lifespan(_app: FastAPI):
     with sync_session() as session:
         ensure_admin(session, settings.padel_admin_username, settings.padel_admin_password)
         adopt_orphans(session)
+        known_ids = set(session.scalars(select(Match.id)))
+    orphans = purge_orphan_files(known_ids)
+    if orphans:
+        logger.info("Rimossi i file di %d partite non più esistenti", len(orphans))
     logger.info("API pronta · dati in %s", settings.data_dir)
     yield
 

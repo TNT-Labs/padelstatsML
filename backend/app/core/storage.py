@@ -15,6 +15,11 @@ def video_path(match_id: str) -> Path:
     return get_settings().videos_path / f"{match_id}.mp4"
 
 
+def upload_part_path(match_id: str) -> Path:
+    """Where a video grows while it arrives in pieces (resumable upload)."""
+    return video_path(match_id).with_suffix(".part")
+
+
 def keyframe_path(match_id: str) -> Path:
     return get_settings().keyframes_path / f"{match_id}.jpg"
 
@@ -65,10 +70,38 @@ def keyframe_url(match_id: str) -> str:
 def delete_match_files(match_id: str) -> None:
     """Best-effort removal of every file belonging to a match."""
     video_path(match_id).unlink(missing_ok=True)
+    # An upload abandoned half way leaves its pieces here, up to gigabytes.
+    upload_part_path(match_id).unlink(missing_ok=True)
     keyframe_path(match_id).unlink(missing_ok=True)
     for directory in (get_settings().crops_path / match_id, artifacts_dir(match_id)):
         if directory.exists():
             shutil.rmtree(directory, ignore_errors=True)
+
+
+def purge_orphan_files(known_ids: set[str]) -> list[str]:
+    """Remove the files of matches that no longer exist; returns their ids.
+
+    Deletion is best effort (a file in use, a crash between the database
+    commit and the cleanup), so whatever slipped through is swept here.
+    Only the names this module creates are touched: anything else a person
+    put in DATA_DIR stays."""
+    settings = get_settings()
+    candidates: set[str] = set()
+    for folder, suffixes in (
+        (settings.videos_path, {".mp4", ".part"}),
+        (settings.keyframes_path, {".jpg"}),
+    ):
+        if folder.is_dir():
+            candidates.update(
+                f.stem for f in folder.iterdir() if f.is_file() and f.suffix in suffixes
+            )
+    for folder in (settings.crops_path, settings.artifacts_path):
+        if folder.is_dir():
+            candidates.update(d.name for d in folder.iterdir() if d.is_dir())
+    orphans = sorted(candidates - known_ids)
+    for match_id in orphans:
+        delete_match_files(match_id)
+    return orphans
 
 
 def free_space_bytes() -> int:

@@ -49,6 +49,7 @@ from app.core.storage import (
     delete_match_files,
     free_space_bytes,
     keyframe_path,
+    upload_part_path,
     upload_url,
     video_path,
 )
@@ -157,13 +158,9 @@ def _check_uploadable(match: Match) -> None:
         )
 
 
-def _part_path(match_id: str):
-    return video_path(match_id).with_suffix(".part")
-
-
 def _part_size(match_id: str) -> int:
     try:
-        return _part_path(match_id).stat().st_size
+        return upload_part_path(match_id).stat().st_size
     except FileNotFoundError:
         return 0
 
@@ -196,7 +193,7 @@ async def upload_chunk(
     settings = get_settings()
     chunk_limit = settings.upload_chunk_mb * 1024 * 1024
     max_bytes = settings.max_video_size_mb * 1024 * 1024
-    part = _part_path(match_id)
+    part = upload_part_path(match_id)
     part.parent.mkdir(parents=True, exist_ok=True)
 
     _ensure_room(chunk_limit)
@@ -262,7 +259,7 @@ async def upload_complete(
                 headers={"X-Received-Bytes": str(received)},
             )
         target = video_path(match_id)
-        _part_path(match_id).replace(target)
+        upload_part_path(match_id).replace(target)
     await _finalise_upload(match, target, received)
     await db.flush()
     return await _read(db, match, user)
@@ -295,7 +292,7 @@ async def upload_video(
     settings = get_settings()
     max_bytes = settings.max_video_size_mb * 1024 * 1024
     target = video_path(match_id)
-    tmp = _part_path(match_id)
+    tmp = upload_part_path(match_id)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     declared = request.headers.get("content-length", "")
@@ -728,7 +725,9 @@ async def delete_match(
             "Analisi in corso: attendi il termine prima di eliminare la partita.",
         )
     await db.delete(match)
-    await db.flush()
+    # Files go only once the row is gone for good: a failed commit must not
+    # leave a match pointing at a deleted video.
+    await db.commit()
     try:
         delete_match_files(match_id)
     except OSError as exc:
