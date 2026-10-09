@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     max_login_attempts: int = 5
     lock_minutes: int = 15
+    # The access log holds IP addresses: kept only as long as it is useful.
+    audit_keep_days: int = 365
     # Read the visitor's address from CF-Connecting-IP. Only safe when nothing
     # but cloudflared can reach the API (no published port), as in compose.
     trust_cloudflare: bool = False

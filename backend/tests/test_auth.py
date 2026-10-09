@@ -519,3 +519,67 @@ def test_the_command_line_recovers_an_administrator():
         user = session.scalar(select(User).where(User.username == name))
         assert user.is_admin and user.active and user.must_change_password
         assert verify_password(password, user.password_hash)
+
+
+# ── Hardening ────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_an_oversized_body_is_refused_before_anyone_signs_in():
+    async with _anonymous() as c:
+        big = b'{"username":"' + b"a" * (2 * 1024 * 1024) + b'","password":"x"}'
+        response = await c.post("/api/auth/login", content=big, headers={"Content-Type": "application/json"})
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_health_shows_details_only_on_the_machine_itself():
+    from app.main import app
+
+    async with _anonymous() as local:
+        assert "checks" in (await local.get("/api/health")).json()
+    remote = AsyncClient(
+        transport=ASGITransport(app=app, client=("203.0.113.7", 4242)), base_url="http://testserver"
+    )
+    async with remote:
+        body = (await remote.get("/api/health")).json()
+    assert set(body) == {"status"}
+
+
+@pytest.mark.asyncio
+async def test_guessing_the_current_password_locks_the_account_and_ends_its_sessions():
+    from app.core.security import login_limiter
+
+    login_limiter.reset()
+    name = _name("u")
+    async with await signed_in(name) as stolen:
+        for i in range(5):
+            response = await stolen.post(
+                "/api/auth/password", json={"current_password": f"Tentativo{i}x", "new_password": "Nuova12345xx"}
+            )
+            assert response.status_code in (400, 401)
+        assert (await stolen.get("/api/matches")).status_code == 401
+    async with _anonymous() as c:
+        locked = await c.post("/api/auth/login", json={"username": name, "password": PASSWORD})
+        assert locked.status_code == 401
+    login_limiter.reset()
+
+
+@pytest.mark.asyncio
+async def test_uploads_stop_before_the_disk_is_full(monkeypatch):
+    from app.api import matches
+
+    async with await signed_in(_name("u")) as c:
+        match_id = await _match_of(c)
+        monkeypatch.setattr(matches, "free_space_bytes", lambda: 900 * 1024 * 1024)
+        piece = await c.put(f"/api/matches/{match_id}/upload", params={"offset": 0}, content=b"x" * 100)
+        assert piece.status_code == 507
+        whole = await c.put(f"/api/matches/{match_id}/video", content=b"x" * 100)
+        assert whole.status_code == 507
+
+
+@pytest.mark.asyncio
+async def test_player_names_have_a_length_limit():
+    async with await signed_in(_name("u")) as c:
+        match_id = await _match_of(c)
+        response = await c.patch(f"/api/matches/{match_id}", json={"player_names": ["x" * 61]})
+        assert response.status_code == 422

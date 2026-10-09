@@ -287,7 +287,7 @@ sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 241 backend + 34 frontend
+make test         # 246 backend + 34 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health

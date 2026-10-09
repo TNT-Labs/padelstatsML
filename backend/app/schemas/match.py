@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from typing import Annotated
+
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.models.match import CalibrationSource, MatchStatus
@@ -17,15 +19,17 @@ def _as_utc(value: datetime) -> datetime:
 
 # ── Matches ──────────────────────────────────────────────────────────────────
 
+PlayerName = Annotated[str, Field(max_length=60)]
+
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    player_names: list[str] | None = Field(default=None, max_length=4)
+    player_names: list[PlayerName] | None = Field(default=None, max_length=4)
     file_size_bytes: int | None = Field(default=None, gt=0)
 
 
 class MatchUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    player_names: list[str] | None = Field(default=None, max_length=4)
+    player_names: list[PlayerName] | None = Field(default=None, max_length=4)
 
 
 class UploadInitResponse(BaseModel):

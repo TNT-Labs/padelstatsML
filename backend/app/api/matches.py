@@ -80,7 +80,17 @@ HTTP_UNPROCESSABLE = 422
 
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
-_UPLOAD_CHUNK_GUARD_BYTES = 8 * 1024 * 1024   # keep this much headroom free
+# Space that uploads must leave free, so that one user (or a stolen account)
+# cannot fill the disk under the database and the analyses of everyone else.
+_MIN_FREE_BYTES = 1024 * 1024 * 1024
+
+
+def _ensure_room(incoming: int) -> None:
+    if free_space_bytes() - incoming < _MIN_FREE_BYTES:
+        raise HTTPException(
+            status.HTTP_507_INSUFFICIENT_STORAGE,
+            "Spazio su disco insufficiente: elimina qualche partita e riprova.",
+        )
 # Building the players' boxes loads a match's artifacts (a few hundred MB at
 # peak): one at a time, which also keeps two viewers from building the same
 # cache file at once.
@@ -189,6 +199,7 @@ async def upload_chunk(
     part = _part_path(match_id)
     part.parent.mkdir(parents=True, exist_ok=True)
 
+    _ensure_room(chunk_limit)
     async with _upload_lock(match_id):
         received = _part_size(match_id)
         if offset != 0 and offset != received:
@@ -221,8 +232,9 @@ async def upload_chunk(
                 raise
             if isinstance(exc, ClientDisconnect):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Blocco interrotto.") from exc
+            logger.error("Scrittura del video %s fallita: %s", match_id, exc)
             raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scrittura su disco fallita: {exc}"
+                status.HTTP_500_INTERNAL_SERVER_ERROR, "Scrittura su disco fallita."
             ) from exc
         if written == 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nessun dato ricevuto.")
@@ -286,12 +298,19 @@ async def upload_video(
     tmp = _part_path(match_id)
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    declared = request.headers.get("content-length", "")
+    _ensure_room(int(declared) if declared.isdigit() else 0)
     written = 0
     async with _upload_lock(match_id):
         try:
             with open(tmp, "wb") as handle:
+                next_check = 64 << 20
                 async for chunk in request.stream():
                     written += len(chunk)
+                    if written >= next_check:
+                        # The body may carry no length: watch the disk as it fills.
+                        next_check += 64 << 20
+                        _ensure_room(0)
                     if written > max_bytes:
                         raise HTTPException(
                             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -306,8 +325,9 @@ async def upload_video(
             raise
         except OSError as exc:
             tmp.unlink(missing_ok=True)
+            logger.error("Scrittura del video %s fallita: %s", match_id, exc)
             raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scrittura su disco fallita: {exc}"
+                status.HTTP_500_INTERNAL_SERVER_ERROR, "Scrittura su disco fallita."
             ) from exc
 
     await _finalise_upload(match, target, written)
@@ -677,7 +697,7 @@ async def get_player_tracks(
     except (OSError, ValueError, RuntimeError) as exc:
         logger.warning("Riquadri dei giocatori per %s non calcolabili: %s", match_id, exc)
         raise HTTPException(
-            status.HTTP_404_NOT_FOUND, f"Riquadri non disponibili: {exc}"
+            status.HTTP_404_NOT_FOUND, "Riquadri non disponibili per questa partita."
         ) from exc
 
     headers = {"Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
