@@ -30,6 +30,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,6 +83,12 @@ class Match(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
     title: Mapped[str] = mapped_column(String(200))
+    # Who uploaded it: users see only their own matches, administrators all.
+    # Nullable only for rows that predate accounts; start-up assigns those to
+    # the first administrator.
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
     status: Mapped[MatchStatus] = mapped_column(
         _enum_col(MatchStatus), default=MatchStatus.UPLOADING, index=True
     )
@@ -169,9 +176,14 @@ class CameraPreset(Base):
     """
 
     __tablename__ = "camera_presets"
+    # Each user has their own cameras, so two users may both call one "Campo 1".
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_preset_owner_name"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
     corners_px: Mapped[list] = mapped_column(JSON)          # [[x,y] x4] TL,TR,BR,BL
     frame_width: Mapped[int] = mapped_column(Integer)
     frame_height: Mapped[int] = mapped_column(Integer)

@@ -198,7 +198,7 @@ modello ONNX del detector.
 
 ```bash
 git clone <repo> && cd padelstatsML
-cp .env.example .env        # imposta DATA_DIR/DATA_VOLUME e API_BASE_URL
+cp .env.example .env        # imposta DATA_VOLUME e PADEL_ADMIN_PASSWORD
 
 # Esporta i modelli una volta sola, direttamente sul Pi
 python3 -m venv .export-venv && source .export-venv/bin/activate
@@ -244,8 +244,15 @@ docker compose up -d --build
 Due container (`api` e `worker`) che condividono un'immagine; il build della
 UI è uno stage del Dockerfile, quindi qui non serve `make web`.
 
-In entrambi i casi apri `http://padelpi.local:8000` e verifica con
-`curl http://localhost:8000/api/health`.
+Con Docker l'app è pubblicata su **https://shopbeautylab.it/padel/** dal
+tunnel Cloudflare dello stack VORTICE (nessuna porta aperta sul Pi; regola
+del tunnel in [INSTALL_RASPBERRY.md §5b](INSTALL_RASPBERRY.md#5b-pubblicazione-su-shopbeautylabit)).
+Senza Docker, in rete locale, apri `http://padelpi.local:8000` (con
+`BASE_PATH=` vuoto e `COOKIE_SECURE=false`).
+
+Si entra con nome utente e password: il primo amministratore viene dal
+`.env`, gli altri utenti li crea lui da **Gestione utenti**. Ognuno vede le
+proprie partite, l'amministratore tutte ([§11b](INSTALL_RASPBERRY.md#11b-utenti-e-accesso)).
 
 Guida completa passo per passo: [INSTALL_RASPBERRY.md](INSTALL_RASPBERRY.md).
 
@@ -280,7 +287,7 @@ sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 124 backend + 14 frontend
+make test         # 241 backend + 34 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health
@@ -291,10 +298,10 @@ pinnati in locale producono test verdi che falliscono in CI. Per i soli
 strumenti di test aggiungi `.venv/bin/pip install -r backend/requirements.dev.txt`.
 
 Per lavorare sul frontend con hot reload serve il dev server di Vite, che
-gira su un'altra porta e quindi richiede CORS:
+inoltra `/api` all'API su :8000 (avviata con `BASE_PATH=` vuoto e
+`COOKIE_SECURE=false`, perché il dev server è su http):
 
 ```bash
-echo 'CORS_ORIGINS=http://localhost:5173' >> .env
 cd frontend && npm run dev
 ```
 

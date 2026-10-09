@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type Match, type MatchStats } from './api'
+import { api, setSessionLostHandler, type Match, type MatchStats, type Me } from './api'
+import { AdminView } from './components/AdminView'
 import { CalibrationView } from './components/CalibrationView'
 import { HomeView } from './components/HomeView'
+import { LoginView } from './components/LoginView'
+import { PasswordView } from './components/PasswordView'
 import { PlayerIdentificationView } from './components/PlayerIdentificationView'
 import { ProcessingView } from './components/ProcessingView'
 import { StatsView } from './components/StatsView'
 import { UploadView } from './components/UploadView'
+import { UserBar } from './components/UserBar'
 
 /**
  * Screen flow:
@@ -19,14 +23,84 @@ import { UploadView } from './components/UploadView'
  */
 type View =
   | { name: 'home' }
-  | { name: 'upload' }
+  | { name: 'upload'; resume?: Match }
   | { name: 'calibrate'; match: Match }
   | { name: 'processing'; matchId: string; autoStart: boolean }
   | { name: 'loading'; matchId: string; then: 'identify' | 'stats' }
   | { name: 'identify'; stats: MatchStats }
   | { name: 'stats'; stats: MatchStats }
 
+/**
+ * Access: nothing but the sign-in form is shown until the server confirms a
+ * session, and a temporary password must be replaced before anything else.
+ * The rules are enforced by the server; this only decides what to show.
+ */
 export default function App() {
+  const [me, setMe] = useState<Me | null | undefined>(undefined)
+  const [page, setPage] = useState<'app' | 'password' | 'admin'>('app')
+
+  const check = useCallback(() => {
+    api
+      .me()
+      .then(setMe)
+      .catch(() => setMe(null))
+  }, [])
+
+  useEffect(() => {
+    check()
+    setSessionLostHandler(check)
+    return () => setSessionLostHandler(null)
+  }, [check])
+
+  const logout = useCallback(async () => {
+    await api.logout().catch(() => undefined)
+    setPage('app')
+    setMe(null)
+  }, [])
+
+  if (me === undefined) {
+    return (
+      <div className="layout" style={{ textAlign: 'center', paddingTop: '5rem' }}>
+        <p className="muted-note">Caricamento…</p>
+      </div>
+    )
+  }
+  if (me === null) {
+    return (
+      <LoginView
+        onSignedIn={user => {
+          setPage('app')
+          setMe(user)
+        }}
+      />
+    )
+  }
+  if (me.must_change_password) {
+    return <PasswordView me={me} forced onDone={setMe} onLogout={logout} />
+  }
+
+  return (
+    <>
+      <UserBar
+        me={me}
+        onPassword={() => setPage('password')}
+        onAdmin={() => setPage('admin')}
+        onLogout={logout}
+      />
+      {page === 'password' && (
+        <PasswordView me={me} onDone={user => { setMe(user); setPage('app') }} onCancel={() => setPage('app')} />
+      )}
+      {page === 'admin' && me.role === 'admin' && <AdminView me={me} onBack={() => setPage('app')} />}
+      {/* Kept mounted while another page is open: an upload in progress or
+          the screen the user was on must survive a look at the settings. */}
+      <div hidden={page !== 'app'}>
+        <Workspace me={me} />
+      </div>
+    </>
+  )
+}
+
+function Workspace({ me }: { me: Me }) {
   const [view, setView] = useState<View>({ name: 'home' })
   const [error, setError] = useState<string | null>(null)
 
@@ -40,9 +114,7 @@ export default function App() {
     setError(null)
     switch (match.status) {
       case 'uploading':
-        setError(
-          'Il caricamento di questa partita non è stato completato. Eliminala e ricaricala.',
-        )
+        setView({ name: 'upload', resume: match })
         return
       case 'needs_calibration':
       case 'failed':
@@ -97,6 +169,7 @@ export default function App() {
     case 'upload':
       return (
         <UploadView
+          resume={view.resume}
           onBack={home}
           onUploaded={async matchId => {
             const match = await api.getMatch(matchId)
@@ -168,7 +241,7 @@ export default function App() {
               <div className="callout callout-error">{error}</div>
             </div>
           )}
-          <HomeView onNew={() => setView({ name: 'upload' })} onOpen={open} />
+          <HomeView me={me} onNew={() => setView({ name: 'upload' })} onOpen={open} />
         </>
       )
   }

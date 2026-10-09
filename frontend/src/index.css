@@ -223,3 +223,102 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
   .match-row { flex-wrap: wrap; }
   .match-actions { width: 100%; justify-content: flex-start; }
 }
+
+/* ── Account: top bar, sign-in, administration ──────────────────────────── */
+input[type="password"], select {
+  width: 100%; padding: .6rem .75rem; font-size: .95rem; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 8px; background: #fff; color: inherit;
+}
+input[type="password"]:focus, select:focus { outline: 2px solid var(--green); outline-offset: -1px; }
+input[aria-invalid="true"] { border-color: var(--danger); }
+[hidden] { display: none !important; }
+
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
+.topbar-inner {
+  max-width: 1120px; margin: 0 auto; padding: .4rem 1rem;
+  display: flex; align-items: center; gap: .75rem; min-height: 46px;
+}
+.topbar-spacer { flex: 1; }
+.topbar-link { color: var(--green-dk); font-size: .85rem; font-weight: 600; text-decoration: none; }
+.topbar-link:hover { text-decoration: underline; }
+
+.user-menu { position: relative; }
+.user-btn {
+  display: inline-flex; align-items: center; gap: .45rem; max-width: 60vw;
+  padding: .3rem .6rem .3rem .3rem; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer;
+}
+.user-btn:hover { border-color: var(--green); }
+.user-avatar {
+  width: 1.7rem; height: 1.7rem; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--green); color: #fff; font-weight: 700; font-size: .8rem;
+}
+.user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-tag, .owner-tag {
+  font-size: .68rem; font-weight: 700; padding: .1rem .45rem; border-radius: 999px;
+  background: #e0e7ff; color: #3730a3; white-space: nowrap;
+}
+.owner-tag { margin-left: .4rem; background: #f1f5f9; color: #475569; }
+.user-menu-list {
+  position: absolute; right: 0; top: calc(100% + .35rem); z-index: 20; min-width: 190px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, .12); padding: .3rem; display: flex; flex-direction: column;
+}
+.user-menu-list button {
+  text-align: left; padding: .55rem .7rem; border: none; border-radius: 7px;
+  background: none; font: inherit; font-size: .88rem; color: var(--text); cursor: pointer;
+}
+.user-menu-list button:hover, .user-menu-list button:focus-visible { background: #f0fdf4; outline: none; }
+.user-menu-list button.danger { color: var(--danger); }
+.user-menu-list button.danger:hover { background: var(--danger-bg); }
+
+.auth-page {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem 1rem;
+}
+.auth-card { width: 100%; max-width: 400px; padding: 1.75rem 1.5rem; }
+.auth-logo { font-size: 2.4rem; line-height: 1; margin-bottom: .6rem; }
+
+.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+.tabs button {
+  padding: .55rem .9rem; border: none; background: none; font: inherit; font-size: .9rem;
+  font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs button[aria-selected="true"] { color: var(--green-dk); border-bottom-color: var(--green); }
+
+.new-user { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; }
+.new-user .form-group { margin-bottom: 0; min-width: 160px; }
+.user-row {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .75rem 0; border-top: 1px solid var(--border);
+}
+.user-row:first-of-type { border-top: none; }
+.tag-row { display: flex; gap: .3rem; flex-wrap: wrap; margin: .25rem 0; }
+.secret {
+  display: inline-block; margin-left: .4rem; padding: .1rem .45rem; border-radius: 6px;
+  background: #fff; border: 1px solid #fde68a; color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95rem;
+  user-select: all; word-break: break-all;
+}
+
+.audit-row {
+  display: grid; grid-template-columns: 10.5rem 11rem 8rem 1fr; gap: .5rem;
+  padding: .5rem 0; border-top: 1px solid var(--border); font-size: .84rem; align-items: baseline;
+}
+.audit-row:first-of-type { border-top: none; }
+.audit-when { color: var(--muted); white-space: nowrap; }
+.audit-event { font-weight: 600; }
+.audit-who { overflow: hidden; text-overflow: ellipsis; }
+.audit-detail { overflow-wrap: anywhere; }
+.audit-bad .audit-event { color: var(--danger); }
+
+@media (max-width: 640px) {
+  .user-row { flex-wrap: wrap; }
+  .user-row .match-actions { width: 100%; justify-content: flex-start; }
+  .audit-row { grid-template-columns: 1fr 1fr; }
+  .audit-detail { grid-column: 1 / -1; }
+  .new-user .form-group { flex-basis: 100% !important; }
+  .new-user .btn { width: 100%; }
+}

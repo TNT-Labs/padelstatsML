@@ -1,7 +1,6 @@
 import { useState, type FC } from 'react'
+import { BASE } from '../api'
 import { apiAsset } from '../lib/format'
-
-const BASE = import.meta.env.VITE_API_URL ?? ''
 
 interface Props {
   url?: string | null

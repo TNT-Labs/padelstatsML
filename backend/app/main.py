@@ -3,6 +3,11 @@
 The API also serves the built web UI, so the Pi runs two containers (api and
 worker) instead of the previous seven. There is no nginx, no MinIO console,
 no Flower and no broker.
+
+Everything except the health check and the sign-in endpoints needs a session
+(see app/api/deps.py). With BASE_PATH set (e.g. /padel) the whole application
+— API and UI — lives under that prefix, so it can share a domain with other
+applications behind one Cloudflare tunnel.
 """
 from __future__ import annotations
 
@@ -12,11 +17,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Mount, Route
 
-from app.api import matches, presets
+from app.api import admin, auth, matches, presets
 from app.core.config import get_settings
+from app.core.http import SecurityMiddleware
 
 logger = logging.getLogger("padel.api")
 
@@ -28,16 +35,31 @@ WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 async def lifespan(_app: FastAPI):
     from app.core.database import init_schema
 
+    from app.core.accounts import adopt_orphans, ensure_admin
+    from app.core.database import sync_session
+
     settings = get_settings()
     settings.ensure_dirs()
     init_schema()
+    with sync_session() as session:
+        ensure_admin(session, settings.padel_admin_username, settings.padel_admin_password)
+        adopt_orphans(session)
     logger.info("API pronta · dati in %s", settings.data_dir)
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(base_path: str | None = None) -> FastAPI:
+    """The application, mounted under `base_path` (default: BASE_PATH)."""
     settings = get_settings()
-    app = FastAPI(title="Padel Stats", version="1.0.0", lifespan=lifespan)
+    prefix = settings.base_prefix if base_path is None else base_path.rstrip("/")
+    app = FastAPI(
+        title="Padel Stats", version="1.0.0",
+        # A mounted application's lifespan is never run: the outer one owns it.
+        lifespan=None if prefix else lifespan,
+        # The API description is a map for an attacker and of no use to users.
+        docs_url=None, redoc_url=None, openapi_url=None,
+    )
+    app.add_middleware(SecurityMiddleware)
 
     # Same-origin by default. A list is only needed when the Vite dev server
     # runs on another port.
@@ -51,6 +73,8 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    app.include_router(auth.router)
+    app.include_router(admin.router)
     app.include_router(matches.router)
     app.include_router(presets.router)
 
@@ -103,7 +127,22 @@ def create_app() -> FastAPI:
         )
 
     _mount_web_ui(app)
-    return app
+    if not prefix:
+        return app
+
+    async def to_app(request):
+        return RedirectResponse(f"{prefix}/", status_code=308)
+
+    return FastAPI(
+        lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None,
+        routes=[
+            # Without the slash the page's relative URLs (./assets, api/…)
+            # would resolve one level up, outside the application.
+            Route(prefix, to_app),
+            Route("/", to_app),
+            Mount(prefix, app=app),
+        ],
+    )
 
 
 def _mount_web_ui(app: FastAPI) -> None:

@@ -5,8 +5,9 @@ hundred rows. WAL mode lets the API read while the worker writes, which is the
 only concurrency this system has.
 
 Schema is created with `create_all` at startup — there is no migration tool.
-For a single-user appliance a versioned schema stamp plus additive columns is
-enough, and it removes the whole class of migration failures.
+A versioned schema stamp (`PRAGMA user_version`) plus small, explicit steps
+for existing databases is enough here, and it removes the whole class of
+migration failures.
 """
 from __future__ import annotations
 
@@ -85,11 +86,61 @@ def sync_session() -> Iterator[Session]:
         session.close()
 
 
-def init_schema() -> None:
-    """Create tables that do not exist yet. Safe to call from both processes."""
+# 1: accounts — matches and camera presets get an owner.
+SCHEMA_VERSION = 1
+
+
+def init_schema(engine: Engine | None = None) -> None:
+    """Create missing tables and bring an older database up to date.
+
+    Safe to call from both processes at once: everything runs inside one
+    `BEGIN IMMEDIATE` transaction, so the second caller waits for the first
+    and then finds nothing left to do. SQLite DDL is transactional, so a
+    failure leaves the database exactly as it was.
+    """
     from app import models  # noqa: F401  (registers mappers)
 
-    Base.metadata.create_all(sync_engine)
-    with sync_engine.connect() as conn:
-        conn.execute(text("PRAGMA optimize"))
+    engine = engine or sync_engine
+    with engine.connect() as conn:
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        version = conn.exec_driver_sql("PRAGMA user_version").scalar() or 0
+        if version < 1:
+            _v1_before_create(conn)
+        Base.metadata.create_all(conn)
+        if version < 1:
+            _v1_after_create(conn)
+        if version < SCHEMA_VERSION:
+            conn.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
+        conn.exec_driver_sql("PRAGMA optimize")
+
+
+def _columns(conn, table: str) -> set[str]:
+    return {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+
+
+def _v1_before_create(conn) -> None:
+    """camera_presets had a global UNIQUE on name; it becomes unique per
+    owner. SQLite cannot drop a constraint, so the table is rebuilt: the old
+    one steps aside here and its rows are copied back after create_all."""
+    if _columns(conn, "camera_presets") and "owner_id" not in _columns(conn, "camera_presets"):
+        conn.exec_driver_sql("ALTER TABLE camera_presets RENAME TO camera_presets_v0")
+
+
+def _v1_after_create(conn) -> None:
+    if "owner_id" not in _columns(conn, "matches"):
+        conn.exec_driver_sql(
+            "ALTER TABLE matches ADD COLUMN owner_id VARCHAR(36) REFERENCES users (id)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_matches_owner_id ON matches (owner_id)"
+        )
+    if _columns(conn, "camera_presets_v0"):
+        cols = (
+            "id, name, corners_px, frame_width, frame_height, net_px, "
+            "times_used, created_at, updated_at"
+        )
+        conn.exec_driver_sql(
+            f"INSERT INTO camera_presets ({cols}) SELECT {cols} FROM camera_presets_v0"
+        )
+        conn.exec_driver_sql("DROP TABLE camera_presets_v0")

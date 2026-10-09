@@ -1,14 +1,18 @@
 import { useRef, useState, type ChangeEvent, type DragEvent, type FC } from 'react'
+import type { Match } from '../api'
 import { useUpload } from '../hooks/useMatch'
 
 interface Props {
   onUploaded: (matchId: string) => void
   onBack: () => void
+  /** An upload left unfinished: the same file is chosen again and only the
+   *  missing part is sent. */
+  resume?: Match
 }
 
-export const UploadView: FC<Props> = ({ onUploaded, onBack }) => {
+export const UploadView: FC<Props> = ({ onUploaded, onBack, resume }) => {
   const { state, upload, reset } = useUpload()
-  const [title, setTitle] = useState('Partita')
+  const [title, setTitle] = useState(resume?.title ?? 'Partita')
   const [file, setFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -27,16 +31,18 @@ export const UploadView: FC<Props> = ({ onUploaded, onBack }) => {
 
   const start = async () => {
     if (!file) return
-    const matchId = await upload(file, title.trim())
+    // After a failure the match already exists: carry on with it rather
+    // than leave an unfinished one behind.
+    const matchId = await upload(file, title.trim(), state.matchId ?? resume?.id)
     if (matchId) onUploaded(matchId)
   }
 
-  const busy = state.phase === 'creating' || state.phase === 'uploading'
+  const busy = state.phase === 'creating' || state.phase === 'uploading' || state.phase === 'checking'
 
   return (
     <div className="layout" style={{ maxWidth: 620 }}>
       <div className="header">
-        <h1>Nuova partita</h1>
+        <h1>{resume ? 'Riprendi caricamento' : 'Nuova partita'}</h1>
         <button className="btn btn-ghost btn-sm" onClick={onBack} disabled={busy}>
           ← Indietro
         </button>
@@ -51,12 +57,20 @@ export const UploadView: FC<Props> = ({ onUploaded, onBack }) => {
         </div>
       )}
 
+      {!busy && resume && (
+        <div className="callout callout-info" style={{ marginBottom: '1rem' }}>
+          Il caricamento di <strong>{resume.title}</strong> si è interrotto. Scegli di nuovo lo
+          stesso video: verrà inviata solo la parte mancante.
+        </div>
+      )}
+
       {!busy && (
         <>
-          <div className="card" style={{ marginBottom: '1rem' }}>
+          <div className="card" style={{ marginBottom: '1rem' }} hidden={!!resume}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label>Titolo partita</label>
+              <label htmlFor="match-title">Titolo partita</label>
               <input
+                id="match-title"
                 type="text"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
@@ -106,7 +120,7 @@ export const UploadView: FC<Props> = ({ onUploaded, onBack }) => {
             disabled={!file || !title.trim()}
             onClick={start}
           >
-            Carica video
+            {resume ? 'Riprendi caricamento' : 'Carica video'}
           </button>
         </>
       )}
@@ -114,14 +128,25 @@ export const UploadView: FC<Props> = ({ onUploaded, onBack }) => {
       {busy && (
         <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}>
           <h2 style={{ marginBottom: '.75rem' }}>
-            {state.phase === 'creating' ? 'Preparazione…' : 'Caricamento video…'}
+            {state.phase === 'creating'
+              ? 'Preparazione…'
+              : state.phase === 'checking'
+                ? 'Verifica del video…'
+                : 'Caricamento video…'}
           </h2>
           <div className="progress-track">
             <div className="progress-fill" style={{ width: `${state.progress * 100}%` }} />
           </div>
           <p className="muted-note" style={{ marginTop: '.5rem' }}>
-            {Math.round(state.progress * 100)}% — non chiudere questa pagina
+            {state.phase === 'checking'
+              ? 'Lettura del video sul server, qualche secondo…'
+              : `${Math.round(state.progress * 100)}% — non chiudere questa pagina`}
           </p>
+          {state.retrying !== null && (
+            <p className="callout callout-warn" style={{ marginTop: '.75rem' }}>
+              Connessione instabile: nuovo tentativo ({state.retrying}) tra pochi secondi…
+            </p>
+          )}
         </div>
       )}
     </div>

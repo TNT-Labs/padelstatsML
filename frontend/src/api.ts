@@ -1,4 +1,22 @@
-const BASE = import.meta.env.VITE_API_URL ?? ''
+/**
+ * Where the API is. Empty VITE_API_URL (the normal case) means "the server
+ * this page came from", under whatever path it is mounted at: '' on a Pi
+ * reached directly, '/padel' behind shopbeautylab.it. The page is built with
+ * relative asset URLs, so the same build works in both places.
+ */
+export const BASE = (import.meta.env.VITE_API_URL || appPath()).replace(/\/$/, '')
+
+function appPath(): string {
+  try {
+    return new URL('.', document.baseURI).pathname
+  } catch {
+    return ''
+  }
+}
+
+/** Every request that changes data carries it: the server refuses writes
+ *  without it, which is what stops another site from forging them. */
+const CSRF_HEADER = { 'X-Padel': '1' }
 
 export type MatchStatus =
   | 'uploading'
@@ -22,6 +40,8 @@ export interface Match {
   height: number | null
   player_names: string[] | null
   calibrated: boolean
+  /** Only for administrators, who see everyone's matches. */
+  owner?: string | null
   created_at: string
   updated_at: string
 }
@@ -29,6 +49,47 @@ export interface Match {
 export interface UploadInit {
   match_id: string
   upload_url: string
+  chunk_size_bytes: number
+}
+
+export interface UploadStatus {
+  received_bytes: number
+  chunk_size_bytes: number
+}
+
+export type Role = 'admin' | 'utente'
+
+export interface Me {
+  id: string
+  username: string
+  role: Role
+  must_change_password: boolean
+}
+
+export interface UserRow {
+  id: string
+  username: string
+  role: Role
+  active: boolean
+  must_change_password: boolean
+  locked: boolean
+  last_login_at: string | null
+  created_at: string
+  matches: number
+  sessions: number
+}
+
+export interface TemporaryPassword {
+  user: UserRow
+  temporary_password: string
+}
+
+export interface AuditRow {
+  at: string
+  username: string | null
+  event: string
+  detail: string | null
+  ip: string | null
 }
 
 export type Point = [number, number]
@@ -167,12 +228,30 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+/** Called when the server no longer recognises the session (401) or wants a
+ *  new password first (403 on a data route): the app goes back to sign-in. */
+let onSessionLost: (() => void) | null = null
+export function setSessionLostHandler(handler: (() => void) | null) {
+  onSessionLost = handler
+}
+
+async function req<T>(path: string, init?: RequestInit & { quiet?: boolean }): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...init?.headers } : init?.headers,
+    credentials: 'include',
+    headers: {
+      ...CSRF_HEADER,
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
   })
-  if (!res.ok) throw new ApiError(res.status, await readError(res))
+  if (!res.ok) {
+    const message = await readError(res)
+    if (!init?.quiet && (res.status === 401 || (res.status === 403 && /password/i.test(message)))) {
+      onSessionLost?.()
+    }
+    throw new ApiError(res.status, message)
+  }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
 }
@@ -230,46 +309,154 @@ export const api = {
   listPresets: () => req<CameraPreset[]>('/api/presets'),
   deletePreset: (id: string) => req<void>(`/api/presets/${id}`, { method: 'DELETE' }),
 
-  /** XHR rather than fetch: only XHR reports upload progress, and these
-   *  files are hundreds of megabytes over Wi-Fi. */
-  uploadVideo(uploadUrl: string, file: File, onProgress?: (fraction: number) => void) {
-    return new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('PUT', uploadUrl)
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream')
-      if (onProgress) {
-        xhr.upload.onprogress = e => {
-          if (e.lengthComputable) onProgress(e.loaded / e.total)
-        }
-      }
-      xhr.onload = () => {
-        if (xhr.status < 300) return resolve()
-        let message = `Upload fallito (${xhr.status})`
-        try {
-          const detail = JSON.parse(xhr.responseText)?.detail
-          if (typeof detail === 'string') message = detail
-        } catch {
-          /* keep the generic message */
-        }
-        reject(new ApiError(xhr.status, message))
-      }
-      xhr.onerror = () => reject(new ApiError(0, 'Errore di rete durante il caricamento'))
-      xhr.send(file)
-    })
-  },
+  getUploadStatus: (id: string) => req<UploadStatus>(`/api/matches/${id}/upload`),
+  completeUpload: (id: string, totalBytes: number) =>
+    req<Match>(`/api/matches/${id}/upload/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ total_bytes: totalBytes }),
+    }),
+
+  // ── Account ──
+  me: () => req<Me>('/api/auth/me', { quiet: true }),
+  login: (username: string, password: string) =>
+    req<Me>('/api/auth/login', {
+      method: 'POST',
+      quiet: true,
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => req<void>('/api/auth/logout', { method: 'POST', quiet: true }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<Me>('/api/auth/password', {
+      method: 'POST',
+      quiet: true,
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
+  // ── Administration ──
+  listUsers: () => req<UserRow[]>('/api/admin/users'),
+  createUser: (username: string, role: Role) =>
+    req<TemporaryPassword>('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, role }),
+    }),
+  updateUser: (id: string, patch: { role?: Role; active?: boolean }) =>
+    req<UserRow>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  resetPassword: (id: string) =>
+    req<TemporaryPassword>(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+  unlockUser: (id: string) => req<UserRow>(`/api/admin/users/${id}/unlock`, { method: 'POST' }),
+  logoutUser: (id: string) => req<UserRow>(`/api/admin/users/${id}/logout`, { method: 'POST' }),
+  deleteUser: (id: string) => req<void>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+  audit: (limit = 200) => req<AuditRow[]>(`/api/admin/audit?limit=${limit}`),
 }
 
-/** Upload URLs are absolute (built from API_BASE_URL on the Pi). When the UI
- *  is served by the same host we prefer the relative path, so the app keeps
- *  working over whatever hostname or IP the browser actually used. */
-export function localiseUploadUrl(url: string, matchId: string): string {
-  try {
-    const parsed = new URL(url, window.location.origin)
-    if (parsed.origin !== window.location.origin) {
-      return `${BASE}/api/matches/${matchId}/video`
+/** HTTP statuses worth retrying a piece on: the network, the tunnel or the
+ *  Pi hiccuped, the piece itself is fine. */
+const RETRYABLE = new Set([0, 408, 429, 500, 502, 503, 504, 520, 522, 523, 524])
+const MAX_TRIES = 6
+
+/** PUT one piece with XHR: only XHR reports upload progress. */
+function putPiece(
+  url: string,
+  piece: Blob,
+  onProgress: (loaded: number) => void,
+  signal?: AbortSignal,
+): Promise<UploadStatus> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.setRequestHeader('X-Padel', '1')
+    xhr.upload.onprogress = e => onProgress(e.loaded)
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          return resolve(JSON.parse(xhr.responseText) as UploadStatus)
+        } catch {
+          return reject(new ApiError(0, 'Risposta non valida dal server'))
+        }
+      }
+      let message = `Upload fallito (${xhr.status})`
+      try {
+        const detail = JSON.parse(xhr.responseText)?.detail
+        if (typeof detail === 'string') message = detail
+      } catch {
+        /* keep the generic message */
+      }
+      if (xhr.status === 401) onSessionLost?.()
+      reject(new ApiError(xhr.status, message))
     }
-    return parsed.pathname
-  } catch {
-    return `${BASE}/api/matches/${matchId}/video`
+    xhr.onerror = () => reject(new ApiError(0, 'Errore di rete durante il caricamento'))
+    xhr.ontimeout = xhr.onerror
+    const abort = () => xhr.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.onabort = () => reject(new DOMException('Caricamento annullato', 'AbortError'))
+    xhr.onloadend = () => signal?.removeEventListener('abort', abort)
+    xhr.send(piece)
+  })
+}
+
+/** First wait before trying a piece again; doubles at each attempt. */
+export const uploadTuning = { retryBaseMs: 1000 }
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+export interface UploadProgress {
+  /** 0..1 of the whole file. */
+  fraction: number
+  /** Set while waiting to try a piece again after a network problem. */
+  retrying: number | null
+}
+
+/**
+ * Send the video in pieces (Cloudflare refuses any request over 100 MB, and a
+ * dropped connection then costs one piece, not the whole upload). Starts from
+ * whatever the server already has, so it also resumes an interrupted upload.
+ */
+export async function uploadInPieces(
+  matchId: string,
+  file: File,
+  onProgress: (p: UploadProgress) => void,
+  { signal, fromZero = false }: { signal?: AbortSignal; fromZero?: boolean } = {},
+): Promise<Match> {
+  const status = await api.getUploadStatus(matchId)
+  const pieceSize = Math.max(1, status.chunk_size_bytes)
+  // offset=0 makes the server discard whatever it holds and start over.
+  let offset = !fromZero && status.received_bytes <= file.size ? status.received_bytes : 0
+  let tries = 0
+
+  while (offset < file.size) {
+    const end = Math.min(offset + pieceSize, file.size)
+    const url = `${BASE}/api/matches/${matchId}/upload?offset=${offset}`
+    const from = offset
+    try {
+      const result = await putPiece(
+        url,
+        file.slice(from, end),
+        loaded => onProgress({ fraction: (from + loaded) / file.size, retrying: null }),
+        signal,
+      )
+      offset = result.received_bytes
+      tries = 0
+      onProgress({ fraction: offset / file.size, retrying: null })
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e
+      const err = e as ApiError
+      // 409: the server has a different amount than we thought (the answer
+      // to a piece was lost): carry on from what it actually has.
+      if (err.status !== 409 && !RETRYABLE.has(err.status)) throw err
+      if (err.status !== 409 && ++tries >= MAX_TRIES) throw err
+      if (err.status !== 409) {
+        onProgress({ fraction: offset / file.size, retrying: tries })
+        await wait(Math.min(30_000, uploadTuning.retryBaseMs * 2 ** (tries - 1)))
+      }
+      const fresh = await api.getUploadStatus(matchId)
+      const next = fresh.received_bytes <= file.size ? fresh.received_bytes : 0
+      // A conflict that does not move the position is not about the
+      // position (e.g. the match no longer accepts an upload): give up.
+      if (err.status === 409 && next === offset) throw err
+      offset = next
+    }
   }
+  return api.completeUpload(matchId, file.size)
 }
