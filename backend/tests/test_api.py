@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,13 +27,14 @@ def _make_video(path: Path) -> Path:
 
 @pytest_asyncio.fixture
 async def client():
-    from app.core.database import init_schema
-    from app.main import app
+    """Signed in as an ordinary user: every match below belongs to them."""
+    from conftest import signed_in
 
-    init_schema()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+    c = await signed_in("giocatore")
+    try:
         yield c
+    finally:
+        await c.aclose()
 
 
 @pytest_asyncio.fixture

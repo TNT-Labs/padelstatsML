@@ -1,5 +1,5 @@
 import { useEffect, useState, type FC } from 'react'
-import { api, type Match, type MatchStatus } from '../api'
+import { api, type Match, type MatchStatus, type Me } from '../api'
 
 const STATUS_LABEL: Record<MatchStatus, string> = {
   uploading: 'Caricamento incompleto',
@@ -13,6 +13,7 @@ const STATUS_LABEL: Record<MatchStatus, string> = {
 
 /** What tapping the row should do, per state. */
 const ACTION_LABEL: Partial<Record<MatchStatus, string>> = {
+  uploading: 'Riprendi',
   needs_calibration: 'Calibra',
   ready: 'Avvia analisi',
   queued: 'Vedi stato',
@@ -22,11 +23,12 @@ const ACTION_LABEL: Partial<Record<MatchStatus, string>> = {
 }
 
 interface Props {
+  me: Me
   onNew: () => void
   onOpen: (match: Match) => void
 }
 
-export const HomeView: FC<Props> = ({ onNew, onOpen }) => {
+export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
   const [matches, setMatches] = useState<Match[]>([])
   const [loading, setLoading] = useState(true)
   const [editMode, setEditMode] = useState(false)
@@ -89,6 +91,10 @@ export const HomeView: FC<Props> = ({ onNew, onOpen }) => {
   }
 
   const allSelected = matches.length > 0 && selected.size === matches.length
+  // An administrator sees everyone's matches: "delete all" must never reach
+  // someone else's by accident. Theirs can still be ticked one by one.
+  const own = matches.filter(m => !m.owner || m.owner === me.username)
+  const othersListed = own.length < matches.length
 
   return (
     <div className="layout">
@@ -139,13 +145,15 @@ export const HomeView: FC<Props> = ({ onNew, onOpen }) => {
               </button>
               <button
                 className={`btn btn-sm ${confirmAll ? 'btn-danger' : 'btn-danger-ghost'}`}
-                disabled={busy}
+                disabled={busy || own.length === 0}
                 onBlur={() => setConfirmAll(false)}
                 onClick={() =>
-                  confirmAll ? remove(matches.map(m => m.id)) : setConfirmAll(true)
+                  confirmAll ? remove(own.map(m => m.id)) : setConfirmAll(true)
                 }
               >
-                {confirmAll ? 'Conferma: elimina tutto' : 'Elimina tutto'}
+                {othersListed
+                  ? confirmAll ? 'Conferma: elimina le mie' : 'Elimina tutte le mie'
+                  : confirmAll ? 'Conferma: elimina tutto' : 'Elimina tutto'}
               </button>
             </div>
           )}
@@ -187,6 +195,11 @@ export const HomeView: FC<Props> = ({ onNew, onOpen }) => {
                 {match.duration_seconds
                   ? ` · ${Math.round(match.duration_seconds / 60)} min di video`
                   : ''}
+                {me.role === 'admin' && match.owner && match.owner !== me.username && (
+                  <span className="owner-tag" title="Utente che ha caricato la partita">
+                    {match.owner}
+                  </span>
+                )}
               </div>
               {match.status === 'analyzing' && match.progress_message && (
                 <div className="muted-note">{match.progress_message}</div>

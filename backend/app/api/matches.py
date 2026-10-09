@@ -1,7 +1,10 @@
 """Match lifecycle endpoints.
 
     POST   /api/matches                          create, get an upload URL
-    PUT    /api/matches/{id}/video               stream the video to the SSD
+    GET    /api/matches/{id}/upload              bytes received so far (resume)
+    PUT    /api/matches/{id}/upload?offset=N     one piece of the video
+    POST   /api/matches/{id}/upload/complete     all pieces arrived: check the video
+    PUT    /api/matches/{id}/video               whole video in one request (LAN)
     GET    /api/matches/{id}/keyframe            frame used for calibration
     GET    /api/matches/{id}/calibration/suggestion
     POST   /api/matches/{id}/calibration         validate and store the corners
@@ -15,6 +18,10 @@ The calibration step is mandatory and is the main structural change: an
 analysis cannot be queued before a human has confirmed where the court is.
 Every metric this system returns is in metres, and an unvalidated homography
 produces confident, wrong numbers.
+
+Every route works on the caller's own matches; an administrator reaches all
+of them. Someone else's match answers 404, exactly like a missing one, so ids
+cannot be probed.
 """
 from __future__ import annotations
 
@@ -26,9 +33,12 @@ import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
+from starlette.requests import ClientDisconnect
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.api.ranges import file_range_response
@@ -50,7 +60,7 @@ from app.ml.court import (
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
 from app.ml.video import VideoError, extract_keyframe, probe
-from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus
+from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
 from app.schemas.match import (
     CalibrationResult,
     CalibrationSubmit,
@@ -60,6 +70,7 @@ from app.schemas.match import (
     MatchStatsRead,
     MatchUpdate,
     UploadInitResponse,
+    UploadStatus,
 )
 
 logger = logging.getLogger("padel.api")
@@ -74,13 +85,25 @@ _UPLOAD_CHUNK_GUARD_BYTES = 8 * 1024 * 1024   # keep this much headroom free
 # peak): one at a time, which also keeps two viewers from building the same
 # cache file at once.
 _BOXES_LOCK = asyncio.Lock()
+# One writer per match file: two tabs resuming the same upload must not
+# interleave their pieces.
+_UPLOAD_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _upload_lock(match_id: str) -> asyncio.Lock:
+    if len(_UPLOAD_LOCKS) > 256:
+        for key in [k for k, lock in _UPLOAD_LOCKS.items() if not lock.locked()]:
+            del _UPLOAD_LOCKS[key]
+    return _UPLOAD_LOCKS.setdefault(match_id, asyncio.Lock())
 
 
 # ── Creation and upload ──────────────────────────────────────────────────────
 
 @router.post("", response_model=UploadInitResponse, status_code=status.HTTP_201_CREATED)
 async def create_match(
-    payload: MatchCreate, db: AsyncSession = Depends(get_db)
+    payload: MatchCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> UploadInitResponse:
     settings = get_settings()
     max_bytes = settings.max_video_size_mb * 1024 * 1024
@@ -99,6 +122,7 @@ async def create_match(
 
     match = Match(
         title=payload.title,
+        owner_id=user.id,
         player_names=payload.player_names,
         status=MatchStatus.UPLOADING,
         video_filename="",
@@ -109,62 +133,205 @@ async def create_match(
     match.video_filename = f"{match.id}.mp4"
     await db.flush()
 
-    return UploadInitResponse(match_id=match.id, upload_url=upload_url(match.id))
+    return UploadInitResponse(
+        match_id=match.id,
+        upload_url=upload_url(match.id),
+        chunk_size_bytes=settings.upload_chunk_mb * 1024 * 1024,
+    )
 
 
-@router.put("/{match_id}/video", response_model=MatchRead)
-async def upload_video(
-    match_id: str, request: Request, db: AsyncSession = Depends(get_db)
-) -> MatchRead:
-    """Stream the video to disk, then probe it and extract the keyframe.
-
-    Probing here — rather than in the worker — means the API can reject an
-    unreadable file while the user is still looking at the upload screen, and
-    guarantees that a match reaching the queue has a real video behind it.
-    """
-    match = await _get_match(db, match_id)
+def _check_uploadable(match: Match) -> None:
     if match.status not in (MatchStatus.UPLOADING, MatchStatus.FAILED):
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Upload non consentito nello stato '{match.status.value}'."
         )
 
+
+def _part_path(match_id: str):
+    return video_path(match_id).with_suffix(".part")
+
+
+def _part_size(match_id: str) -> int:
+    try:
+        return _part_path(match_id).stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+@router.get("/{match_id}/upload", response_model=UploadStatus)
+async def upload_status(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> UploadStatus:
+    """How much of the video has arrived: where a broken upload resumes."""
+    match = await _get_match(db, match_id, user)
+    uploadable = match.status in (MatchStatus.UPLOADING, MatchStatus.FAILED)
+    return UploadStatus(
+        received_bytes=_part_size(match_id) if uploadable else 0,
+        chunk_size_bytes=get_settings().upload_chunk_mb * 1024 * 1024,
+    )
+
+
+@router.put("/{match_id}/upload", response_model=UploadStatus)
+async def upload_chunk(
+    match_id: str, request: Request, offset: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+) -> UploadStatus:
+    """Append one piece at `offset`, which must be exactly the bytes received
+    so far: a piece sent twice (the answer to the first try was lost) or out
+    of order is refused with the real position, and the client carries on
+    from there. offset=0 starts the file over."""
+    match = await _get_match(db, match_id, user)
+    _check_uploadable(match)
+
+    settings = get_settings()
+    chunk_limit = settings.upload_chunk_mb * 1024 * 1024
+    max_bytes = settings.max_video_size_mb * 1024 * 1024
+    part = _part_path(match_id)
+    part.parent.mkdir(parents=True, exist_ok=True)
+
+    async with _upload_lock(match_id):
+        received = _part_size(match_id)
+        if offset != 0 and offset != received:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Posizione non valida: ricevuti {received} byte, non {offset}.",
+                headers={"X-Received-Bytes": str(received)},
+            )
+        written = 0
+        try:
+            with open(part, "wb" if offset == 0 else "ab") as handle:
+                async for data in request.stream():
+                    written += len(data)
+                    if written > chunk_limit:
+                        raise HTTPException(
+                            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            f"Blocco oltre il limite di {settings.upload_chunk_mb} MB.",
+                        )
+                    if offset + written > max_bytes:
+                        raise HTTPException(
+                            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            f"Video oltre il limite di {settings.max_video_size_mb} MB.",
+                        )
+                    handle.write(data)
+        except (HTTPException, OSError, ClientDisconnect) as exc:
+            # A half-written piece would shift every later one: cut back to
+            # the last complete piece.
+            _truncate(part, offset)
+            if isinstance(exc, HTTPException):
+                raise
+            if isinstance(exc, ClientDisconnect):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Blocco interrotto.") from exc
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scrittura su disco fallita: {exc}"
+            ) from exc
+        if written == 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nessun dato ricevuto.")
+
+    return UploadStatus(received_bytes=offset + written, chunk_size_bytes=chunk_limit)
+
+
+class UploadComplete(BaseModel):
+    total_bytes: int = Field(gt=0)
+
+
+@router.post("/{match_id}/upload/complete", response_model=MatchRead)
+async def upload_complete(
+    match_id: str, payload: UploadComplete,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+) -> MatchRead:
+    match = await _get_match(db, match_id, user)
+    _check_uploadable(match)
+    async with _upload_lock(match_id):
+        received = _part_size(match_id)
+        if received != payload.total_bytes:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Video incompleto: ricevuti {received} byte su {payload.total_bytes}.",
+                headers={"X-Received-Bytes": str(received)},
+            )
+        target = video_path(match_id)
+        _part_path(match_id).replace(target)
+    await _finalise_upload(match, target, received)
+    await db.flush()
+    return await _read(db, match, user)
+
+
+def _truncate(path, size: int) -> None:
+    try:
+        with open(path, "r+b") as handle:
+            handle.truncate(size)
+    except OSError:
+        path.unlink(missing_ok=True)
+
+
+@router.put("/{match_id}/video", response_model=MatchRead)
+async def upload_video(
+    match_id: str, request: Request,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+) -> MatchRead:
+    """Stream the whole video in one request, then probe it and extract the
+    keyframe. Fine on a LAN; behind Cloudflare a request cannot exceed
+    100 MB, so the web app sends pieces to /upload instead.
+
+    Probing here — rather than in the worker — means the API can reject an
+    unreadable file while the user is still looking at the upload screen, and
+    guarantees that a match reaching the queue has a real video behind it.
+    """
+    match = await _get_match(db, match_id, user)
+    _check_uploadable(match)
+
     settings = get_settings()
     max_bytes = settings.max_video_size_mb * 1024 * 1024
     target = video_path(match_id)
-    tmp = target.with_suffix(".part")
+    tmp = _part_path(match_id)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     written = 0
-    try:
-        with open(tmp, "wb") as handle:
-            async for chunk in request.stream():
-                written += len(chunk)
-                if written > max_bytes:
-                    raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        f"Video oltre il limite di {settings.max_video_size_mb} MB.",
-                    )
-                handle.write(chunk)
-        if written == 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nessun dato ricevuto.")
-        tmp.replace(target)
-    except HTTPException:
-        tmp.unlink(missing_ok=True)
-        raise
-    except OSError as exc:
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scrittura su disco fallita: {exc}"
-        ) from exc
+    async with _upload_lock(match_id):
+        try:
+            with open(tmp, "wb") as handle:
+                async for chunk in request.stream():
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise HTTPException(
+                            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            f"Video oltre il limite di {settings.max_video_size_mb} MB.",
+                        )
+                    handle.write(chunk)
+            if written == 0:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nessun dato ricevuto.")
+            tmp.replace(target)
+        except HTTPException:
+            tmp.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scrittura su disco fallita: {exc}"
+            ) from exc
+
+    await _finalise_upload(match, target, written)
+    await db.flush()
+    return await _read(db, match, user)
+
+
+async def _finalise_upload(match: Match, target, size: int) -> None:
+    """Probe the video and extract the keyframe; an unreadable file is
+    deleted and refused while the user is still on the upload screen."""
+    def inspect():
+        info = probe(target)
+        extract_keyframe(target, keyframe_path(match.id), at_second=5.0)
+        return info
 
     try:
-        info = probe(target)
-        extract_keyframe(target, keyframe_path(match_id), at_second=5.0)
+        # Decoding takes a moment on a long video: off the event loop, so
+        # other requests are not stuck behind it.
+        info = await run_in_threadpool(inspect)
     except VideoError as exc:
         target.unlink(missing_ok=True)
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
 
-    match.video_size_bytes = written
+    match.video_size_bytes = size
     match.fps = info.fps
     match.width = info.width
     match.height = info.height
@@ -173,13 +340,13 @@ async def upload_video(
     match.progress = 0
     match.progress_message = "In attesa di calibrazione del campo"
     match.error_message = None
-    await db.flush()
-    return MatchRead.from_match(match)
 
 
 @router.get("/{match_id}/keyframe")
-async def get_keyframe(match_id: str, db: AsyncSession = Depends(get_db)) -> FileResponse:
-    await _get_match(db, match_id)
+async def get_keyframe(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> FileResponse:
+    await _get_match(db, match_id, user)
     path = keyframe_path(match_id)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Keyframe non disponibile.")
@@ -190,10 +357,10 @@ async def get_keyframe(match_id: str, db: AsyncSession = Depends(get_db)) -> Fil
 
 @router.get("/{match_id}/calibration/suggestion", response_model=CalibrationSuggestion)
 async def calibration_suggestion(
-    match_id: str, db: AsyncSession = Depends(get_db)
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
 ) -> CalibrationSuggestion:
     """Pre-fill the four handles. A suggestion, never a calibration."""
-    match = await _get_match(db, match_id)
+    match = await _get_match(db, match_id, user)
     path = keyframe_path(match_id)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Keyframe non disponibile.")
@@ -224,9 +391,10 @@ async def calibration_suggestion(
 
 @router.post("/{match_id}/calibration", response_model=CalibrationResult)
 async def submit_calibration(
-    match_id: str, payload: CalibrationSubmit, db: AsyncSession = Depends(get_db)
+    match_id: str, payload: CalibrationSubmit,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> CalibrationResult:
-    match = await _get_match(db, match_id)
+    match = await _get_match(db, match_id, user)
     if match.status in (MatchStatus.QUEUED, MatchStatus.ANALYZING):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Analisi in corso: impossibile ricalibrare ora."
@@ -237,7 +405,7 @@ async def submit_calibration(
         )
 
     frame_size = (match.width, match.height)
-    corners, net_px, source, preset_id, note = await _resolve_corners(db, payload, frame_size)
+    corners, net_px, source, preset_id, note = await _resolve_corners(db, payload, frame_size, user)
 
     try:
         calibration = build_calibration(
@@ -261,7 +429,7 @@ async def submit_calibration(
     saved_preset_id = preset_id
     if payload.save_as_preset:
         saved_preset_id = await _save_preset(
-            db, payload.save_as_preset, calibration.corners_px.tolist(), frame_size, net_px
+            db, user, payload.save_as_preset, calibration.corners_px.tolist(), frame_size, net_px
         )
 
     await db.flush()
@@ -278,13 +446,14 @@ async def _resolve_corners(
     db: AsyncSession,
     payload: CalibrationSubmit,
     frame_size: tuple[int, int],
+    user: User,
 ):
     """Corners come either from a saved preset (rescaled) or from the UI."""
     from app.ml.court import CalibrationSource
 
     if payload.preset_id:
         preset = await db.get(CameraPreset, payload.preset_id)
-        if preset is None:
+        if preset is None or preset.owner_id != user.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Preset camera non trovato.")
 
         corners, note = _rescale_preset(preset, frame_size)
@@ -320,12 +489,15 @@ def _rescale_points(points, preset: CameraPreset, frame_size: tuple[int, int]):
 
 async def _save_preset(
     db: AsyncSession,
+    user: User,
     name: str,
     corners: list,
     frame_size: tuple[int, int],
     net_px,
 ) -> str:
-    existing = await db.scalar(select(CameraPreset).where(CameraPreset.name == name))
+    existing = await db.scalar(
+        select(CameraPreset).where(CameraPreset.owner_id == user.id, CameraPreset.name == name)
+    )
     if existing is not None:
         existing.corners_px = corners
         existing.frame_width, existing.frame_height = frame_size
@@ -333,6 +505,7 @@ async def _save_preset(
         return existing.id
 
     preset = CameraPreset(
+        owner_id=user.id,
         name=name,
         corners_px=corners,
         frame_width=frame_size[0],
@@ -347,8 +520,10 @@ async def _save_preset(
 # ── Analysis ─────────────────────────────────────────────────────────────────
 
 @router.post("/{match_id}/start", response_model=MatchRead)
-async def start_analysis(match_id: str, db: AsyncSession = Depends(get_db)) -> MatchRead:
-    match = await _get_match(db, match_id)
+async def start_analysis(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> MatchRead:
+    match = await _get_match(db, match_id, user)
 
     if not match.calibration:
         raise HTTPException(
@@ -378,45 +553,59 @@ async def start_analysis(match_id: str, db: AsyncSession = Depends(get_db)) -> M
     # the app asks for them again when the analysis completes.
     match.player_names = None
     await db.flush()
-    return MatchRead.from_match(match)
+    return await _read(db, match, user)
 
 
 # ── Reads ────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[MatchRead])
-async def list_matches(db: AsyncSession = Depends(get_db), limit: int = 100) -> list[MatchRead]:
-    result = await db.execute(
-        select(Match).order_by(Match.created_at.desc()).limit(min(limit, 500))
+async def list_matches(
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user), limit: int = 100
+) -> list[MatchRead]:
+    query = select(Match).order_by(Match.created_at.desc()).limit(max(1, min(limit, 500)))
+    if not user.is_admin:
+        return [
+            MatchRead.from_match(m)
+            for m in (await db.scalars(query.where(Match.owner_id == user.id))).all()
+        ]
+    # Administrators see everyone's matches, each labelled with its owner.
+    rows = await db.execute(
+        query.add_columns(User.username).outerjoin(User, User.id == Match.owner_id)
     )
-    return [MatchRead.from_match(m) for m in result.scalars().all()]
+    return [MatchRead.from_match(m, owner=name) for m, name in rows.all()]
 
 
 @router.get("/{match_id}", response_model=MatchRead)
-async def get_match(match_id: str, db: AsyncSession = Depends(get_db)) -> MatchRead:
-    return MatchRead.from_match(await _get_match(db, match_id))
+async def get_match(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> MatchRead:
+    return await _read(db, await _get_match(db, match_id, user), user)
 
 
 @router.patch("/{match_id}", response_model=MatchRead)
 async def update_match(
-    match_id: str, payload: MatchUpdate, db: AsyncSession = Depends(get_db)
+    match_id: str, payload: MatchUpdate,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> MatchRead:
     """Rename a match or assign player names.
 
     Player names used to live only in browser state, so they were lost on
     reload and never reached a second device.
     """
-    match = await _get_match(db, match_id)
+    match = await _get_match(db, match_id, user)
     if payload.title is not None:
         match.title = payload.title
     if payload.player_names is not None:
         match.player_names = [n.strip() for n in payload.player_names]
     await db.flush()
-    return MatchRead.from_match(match)
+    return await _read(db, match, user)
 
 
 @router.get("/{match_id}/stats", response_model=MatchStatsRead)
-async def get_stats(match_id: str, db: AsyncSession = Depends(get_db)) -> MatchStatsRead:
-    match = await _get_match(db, match_id)
+async def get_stats(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> MatchStatsRead:
+    match = await _get_match(db, match_id, user)
     stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
     if stats is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Statistiche non ancora disponibili.")
@@ -443,9 +632,10 @@ async def get_stats(match_id: str, db: AsyncSession = Depends(get_db)) -> MatchS
 
 @router.get("/{match_id}/crops/{player_id}")
 async def get_crop(
-    match_id: str, player_id: int, db: AsyncSession = Depends(get_db)
+    match_id: str, player_id: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> FileResponse:
-    await _get_match(db, match_id)
+    await _get_match(db, match_id, user)
     path = crop_path(match_id, player_id)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Anteprima non disponibile.")
@@ -453,9 +643,12 @@ async def get_crop(
 
 
 @router.get("/{match_id}/video")
-async def get_video(match_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_video(
+    match_id: str, request: Request,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+):
     """The uploaded video, in byte ranges so the browser can seek in it."""
-    await _get_match(db, match_id)
+    await _get_match(db, match_id, user)
     path = video_path(match_id)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Video non disponibile.")
@@ -465,11 +658,12 @@ async def get_video(match_id: str, request: Request, db: AsyncSession = Depends(
 
 @router.get("/{match_id}/tracks")
 async def get_player_tracks(
-    match_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    match_id: str, request: Request,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> Response:
     """Each player's box through the video, for the web player's overlay:
     see app/ml/player_boxes.py."""
-    await _get_match(db, match_id)
+    await _get_match(db, match_id, user)
     stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
     per_player = stats.per_player if stats is not None else None
     try:
@@ -504,8 +698,10 @@ async def get_player_tracks(
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
 )
-async def delete_match(match_id: str, db: AsyncSession = Depends(get_db)) -> None:
-    match = await _get_match(db, match_id)
+async def delete_match(
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> None:
+    match = await _get_match(db, match_id, user)
     if match.status == MatchStatus.ANALYZING:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -521,8 +717,16 @@ async def delete_match(match_id: str, db: AsyncSession = Depends(get_db)) -> Non
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-async def _get_match(db: AsyncSession, match_id: str) -> Match:
+async def _get_match(db: AsyncSession, match_id: str, user: User) -> Match:
     match = await db.get(Match, match_id)
-    if match is None:
+    if match is None or (match.owner_id != user.id and not user.is_admin):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Partita non trovata.")
     return match
+
+
+async def _read(db: AsyncSession, match: Match, user: User) -> MatchRead:
+    """MatchRead, with the owner's name when an administrator looks at it."""
+    if not user.is_admin:
+        return MatchRead.from_match(match)
+    owner = await db.get(User, match.owner_id) if match.owner_id else None
+    return MatchRead.from_match(match, owner=owner.username if owner else None)

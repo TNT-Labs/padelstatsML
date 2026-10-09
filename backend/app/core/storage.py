@@ -37,10 +37,10 @@ def save_crop(match_id: str, player_id: int, image_bytes: bytes) -> str:
 
 
 def upload_url(match_id: str) -> str:
-    """URL the browser PUTs the video to. The API is in the upload path, which
-    is fine on a LAN: the Pi writes ~50 MB/s to the SSD, far above Wi-Fi."""
-    base = get_settings().api_base_url.rstrip("/")
-    return f"{base}/api/matches/{match_id}/video"
+    """Path the whole video can be PUT to in one request. Relative, like
+    crop_url and for the same reason: it must work from whatever address
+    (LAN IP, padelpi.local, shopbeautylab.it/padel) the browser used."""
+    return f"{get_settings().base_prefix}/api/matches/{match_id}/video"
 
 
 def crop_url(match_id: str, player_id: int) -> str:

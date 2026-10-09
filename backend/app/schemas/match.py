@@ -30,7 +30,15 @@ class MatchUpdate(BaseModel):
 
 class UploadInitResponse(BaseModel):
     match_id: str
+    # Whole-file PUT, kept for scripts and LAN clients.
     upload_url: str
+    # The web app sends pieces of this size to /upload instead.
+    chunk_size_bytes: int
+
+
+class UploadStatus(BaseModel):
+    received_bytes: int
+    chunk_size_bytes: int
 
 
 class MatchRead(BaseModel):
@@ -48,6 +56,8 @@ class MatchRead(BaseModel):
     height: int | None
     player_names: list[str] | None
     calibrated: bool
+    # Only filled in for administrators, who see everyone's matches.
+    owner: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -56,7 +66,7 @@ class MatchRead(BaseModel):
         return _as_utc(value)
 
     @classmethod
-    def from_match(cls, match) -> "MatchRead":
+    def from_match(cls, match, owner: str | None = None) -> "MatchRead":
         return cls(
             id=match.id,
             title=match.title,
@@ -70,6 +80,7 @@ class MatchRead(BaseModel):
             height=match.height,
             player_names=match.player_names,
             calibrated=bool(match.calibration),
+            owner=owner,
             created_at=match.created_at,
             updated_at=match.updated_at,
         )

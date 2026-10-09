@@ -17,6 +17,7 @@ server, broker, object store o reverse proxy.
 3. [Docker](#3-docker)
 4. [SSD e cartella dati](#4-ssd-e-cartella-dati)
 5. [Configurazione](#5-configurazione)
+5b. [Pubblicazione su shopbeautylab.it](#5b-pubblicazione-su-shopbeautylabit)
 6. [Esportare il modello ONNX](#6-esportare-il-modello-onnx)
 7. [Build e avvio (Docker)](#7-build-e-avvio-docker)
 7b. [Installazione senza Docker](#7b-installazione-senza-docker)
@@ -24,6 +25,7 @@ server, broker, object store o reverse proxy.
 9. [Prima analisi](#9-prima-analisi)
 10. [Avvio automatico al boot](#10-avvio-automatico-al-boot)
 11. [Comandi operativi](#11-comandi-operativi)
+11b. [Utenti e accesso](#11b-utenti-e-accesso)
 12. [Verificare che il tracciamento sia corretto](#12-verificare-che-il-tracciamento-sia-corretto)
 13. [Taratura velocità/accuratezza](#13-taratura-velocitàaccuratezza)
 14. [Backup](#14-backup)
@@ -124,16 +126,49 @@ cp .env.example .env
 nano .env
 ```
 
-I due valori da impostare:
+I valori da impostare:
 
 ```ini
 DATA_VOLUME=/mnt/ssd/padelstats
-API_BASE_URL=http://padelpi.local:8000
+PADEL_ADMIN_USERNAME=admin
+PADEL_ADMIN_PASSWORD=UnaPasswordProvvisoria1   # almeno 10 caratteri, lettere e cifre
+SITE_NETWORK=3dworks_interna                  # docker network ls | grep interna
 ```
 
-`API_BASE_URL` deve essere raggiungibile dal telefono o dal PC: se
-`padelpi.local` non si risolve sulla tua rete, usa l'IP
-(`http://192.168.1.42:8000`).
+L'amministratore viene creato al primo avvio, solo se il database non ha
+ancora utenti; al primo accesso l'app chiede di sostituire la password. Dopo
+`PADEL_ADMIN_PASSWORD` si può togliere dal `.env`.
+
+Gli altri valori di accesso (`BASE_PATH=/padel`, `COOKIE_SECURE=true`,
+`TRUST_CLOUDFLARE=true`) sono già quelli giusti per shopbeautylab.it.
+
+---
+
+## 5b. Pubblicazione su shopbeautylab.it
+
+L'app non pubblica nessuna porta: si raggiunge solo da
+**https://shopbeautylab.it/padel/**, attraverso il tunnel Cloudflare dello
+stack di VORTICE (repository `3dworks`), che deve essere avviato per primo
+perché crea la rete Docker a cui l'API si aggancia con il nome `padel`.
+
+Nel pannello **Cloudflare → Zero Trust → Networks → Tunnels**, tunnel di
+VORTICE → **Public Hostnames → Add a public hostname**:
+
+| Campo | Valore |
+|---|---|
+| Subdomain | *(vuoto)* |
+| Domain | `shopbeautylab.it` |
+| Path | `padel` (solo la parola: un Path vuoto cattura tutto il dominio) |
+| Type | `HTTP` |
+| URL | `padel:8000` |
+
+Trascina la regola **sopra** quella generale `shopbeautylab.it → vortice:3000`
+(vince la prima che corrisponde), accanto a quella di `bolli`.
+
+Il video viaggia in pezzi da 32 MB (`UPLOAD_CHUNK_MB`): Cloudflare rifiuta le
+richieste oltre 100 MB, e se la connessione cade si ritenta solo l'ultimo
+pezzo. Un caricamento interrotto si riprende dall'elenco partite
+(**Riprendi**, scegliendo di nuovo lo stesso file).
 
 ---
 
@@ -267,7 +302,14 @@ nulla.
 
 ## 7b. Installazione senza Docker
 
-Alternativa al passo 7, non aggiuntiva: scegli l'una o l'altra. Senza Docker
+Alternativa al passo 7, non aggiuntiva: scegli l'una o l'altra.
+
+> In rete locale, senza tunnel, l'app è in chiaro su http: nel `.env` metti
+> `COOKIE_SECURE=false` (altrimenti il browser scarta il cookie di sessione e
+> l'accesso non riesce), `TRUST_CLOUDFLARE=false` e, se vuoi l'app alla
+> radice, `BASE_PATH=` vuoto.
+
+Senza Docker
 si risparmiano circa 400 MB di immagini e l'avvio è più rapido, ma i due
 servizi vanno installati a mano.
 
@@ -358,8 +400,12 @@ docker compose ps
 # Senza Docker
 sudo systemctl status padelstats-api padelstats-worker
 
-# In entrambi i casi
-curl -s http://localhost:8000/api/health | python3 -m json.tool
+# Docker (nessuna porta pubblicata: si interroga da dentro il container)
+docker compose exec api curl -s http://localhost:8000/padel/api/health | python3 -m json.tool
+# Senza Docker
+make check
+# Da fuori, attraverso il tunnel
+curl -s https://shopbeautylab.it/padel/api/health | python3 -m json.tool
 ```
 
 Atteso:
@@ -392,7 +438,10 @@ sudo journalctl -u padelstats-worker -f                  # senza Docker
 
 ## 9. Prima analisi
 
-Apri `http://padelpi.local:8000` dal browser.
+Apri **https://shopbeautylab.it/padel/** (oppure scegli *Padel Stats* dalla
+pagina iniziale del sito) ed entra con `PADEL_ADMIN_USERNAME` /
+`PADEL_ADMIN_PASSWORD`; scegli la password definitiva. Gli altri utenti si
+creano da **menu utente → Gestione utenti** ([passo 11b](#11b-utenti-e-accesso)).
 
 1. **Nuova partita** → titolo e video → *Carica video*.
 2. **Calibrazione**: trascina le quattro maniglie sugli angoli del campo,
@@ -463,6 +512,51 @@ df -h /mnt/ssd             # spazio disco
 
 Un worker riavviato durante un'analisi rimette il job in coda da solo: il job
 viene recuperato dall'heartbeat scaduto e riprovato al successivo avvio.
+
+---
+
+## 11b. Utenti e accesso
+
+Solo gli utenti creati dall'amministratore possono entrare.
+
+| | Utente | Amministratore |
+|---|:-:|:-:|
+| Caricare, calibrare, analizzare le proprie partite | ✓ | ✓ |
+| Posizioni camera salvate (personali) | ✓ | ✓ |
+| Vedere e gestire le partite di tutti (con il nome di chi le ha caricate) | | ✓ |
+| Gestione utenti e registro accessi | | ✓ |
+
+**Gestione utenti** (menu utente in alto a destra): crea un utente e ottieni
+una password provvisoria da comunicargli (al primo accesso ne sceglie una
+sua); cambia ruolo, disattiva/riattiva, reimposta la password, sblocca,
+chiudi le sessioni, elimina. Eliminare un utente elimina anche le sue
+partite e i relativi video. Non si può togliere l'ultimo amministratore
+attivo né modificare il proprio account da qui.
+
+**Sicurezza**
+- Password con hash scrypt: almeno 10 caratteri, lettere e cifre, senza il
+  nome utente; cambio obbligatorio al primo accesso e dopo ogni reset.
+- Sessioni lato server, revocabili; cookie `HttpOnly`, `Secure`,
+  `SameSite=Strict`, limitato a `/padel`. Scadenza dopo 12 ore di inattività
+  e comunque dopo 7 giorni.
+- Blocco dell'account per 15 minuti dopo 5 password errate; limite di
+  tentativi per indirizzo IP.
+- Protezione CSRF (header dedicato + controllo dell'origine),
+  Content-Security-Policy senza script esterni o inline.
+- Disattivare un utente, cambiarne il ruolo o reimpostarne la password chiude
+  subito le sue sessioni.
+
+**Recupero dell'accesso** (nessun amministratore riesce a entrare):
+
+```bash
+docker compose exec api python scripts/create_admin.py admin   # Docker
+make admin U=admin                                              # senza Docker
+```
+
+stampa una password provvisoria e riattiva `admin` come amministratore.
+
+Le partite caricate prima dell'introduzione degli account vengono assegnate
+al primo amministratore all'avvio.
 
 ---
 
@@ -637,10 +731,22 @@ riduce la frequenza. Verifica anche di non aver messo i dati su microSD.
 Riduci `DETECTOR_IMGSZ` a 416, verifica lo swap del [passo 2](#swap) e che
 nessun altro servizio pesante giri sul Pi.
 
-**La pagina web non si apre dal telefono**
-`API_BASE_URL` deve contenere un hostname o IP raggiungibile dal telefono,
-non `localhost`. Verifica con `curl http://<ip-del-pi>:8000/api/health` da un
-altro dispositivo della rete.
+**https://shopbeautylab.it/padel/ risponde 502 o mostra un'altra app**
+Il container `padel-api` non è sulla rete del tunnel o la regola Cloudflare
+manca/è sotto quella generale. Verifica `docker network inspect
+3dworks_interna` (deve comparire `padel-api`) e l'ordine delle regole del
+[passo 5b](#5b-pubblicazione-su-shopbeautylabit).
+
+**L'accesso non riesce anche con la password giusta**
+Dopo 5 errori l'account resta bloccato 15 minuti: un amministratore può
+sbloccarlo da *Gestione utenti*. In rete locale su http serve
+`COOKIE_SECURE=false` ([passo 7b](#7b-installazione-senza-docker)). Se nessun
+amministratore riesce a entrare, vedi il [passo 11b](#11b-utenti-e-accesso).
+
+**Il caricamento si ferma e riprova**
+Normale su connessioni instabili: ogni pezzo viene ritentato fino a 6 volte.
+Se si interrompe del tutto, dall'elenco partite *Riprendi* e scegli lo
+stesso file: riparte da dove si era fermato.
 
 **Il database è bloccato**
 Solo il worker scrive a lungo; l'API usa un `busy_timeout` di 10 secondi. Se

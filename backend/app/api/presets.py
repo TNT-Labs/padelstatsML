@@ -3,6 +3,8 @@
 This is what makes mandatory manual calibration acceptable day to day. The
 court does not move and neither does a tripod left in the same corner, so the
 30 seconds spent placing four corners is paid once per setup, not per match.
+
+Presets are personal: each user sees and uses only their own cameras.
 """
 from __future__ import annotations
 
@@ -10,9 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import current_user
 from app.core.database import get_db
 from app.ml.court import CalibrationError, CalibrationSource, build_calibration
-from app.models import CameraPreset
+from app.models import CameraPreset, User
 from app.schemas.match import PresetCreate, PresetRead
 
 # Starlette renamed HTTP_422_UNPROCESSABLE_ENTITY; the literal is
@@ -23,16 +26,21 @@ router = APIRouter(prefix="/api/presets", tags=["presets"])
 
 
 @router.get("", response_model=list[PresetRead])
-async def list_presets(db: AsyncSession = Depends(get_db)) -> list[CameraPreset]:
+async def list_presets(
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> list[CameraPreset]:
     result = await db.execute(
-        select(CameraPreset).order_by(CameraPreset.times_used.desc(), CameraPreset.name)
+        select(CameraPreset)
+        .where(CameraPreset.owner_id == user.id)
+        .order_by(CameraPreset.times_used.desc(), CameraPreset.name)
     )
     return list(result.scalars().all())
 
 
 @router.post("", response_model=PresetRead, status_code=status.HTTP_201_CREATED)
 async def create_preset(
-    payload: PresetCreate, db: AsyncSession = Depends(get_db)
+    payload: PresetCreate,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> CameraPreset:
     # Validate before storing: a preset that cannot produce a homography would
     # otherwise fail later, on a different match, with a confusing message.
@@ -46,13 +54,18 @@ async def create_preset(
     except CalibrationError as exc:
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
 
-    existing = await db.scalar(select(CameraPreset).where(CameraPreset.name == payload.name))
+    existing = await db.scalar(
+        select(CameraPreset).where(
+            CameraPreset.owner_id == user.id, CameraPreset.name == payload.name
+        )
+    )
     if existing is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Esiste già un preset chiamato '{payload.name}'."
         )
 
     preset = CameraPreset(
+        owner_id=user.id,
         name=payload.name,
         corners_px=[list(p) for p in payload.corners_px],
         frame_width=payload.frame_width,
@@ -75,8 +88,10 @@ async def create_preset(
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
 )
-async def delete_preset(preset_id: str, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_preset(
+    preset_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+) -> None:
     preset = await db.get(CameraPreset, preset_id)
-    if preset is None:
+    if preset is None or preset.owner_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Preset non trovato.")
     await db.delete(preset)

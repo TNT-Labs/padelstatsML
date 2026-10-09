@@ -2,7 +2,7 @@
 
 Design constraints (decided 2026-09, Pi-5-only target):
   * No GPU, no external inference host, no NPU accelerator.
-  * One user, one concurrent analysis job.
+  * A few users with their own login, one concurrent analysis job.
   * Everything on local disk: SQLite + filesystem. No Postgres/Redis/MinIO/S3.
   * Inference runs on onnxruntime (CPU). torch/ultralytics are NOT installed
     on the Pi — they are only needed once, off-device, to export the ONNX model.
@@ -47,10 +47,35 @@ class Settings(BaseSettings):
     # External base URL, used to build upload/crop URLs handed to the browser.
     api_base_url: str = "http://padelpi.local:8000"
 
+    # Path prefix the whole app is served under, e.g. "/padel" when it shares
+    # a domain with other applications behind one Cloudflare tunnel. Empty
+    # (the default) serves it at the root, as a standalone install does.
+    base_path: str = ""
+
+    # ── Accesso ──────────────────────────────────────────────────────────────
+    # Sessions are server-side rows; the cookie only carries a random token.
+    session_idle_hours: int = 12
+    session_max_days: int = 7
+    # Must be true behind HTTPS (the tunnel): the browser then sends the
+    # cookie only over TLS. False for a plain-HTTP LAN install.
+    cookie_secure: bool = False
+    max_login_attempts: int = 5
+    lock_minutes: int = 15
+    # Read the visitor's address from CF-Connecting-IP. Only safe when nothing
+    # but cloudflared can reach the API (no published port), as in compose.
+    trust_cloudflare: bool = False
+    # First administrator, created at start-up only when no user exists yet.
+    padel_admin_username: str = ""
+    padel_admin_password: str = ""
+
     # ── Storage ──────────────────────────────────────────────────────────────
     # Mount the SSD here. Everything (DB, videos, crops) lives under this root.
     data_dir: str = "/data"
     max_video_size_mb: int = 4096
+    # Videos travel in pieces of this size: Cloudflare refuses any single
+    # request above 100 MB, and a dropped connection costs one piece, not the
+    # whole upload.
+    upload_chunk_mb: int = 32
 
     # ── Detector ─────────────────────────────────────────────────────────────
     # Path to the exported YOLOv8 ONNX model (see scripts/export_yolo_onnx.py).
@@ -109,6 +134,14 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """Origins as a list. Empty means: do not enable CORS at all."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def base_prefix(self) -> str:
+        """base_path normalised: "" or "/something" without a trailing slash."""
+        value = self.base_path.strip().rstrip("/")
+        if value and not value.startswith("/"):
+            value = "/" + value
+        return value
 
     @property
     def data_path(self) -> Path:

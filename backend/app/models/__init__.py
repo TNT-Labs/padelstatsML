@@ -7,8 +7,11 @@ from app.models.match import (
     MatchStats,
     MatchStatus,
 )
+from app.models.user import AuditEntry, AuthSession, User, UserRole
 
 __all__ = [
+    "AuditEntry",
+    "AuthSession",
     "CalibrationSource",
     "CameraPreset",
     "Job",
@@ -16,4 +19,6 @@ __all__ = [
     "Match",
     "MatchStats",
     "MatchStatus",
+    "User",
+    "UserRole",
 ]

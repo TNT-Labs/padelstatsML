@@ -19,8 +19,10 @@ VENV ?= .venv
 PY := $(VENV)/bin/python
 HOST ?= 0.0.0.0
 PORT ?= 8000
+# Lo stesso prefisso dell'app (/padel su shopbeautylab.it), letto dal .env.
+BASE_PATH ?= $(shell sed -n 's/^BASE_PATH=//p' .env 2>/dev/null | tail -1)
 
-.PHONY: help install venv deps web run worker test test-backend test-frontend check clean
+.PHONY: help install venv deps web run worker test test-backend test-frontend check admin clean
 
 help: ## Mostra questo elenco
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -28,7 +30,7 @@ help: ## Mostra questo elenco
 install: deps web ## Installa tutto e compila la UI
 	@echo
 	@echo "Fatto. Prima di avviare:"
-	@echo "  1. cp .env.example .env   e imposta DATA_DIR e API_BASE_URL"
+	@echo "  1. cp .env.example .env   e imposta DATA_DIR e PADEL_ADMIN_PASSWORD"
 	@echo "  2. esporta il modello:    make -s model-help"
 	@echo "  3. make run   (e in un altro terminale: make worker)"
 
@@ -57,8 +59,11 @@ worker: ## Avvia il worker di analisi
 	cd backend && ../$(PY) -m app.worker.runner
 
 check: ## Verifica che l'API risponda e che il modello sia al suo posto
-	@curl -fsS http://localhost:$(PORT)/api/health | $(PY) -m json.tool || \
-		echo "L'API non risponde su http://localhost:$(PORT)"
+	@curl -fsS http://localhost:$(PORT)$(BASE_PATH)/api/health | $(PY) -m json.tool || \
+		echo "L'API non risponde su http://localhost:$(PORT)$(BASE_PATH)"
+
+admin: ## Crea o riattiva un amministratore: make admin U=nome
+	cd backend && ../$(PY) scripts/create_admin.py $(or $(U),admin)
 
 model-help: ## Come esportare i modelli ONNX (detector e re-ID)
 	@echo "Il Pi esegue l'inferenza con onnxruntime e non installa PyTorch."
