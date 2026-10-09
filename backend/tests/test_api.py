@@ -191,6 +191,49 @@ async def test_delete_removes_the_match_and_its_files(uploaded_match, client):
     assert not keyframe_path(match_id).exists()
 
 
+async def test_delete_removes_an_abandoned_upload(client):
+    """Pieces of an upload never completed must not outlive the match."""
+    from app.core.storage import upload_part_path
+
+    match_id = (await client.post("/api/matches", json={"title": "Upload a metà"})).json()["match_id"]
+    response = await client.put(f"/api/matches/{match_id}/upload?offset=0", content=b"x" * 1024)
+    assert response.status_code == 200, response.text
+    assert upload_part_path(match_id).exists()
+
+    assert (await client.delete(f"/api/matches/{match_id}")).status_code == 204
+    assert not upload_part_path(match_id).exists()
+
+
+def test_orphan_files_are_swept_and_live_ones_kept(data_dir):
+    from app.core.storage import (
+        artifacts_dir,
+        delete_match_files,
+        keyframe_path,
+        purge_orphan_files,
+        upload_part_path,
+        video_path,
+    )
+
+    live, gone = "live-match", "gone-match"
+    for match_id in (live, gone):
+        video_path(match_id).write_bytes(b"v")
+        upload_part_path(match_id).write_bytes(b"p")
+        keyframe_path(match_id).write_bytes(b"k")
+        artifacts_dir(match_id).mkdir(parents=True, exist_ok=True)
+    stranger = data_dir / "videos" / "notes.txt"
+    stranger.write_text("not ours")
+
+    swept = set(purge_orphan_files({live}))
+    assert gone in swept and live not in swept
+    assert not video_path(gone).exists() and not upload_part_path(gone).exists()
+    assert not keyframe_path(gone).exists() and not artifacts_dir(gone).exists()
+    assert video_path(live).exists() and artifacts_dir(live).exists()
+    assert stranger.exists()
+
+    delete_match_files(live)
+    stranger.unlink()
+
+
 async def test_camera_preset_round_trip(uploaded_match, client):
     """Calibrate once, reuse on every later match from the same camera."""
     match_id, _ = uploaded_match
