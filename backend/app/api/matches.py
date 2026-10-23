@@ -92,7 +92,8 @@ def _ensure_room(incoming: int) -> None:
     if free_space_bytes() - incoming < _MIN_FREE_BYTES:
         raise HTTPException(
             status.HTTP_507_INSUFFICIENT_STORAGE,
-            "Spazio su disco insufficiente: elimina qualche partita e riprova.",
+            f"Spazio su disco insufficiente: liberi {free_space_bytes() / 1e9:.1f} GB nella "
+            "cartella dati. Elimina qualche partita e riprova.",
         )
 # Building the players' boxes loads a match's artifacts (a few hundred MB at
 # peak): one at a time, which also keeps two viewers from building the same
@@ -127,10 +128,15 @@ async def create_match(
             f"Video troppo grande: {payload.file_size_bytes / 1_048_576:.0f} MB "
             f"(limite {settings.max_video_size_mb} MB).",
         )
-    if payload.file_size_bytes and free_space_bytes() < payload.file_size_bytes * 1.2:
+    free = free_space_bytes()
+    if payload.file_size_bytes and free < payload.file_size_bytes * 1.2:
+        # The figures tell a full disk from a data folder that is not where
+        # it should be (e.g. on the SD card instead of the SSD).
         raise HTTPException(
             status.HTTP_507_INSUFFICIENT_STORAGE,
-            "Spazio su disco insufficiente per questo video.",
+            f"Spazio su disco insufficiente per questo video: servono "
+            f"{payload.file_size_bytes * 1.2 / 1e9:.1f} GB, liberi {free / 1e9:.1f} GB "
+            "nella cartella dati.",
         )
 
     match = Match(
