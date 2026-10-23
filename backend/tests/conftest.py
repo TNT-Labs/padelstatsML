@@ -23,7 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 @pytest.fixture(scope="session")
 def data_dir() -> Path:
-    return Path(_TMP)
+    """Where the application actually writes: DATA_DIR from the environment
+    when set (CI sets its own), otherwise the temporary folder above."""
+    from app.core.config import get_settings
+
+    return get_settings().data_path
 
 
 @pytest.fixture

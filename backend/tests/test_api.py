@@ -7,8 +7,6 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-pytestmark = pytest.mark.asyncio
-
 W, H = 640, 360
 GOOD_CORNERS = [[200, 100], [440, 100], [600, 330], [40, 330]]
 
