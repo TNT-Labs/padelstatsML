@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react'
-import { api, type AuditRow, type Me, type Role, type UserRow } from '../api'
+import { api, ROLE_LABEL, type AuditRow, type Me, type Role, type UserRow } from '../api'
 
 interface Props {
   me: Me
@@ -20,6 +20,8 @@ const EVENT_LABEL: Record<string, string> = {
   utente_eliminato: 'Utente eliminato',
   admin_ripristinato: 'Amministratore ripristinato',
 }
+
+const ROLES: Role[] = ['utente', 'visualizzatore', 'admin']
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -160,8 +162,11 @@ export const AdminView: FC<Props> = ({ me, onBack }) => {
             <div className="form-group" style={{ flex: 1 }}>
               <label htmlFor="nu-role">Ruolo</label>
               <select id="nu-role" value={newRole} onChange={e => setNewRole(e.target.value as Role)}>
-                <option value="utente">Utente</option>
-                <option value="admin">Amministratore</option>
+                {ROLES.map(role => (
+                  <option key={role} value={role}>
+                    {ROLE_LABEL[role]}
+                  </option>
+                ))}
               </select>
             </div>
             <button className="btn btn-primary" disabled={busy || newName.trim().length < 3}>
@@ -181,6 +186,9 @@ export const AdminView: FC<Props> = ({ me, onBack }) => {
                     </div>
                     <div className="tag-row">
                       {user.role === 'admin' && <span className="badge badge-ready">Amministratore</span>}
+                      {user.role === 'visualizzatore' && (
+                        <span className="badge badge-queued">Sola visualizzazione</span>
+                      )}
                       {!user.active && <span className="badge badge-failed">Disattivato</span>}
                       {user.locked && <span className="badge badge-needs_calibration">Bloccato</span>}
                       {user.must_change_password && (
@@ -196,17 +204,23 @@ export const AdminView: FC<Props> = ({ me, onBack }) => {
                   </div>
                   <div className="match-actions">
                     {!self && (
-                      <button
-                        className="btn btn-ghost btn-sm"
+                      <select
+                        className="role-select"
+                        aria-label={`Ruolo di ${user.username}`}
+                        title="Ruolo: cambiandolo l'utente dovrà accedere di nuovo"
+                        value={user.role}
                         disabled={busy}
-                        onClick={() =>
-                          act(() =>
-                            api.updateUser(user.id, { role: user.role === 'admin' ? 'utente' : 'admin' }),
-                          )
-                        }
+                        onChange={e => {
+                          const role = e.target.value as Role
+                          void act(() => api.updateUser(user.id, { role }))
+                        }}
                       >
-                        {user.role === 'admin' ? 'Rendi utente' : 'Rendi admin'}
-                      </button>
+                        {ROLES.map(role => (
+                          <option key={role} value={role}>
+                            {ROLE_LABEL[role]}
+                          </option>
+                        ))}
+                      </select>
                     )}
                     {!self && (
                       <button

@@ -83,6 +83,15 @@ async def current_user(user: User = Depends(signed_in_user)) -> User:
     return user
 
 
+async def require_editor(user: User = Depends(current_user)) -> User:
+    """Anyone who may change something: every role but the read-only one."""
+    if user.is_viewer:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Account in sola visualizzazione: operazione non consentita."
+        )
+    return user
+
+
 async def require_admin(user: User = Depends(current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Operazione riservata agli amministratori.")

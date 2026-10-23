@@ -447,7 +447,10 @@ creano da **menu utente → Gestione utenti** ([passo 11b](#11b-utenti-e-accesso
 2. **Calibrazione**: trascina le quattro maniglie sugli angoli del campo,
    partendo dal fondo a sinistra e proseguendo in senso orario. Le linee
    bianche mostrano rete e linee di servizio calcolate: se coincidono con
-   quelle reali, la calibrazione è corretta.
+   quelle reali, la calibrazione è corretta. Se un angolo non è inquadrato
+   (camera vicina), premi *Estendi oltre l'inquadratura* e portalo nella
+   cornice scura dove si incontrerebbero le linee; lasciato sul bordo, la
+   cornice si allarga. In questo caso usa anche *Verifica con la rete*.
 3. Dai un nome alla posizione camera (es. *Campo 2 — tripode angolo nord*) per
    riusarla con un clic nelle partite successive.
 4. **Conferma calibrazione** → l'analisi parte. Puoi chiudere la pagina: il
@@ -519,12 +522,17 @@ viene recuperato dall'heartbeat scaduto e riprovato al successivo avvio.
 
 Solo gli utenti creati dall'amministratore possono entrare.
 
-| | Utente | Amministratore |
-|---|:-:|:-:|
-| Caricare, calibrare, analizzare le proprie partite | ✓ | ✓ |
-| Posizioni camera salvate (personali) | ✓ | ✓ |
-| Vedere e gestire le partite di tutti (con il nome di chi le ha caricate) | | ✓ |
-| Gestione utenti e registro accessi | | ✓ |
+| | Sola visualizzazione | Utente | Amministratore |
+|---|:-:|:-:|:-:|
+| Vedere statistiche e video delle partite già analizzate di tutti | ✓ | | |
+| Caricare, calibrare, analizzare, rinominare le proprie partite | | ✓ | ✓ |
+| Posizioni camera salvate (personali) | | ✓ | ✓ |
+| Vedere e gestire le partite di tutti (con il nome di chi le ha caricate) | | | ✓ |
+| Gestione utenti e registro accessi | | | ✓ |
+
+L'account in sola visualizzazione non può caricare, calibrare, rianalizzare,
+rinominare né eliminare: il server rifiuta ogni modifica, non solo
+l'interfaccia. Cambia solo la propria password.
 
 **Gestione utenti** (menu utente in alto a destra): crea un utente e ottieni
 una password provvisoria da comunicargli (al primo accesso ne sceglie una

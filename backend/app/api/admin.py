@@ -2,7 +2,7 @@
 
     GET    /api/admin/users
     POST   /api/admin/users                      create, returns a temporary password
-    PATCH  /api/admin/users/{id}                 role / active
+    PATCH  /api/admin/users/{id}                 role (admin, utente, visualizzatore) / active
     POST   /api/admin/users/{id}/reset-password  new temporary password
     POST   /api/admin/users/{id}/unlock
     POST   /api/admin/users/{id}/logout          close every session

@@ -1,4 +1,4 @@
-import { useCallback, useRef, type FC } from 'react'
+import { useCallback, useEffect, useRef, useState, type FC } from 'react'
 import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
@@ -13,9 +13,12 @@ const RALLY_LEAD_S = 2
 
 interface Props {
   stats: MatchStats
+  /** Read-only account: no renaming, no re-analysis. */
+  readOnly?: boolean
   onBack: () => void
   onRename: () => void
-  onReanalyse: () => void
+  /** `recalibrate`: place the court corners again before analysing. */
+  onReanalyse: (recalibrate: boolean) => void
 }
 
 function formatDuration(seconds: number): string {
@@ -25,11 +28,19 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
-export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) => {
+export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename, onReanalyse }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [asking, setAsking] = useState(false)
+
+  useEffect(() => {
+    if (!asking) return
+    const escape = (e: KeyboardEvent) => e.key === 'Escape' && setAsking(false)
+    document.addEventListener('keydown', escape)
+    return () => document.removeEventListener('keydown', escape)
+  }, [asking])
 
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
@@ -44,29 +55,67 @@ export const StatsView: FC<Props> = ({ stats, onBack, onRename, onReanalyse }) =
       <div className="header">
         <h1>{stats.title}</h1>
         <div style={{ display: 'flex', gap: '.5rem' }}>
-          <button className="btn btn-ghost btn-sm" onClick={onRename}>
-            Rinomina giocatori
-          </button>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => {
-              if (
-                window.confirm(
-                  'Rianalizzare la partita? Le statistiche attuali verranno sostituite e i ' +
-                    'nomi dei giocatori andranno reinseriti. Richiede circa quanto la durata del video.',
-                )
-              ) {
-                onReanalyse()
-              }
-            }}
-          >
-            Rianalizza
-          </button>
+          {!readOnly && (
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={onRename}>
+                Rinomina giocatori
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setAsking(true)}>
+                Rianalizza
+              </button>
+            </>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={onBack}>
             ← Partite
           </button>
         </div>
       </div>
+
+      {asking && (
+        <div className="modal-backdrop" onClick={() => setAsking(false)}>
+          <div
+            className="modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reanalyse-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 id="reanalyse-title">Rianalizzare la partita?</h2>
+            <p className="muted-note">
+              Le statistiche attuali verranno sostituite e i nomi dei giocatori andranno
+              reinseriti. Richiede circa quanto la durata del video.
+            </p>
+            <p style={{ margin: '.75rem 0 1rem' }}>
+              Vuoi prima <strong>ricalibrare il campo</strong>? Fallo se rete e linee proiettate
+              non coincidevano con quelle reali: la calibrazione salvata viene riproposta da
+              correggere.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-ghost btn-sm" autoFocus onClick={() => setAsking(false)}>
+                Annulla
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setAsking(false)
+                  onReanalyse(false)
+                }}
+              >
+                Usa la calibrazione attuale
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => {
+                  setAsking(false)
+                  onReanalyse(true)
+                }}
+              >
+                Ricalibra il campo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid-4" style={{ marginBottom: '1.25rem' }}>
         <div className="card card-sm stat-card">

@@ -55,6 +55,7 @@ export const UserBar: FC<Props> = ({ me, onPassword, onAdmin, onLogout }) => {
             </span>
             <span className="user-name">{me.username}</span>
             {me.role === 'admin' && <span className="role-tag">admin</span>}
+            {me.role === 'visualizzatore' && <span className="role-tag">sola lettura</span>}
             <span aria-hidden>▾</span>
           </button>
           {open && (

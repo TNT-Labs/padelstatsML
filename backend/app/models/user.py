@@ -19,6 +19,8 @@ from app.models.match import _enum_col, _utcnow, _uuid_str
 class UserRole(str, enum.Enum):
     ADMIN  = "admin"
     UTENTE = "utente"
+    # Read-only: sees the analysed matches of everyone, changes nothing.
+    VISUALIZZATORE = "visualizzatore"
 
 
 class User(Base):
@@ -45,6 +47,10 @@ class User(Base):
     @property
     def is_admin(self) -> bool:
         return self.role == UserRole.ADMIN
+
+    @property
+    def is_viewer(self) -> bool:
+        return self.role == UserRole.VISUALIZZATORE
 
 
 class AuthSession(Base):

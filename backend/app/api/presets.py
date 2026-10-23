@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_user
+from app.api.deps import require_editor
 from app.core.database import get_db
 from app.ml.court import CalibrationError, CalibrationSource, build_calibration
 from app.models import CameraPreset, User
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/presets", tags=["presets"])
 
 @router.get("", response_model=list[PresetRead])
 async def list_presets(
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> list[CameraPreset]:
     result = await db.execute(
         select(CameraPreset)
@@ -40,7 +40,7 @@ async def list_presets(
 @router.post("", response_model=PresetRead, status_code=status.HTTP_201_CREATED)
 async def create_preset(
     payload: PresetCreate,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> CameraPreset:
     # Validate before storing: a preset that cannot produce a homography would
     # otherwise fail later, on a different match, with a confusing message.
@@ -89,7 +89,7 @@ async def create_preset(
     response_model=None,
 )
 async def delete_preset(
-    preset_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    preset_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> None:
     preset = await db.get(CameraPreset, preset_id)
     if preset is None or preset.owner_id != user.id:

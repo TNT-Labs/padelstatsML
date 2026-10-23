@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, setSessionLostHandler, type Match, type MatchStats, type Me } from './api'
+import { api, isViewer, setSessionLostHandler, type Match, type MatchStats, type Me } from './api'
 import { AdminView } from './components/AdminView'
 import { CalibrationView } from './components/CalibrationView'
 import { HomeView } from './components/HomeView'
@@ -20,6 +20,9 @@ import { UserBar } from './components/UserBar'
  * The calibration step sits between upload and analysis by design: without a
  * confirmed homography the backend refuses to queue the job, because every
  * number it would produce is in metres.
+ *
+ * A read-only account (visualizzatore) only goes home ──> stats, for
+ * completed matches, without the rename and re-analyse actions.
  */
 type View =
   | { name: 'home' }
@@ -101,6 +104,7 @@ export default function App() {
 }
 
 function Workspace({ me }: { me: Me }) {
+  const readOnly = isViewer(me)
   const [view, setView] = useState<View>({ name: 'home' })
   const [error, setError] = useState<string | null>(null)
 
@@ -112,6 +116,12 @@ function Workspace({ me }: { me: Me }) {
   /** Resume an existing match at whatever step it is actually waiting on. */
   const open = useCallback(async (match: Match) => {
     setError(null)
+    if (readOnly) {
+      // The server lists only completed matches to a viewer, and naming the
+      // players is a change: straight to the statistics.
+      if (match.status === 'completed') setView({ name: 'loading', matchId: match.id, then: 'stats' })
+      return
+    }
     switch (match.status) {
       case 'uploading':
         setView({ name: 'upload', resume: match })
@@ -135,7 +145,7 @@ function Workspace({ me }: { me: Me }) {
         })
         return
     }
-  }, [])
+  }, [readOnly])
 
   // Fetch stats for the 'loading' step, then move on to identify or stats.
   useEffect(() => {
@@ -225,11 +235,24 @@ function Workspace({ me }: { me: Me }) {
       return (
         <StatsView
           stats={view.stats}
+          readOnly={readOnly}
           onBack={home}
           onRename={() => setView({ name: 'identify', stats: view.stats })}
-          onReanalyse={() =>
-            setView({ name: 'processing', matchId: view.stats.match_id, autoStart: true })
-          }
+          onReanalyse={async recalibrate => {
+            const matchId = view.stats.match_id
+            if (!recalibrate) {
+              setView({ name: 'processing', matchId, autoStart: true })
+              return
+            }
+            // The saved corners come back as the starting point; confirming
+            // them leads to the processing screen, which starts the analysis.
+            try {
+              setView({ name: 'calibrate', match: await api.getMatch(matchId) })
+            } catch (e) {
+              setError((e as Error).message)
+              setView({ name: 'home' })
+            }
+          }}
         />
       )
 

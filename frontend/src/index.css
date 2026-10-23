@@ -127,6 +127,19 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
   width: 100%; height: auto; display: block; border-radius: 8px;
   background: #0f172a; touch-action: none; user-select: none;
 }
+.calib-legend {
+  display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin-top: .5rem;
+  font-size: .8rem; color: var(--muted);
+}
+.calib-legend > span { display: inline-flex; align-items: center; gap: .3rem; }
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; background: rgba(15, 23, 42, .55);
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+.modal { width: 100%; max-width: 480px; }
+.modal h2 { margin-bottom: .5rem; }
+.modal-actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 480px) { .modal-actions .btn { flex: 1 1 100%; } }
 .preset-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .88rem; }
 
 /* ── Heatmap ────────────────────────────────────────────────────────────── */
@@ -296,6 +309,8 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .user-row:first-of-type { border-top: none; }
 .tag-row { display: flex; gap: .3rem; flex-wrap: wrap; margin: .25rem 0; }
+/* Same height as the .btn-sm next to it. */
+.user-row select.role-select { width: auto; padding: .35rem .5rem; font-size: .82rem; }
 .secret {
   display: inline-block; margin-left: .4rem; padding: .1rem .45rem; border-radius: 6px;
   background: #fff; border: 1px solid #fde68a; color: var(--text);

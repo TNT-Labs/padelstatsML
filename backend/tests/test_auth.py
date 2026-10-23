@@ -228,6 +228,65 @@ async def test_users_see_only_their_matches_and_administrators_all():
 
 
 @pytest.mark.asyncio
+async def test_a_viewer_sees_completed_matches_and_changes_nothing():
+    from test_api import GOOD_CORNERS, W, H
+
+    from app.core.database import sync_session
+    from app.models import Match, MatchStatus
+
+    owner = await signed_in(_name("alice"))
+    viewer = await signed_in(_name("vis"), "visualizzatore")
+    async with owner, viewer:
+        done, pending = await _match_of(owner), await _match_of(owner)
+        with sync_session() as session:
+            session.get(Match, done).status = MatchStatus.COMPLETED
+            match = session.get(Match, pending)
+            match.status = MatchStatus.NEEDS_CALIBRATION
+            match.width, match.height = W, H
+
+        listed = [m["id"] for m in (await viewer.get("/api/matches")).json()]
+        assert done in listed and pending not in listed
+        assert (await viewer.get(f"/api/matches/{done}")).status_code == 200
+        assert (await viewer.get(f"/api/matches/{pending}")).status_code == 404
+
+        for method, path, body in (
+            ("POST", "/api/matches", {"title": "Mia"}),
+            ("PATCH", f"/api/matches/{done}", {"player_names": ["a", "b", "c", "d"]}),
+            ("POST", f"/api/matches/{done}/start", None),
+            ("DELETE", f"/api/matches/{done}", None),
+            ("GET", f"/api/matches/{done}/upload", None),
+            ("PUT", f"/api/matches/{done}/upload?offset=0", None),
+            ("GET", f"/api/matches/{pending}/calibration/suggestion", None),
+            ("POST", f"/api/matches/{pending}/calibration", {"corners_px": GOOD_CORNERS}),
+            ("GET", "/api/presets", None),
+            ("POST", "/api/presets", {"name": "x", "corners_px": GOOD_CORNERS,
+                                      "frame_width": W, "frame_height": H}),
+            ("GET", "/api/admin/users", None),
+        ):
+            response = await viewer.request(method, path, json=body)
+            assert response.status_code == 403, (method, path, response.status_code)
+
+        with sync_session() as session:
+            match = session.get(Match, done)
+            assert match is not None and match.status == MatchStatus.COMPLETED
+            assert match.player_names is None
+            assert session.get(Match, pending).calibration is None
+        # Their own password stays theirs to change.
+        assert (await viewer.get("/api/auth/me")).json()["role"] == "visualizzatore"
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_creates_and_reassigns_read_only_accounts():
+    async with await signed_in(_name("adm"), "admin") as admin:
+        created = await admin.post("/api/admin/users", json={"username": _name("vis"), "role": "visualizzatore"})
+        assert created.status_code == 201, created.text
+        user_id = created.json()["user"]["id"]
+        assert created.json()["user"]["role"] == "visualizzatore"
+        changed = await admin.patch(f"/api/admin/users/{user_id}", json={"role": "utente"})
+        assert changed.status_code == 200 and changed.json()["role"] == "utente"
+
+
+@pytest.mark.asyncio
 async def test_presets_are_personal():
     from test_api import GOOD_CORNERS, W, H
 
