@@ -57,7 +57,16 @@ export interface UploadStatus {
   chunk_size_bytes: number
 }
 
-export type Role = 'admin' | 'utente'
+export type Role = 'admin' | 'utente' | 'visualizzatore'
+
+export const ROLE_LABEL: Record<Role, string> = {
+  admin: 'Amministratore',
+  utente: 'Utente',
+  visualizzatore: 'Sola visualizzazione',
+}
+
+/** Read-only accounts see completed matches and change nothing. */
+export const isViewer = (me: Me) => me.role === 'visualizzatore'
 
 export interface Me {
   id: string

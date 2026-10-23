@@ -72,6 +72,11 @@ del video. Mentre trascina, l'interfaccia proietta il modello del campo
 (rete, linee di servizio, perimetro) sull'immagine: se la rete calcolata
 coincide con quella reale, la calibrazione è corretta. Serve mezzo minuto.
 
+Se la camera è vicina e un angolo resta fuori dall'inquadratura,
+**Estendi oltre l'inquadratura** aggiunge una cornice attorno al fotogramma:
+l'angolo si posiziona lì, dove si incontrerebbero le linee visibili, e
+l'omografia estrapola il campo intero.
+
 La calibrazione si salva come **preset camera** e si riusa con un clic per
 ogni partita successiva ripresa dalla stessa posizione.
 
@@ -252,7 +257,9 @@ Senza Docker, in rete locale, apri `http://padelpi.local:8000` (con
 
 Si entra con nome utente e password: il primo amministratore viene dal
 `.env`, gli altri utenti li crea lui da **Gestione utenti**. Ognuno vede le
-proprie partite, l'amministratore tutte ([§11b](INSTALL_RASPBERRY.md#11b-utenti-e-accesso)).
+proprie partite, l'amministratore tutte; un account *in sola visualizzazione*
+vede le partite già analizzate di tutti e non può modificare nulla
+([§11b](INSTALL_RASPBERRY.md#11b-utenti-e-accesso)).
 
 Guida completa passo per passo: [INSTALL_RASPBERRY.md](INSTALL_RASPBERRY.md).
 

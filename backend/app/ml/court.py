@@ -57,6 +57,13 @@ COURT_CORNERS_M = np.array(
 
 CORNER_LABELS = ("Fondo sinistra", "Fondo destra", "Vicino destra", "Vicino sinistra")
 
+# How far outside the frame a corner may lie, as a fraction of the frame size
+# on each side. A camera close to the court often leaves a corner out of the
+# picture: the user places it where the visible lines would meet, which the
+# homography handles exactly. Beyond this the corner is a guess, not an
+# extrapolation of lines that can be seen.
+MAX_OFF_FRAME = 1.0
+
 
 class CalibrationSource(str, Enum):
     MANUAL = "manual"
@@ -235,6 +242,15 @@ def calibration_from_dict(data: dict) -> CourtCalibration:
 
 
 def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
+    # Off-frame corners are allowed (partly framed court), within reason.
+    if (
+        (pts[:, 0] < -MAX_OFF_FRAME * w).any() or (pts[:, 0] > (1 + MAX_OFF_FRAME) * w).any()
+        or (pts[:, 1] < -MAX_OFF_FRAME * h).any() or (pts[:, 1] > (1 + MAX_OFF_FRAME) * h).any()
+    ):
+        raise CalibrationError(
+            "Un angolo è troppo lontano dall'inquadratura: avvicinalo al bordo del fotogramma."
+        )
+
     # Distinct points
     for i in range(4):
         for j in range(i + 1, 4):

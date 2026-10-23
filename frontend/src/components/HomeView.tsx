@@ -1,5 +1,5 @@
 import { useEffect, useState, type FC } from 'react'
-import { api, type Match, type MatchStatus, type Me } from '../api'
+import { api, isViewer, type Match, type MatchStatus, type Me } from '../api'
 
 const STATUS_LABEL: Record<MatchStatus, string> = {
   uploading: 'Caricamento incompleto',
@@ -29,6 +29,9 @@ interface Props {
 }
 
 export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
+  // Read-only account: the server lists only completed matches and refuses
+  // every change, so neither upload nor management is offered.
+  const readOnly = isViewer(me)
   const [matches, setMatches] = useState<Match[]>([])
   const [loading, setLoading] = useState(true)
   const [editMode, setEditMode] = useState(false)
@@ -101,7 +104,7 @@ export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
       <div className="header">
         <h1>🎾 Padel Stats</h1>
         <div style={{ display: 'flex', gap: '.5rem' }}>
-          {editMode ? (
+          {readOnly ? null : editMode ? (
             <button className="btn btn-ghost btn-sm" onClick={exitEdit} disabled={busy}>
               Fine
             </button>
@@ -161,7 +164,13 @@ export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
 
         {loading && <p className="muted-note">Caricamento…</p>}
 
-        {!loading && matches.length === 0 && (
+        {!loading && matches.length === 0 && readOnly && (
+          <p className="muted-note" style={{ textAlign: 'center', padding: '2rem 0' }}>
+            Nessuna partita analizzata da visualizzare.
+          </p>
+        )}
+
+        {!loading && matches.length === 0 && !readOnly && (
           <div style={{ textAlign: 'center', padding: '2rem 0' }}>
             <p style={{ fontSize: '2rem', marginBottom: '.5rem' }}>📹</p>
             <p className="muted-note">Nessuna partita. Carica il primo video.</p>
@@ -216,7 +225,7 @@ export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
               {match.status === 'analyzing' && (
                 <span className="muted-note">{match.progress}%</span>
               )}
-              {!editMode && ACTION_LABEL[match.status] && (
+              {!editMode && ACTION_LABEL[match.status] && (!readOnly || match.status === 'completed') && (
                 <button className="btn btn-ghost btn-sm" onClick={() => onOpen(match)}>
                   {ACTION_LABEL[match.status]}
                 </button>

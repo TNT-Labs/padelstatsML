@@ -24,6 +24,17 @@ export const COURT_CORNERS_M: Pt[] = [
   [0, 0], // near-left
 ]
 
+/**
+ * How far outside the frame a corner may lie, as a fraction of the frame size
+ * on each side. Mirrors MAX_OFF_FRAME in app/ml/court.py.
+ */
+export const MAX_OFF_FRAME = 1.0
+
+/** True when the point lies outside the video frame. */
+export function isOffFrame(p: Pt, frameW: number, frameH: number): boolean {
+  return p[0] < 0 || p[0] > frameW || p[1] < 0 || p[1] > frameH
+}
+
 export const CORNER_LABELS = [
   'Fondo sinistra',
   'Fondo destra',
@@ -131,6 +142,12 @@ export interface QuadCheck {
  */
 export function checkQuad(pts: Pt[], frameW: number, frameH: number): QuadCheck {
   if (pts.length !== 4) return { valid: false, reason: 'Servono 4 angoli.' }
+
+  const mx = MAX_OFF_FRAME * frameW
+  const my = MAX_OFF_FRAME * frameH
+  if (pts.some(([x, y]) => x < -mx || x > frameW + mx || y < -my || y > frameH + my)) {
+    return { valid: false, reason: "Un angolo è troppo lontano dall'inquadratura." }
+  }
 
   for (let i = 0; i < 4; i++) {
     for (let j = i + 1; j < 4; j++) {

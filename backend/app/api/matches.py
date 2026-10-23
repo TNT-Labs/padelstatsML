@@ -21,7 +21,9 @@ produces confident, wrong numbers.
 
 Every route works on the caller's own matches; an administrator reaches all
 of them. Someone else's match answers 404, exactly like a missing one, so ids
-cannot be probed.
+cannot be probed. A read-only account (visualizzatore) reaches every
+completed match through the read routes only: everything that uploads,
+calibrates, analyses, renames or deletes answers 403.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_user
+from app.api.deps import current_user, require_editor
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.api.ranges import file_range_response
@@ -114,7 +116,7 @@ def _upload_lock(match_id: str) -> asyncio.Lock:
 async def create_match(
     payload: MatchCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_editor),
 ) -> UploadInitResponse:
     settings = get_settings()
     max_bytes = settings.max_video_size_mb * 1024 * 1024
@@ -167,7 +169,7 @@ def _part_size(match_id: str) -> int:
 
 @router.get("/{match_id}/upload", response_model=UploadStatus)
 async def upload_status(
-    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> UploadStatus:
     """How much of the video has arrived: where a broken upload resumes."""
     match = await _get_match(db, match_id, user)
@@ -181,7 +183,7 @@ async def upload_status(
 @router.put("/{match_id}/upload", response_model=UploadStatus)
 async def upload_chunk(
     match_id: str, request: Request, offset: int,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> UploadStatus:
     """Append one piece at `offset`, which must be exactly the bytes received
     so far: a piece sent twice (the answer to the first try was lost) or out
@@ -246,7 +248,7 @@ class UploadComplete(BaseModel):
 @router.post("/{match_id}/upload/complete", response_model=MatchRead)
 async def upload_complete(
     match_id: str, payload: UploadComplete,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> MatchRead:
     match = await _get_match(db, match_id, user)
     _check_uploadable(match)
@@ -276,7 +278,7 @@ def _truncate(path, size: int) -> None:
 @router.put("/{match_id}/video", response_model=MatchRead)
 async def upload_video(
     match_id: str, request: Request,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> MatchRead:
     """Stream the whole video in one request, then probe it and extract the
     keyframe. Fine on a LAN; behind Cloudflare a request cannot exceed
@@ -374,7 +376,7 @@ async def get_keyframe(
 
 @router.get("/{match_id}/calibration/suggestion", response_model=CalibrationSuggestion)
 async def calibration_suggestion(
-    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> CalibrationSuggestion:
     """Pre-fill the four handles. A suggestion, never a calibration."""
     match = await _get_match(db, match_id, user)
@@ -409,7 +411,7 @@ async def calibration_suggestion(
 @router.post("/{match_id}/calibration", response_model=CalibrationResult)
 async def submit_calibration(
     match_id: str, payload: CalibrationSubmit,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> CalibrationResult:
     match = await _get_match(db, match_id, user)
     if match.status in (MatchStatus.QUEUED, MatchStatus.ANALYZING):
@@ -538,7 +540,7 @@ async def _save_preset(
 
 @router.post("/{match_id}/start", response_model=MatchRead)
 async def start_analysis(
-    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> MatchRead:
     match = await _get_match(db, match_id, user)
 
@@ -580,6 +582,10 @@ async def list_matches(
     db: AsyncSession = Depends(get_db), user: User = Depends(current_user), limit: int = 100
 ) -> list[MatchRead]:
     query = select(Match).order_by(Match.created_at.desc()).limit(max(1, min(limit, 500)))
+    if user.is_viewer:
+        # Only finished analyses: nothing else has anything to look at.
+        query = query.where(Match.status == MatchStatus.COMPLETED)
+        return [MatchRead.from_match(m) for m in (await db.scalars(query)).all()]
     if not user.is_admin:
         return [
             MatchRead.from_match(m)
@@ -602,7 +608,7 @@ async def get_match(
 @router.patch("/{match_id}", response_model=MatchRead)
 async def update_match(
     match_id: str, payload: MatchUpdate,
-    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> MatchRead:
     """Rename a match or assign player names.
 
@@ -716,7 +722,7 @@ async def get_player_tracks(
     response_model=None,
 )
 async def delete_match(
-    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
+    match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)
 ) -> None:
     match = await _get_match(db, match_id, user)
     if match.status == MatchStatus.ANALYZING:
@@ -738,7 +744,15 @@ async def delete_match(
 
 async def _get_match(db: AsyncSession, match_id: str, user: User) -> Match:
     match = await db.get(Match, match_id)
-    if match is None or (match.owner_id != user.id and not user.is_admin):
+    if match is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Partita non trovata.")
+    if user.is_viewer:
+        # Write routes stop a viewer before this (require_editor); the read
+        # routes reach completed matches only.
+        allowed = match.status == MatchStatus.COMPLETED
+    else:
+        allowed = match.owner_id == user.id or user.is_admin
+    if not allowed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Partita non trovata.")
     return match
 

@@ -5,6 +5,7 @@ import {
   applyHomography,
   checkQuad,
   homographyFromQuad,
+  isOffFrame,
   netErrorMetres,
   projectCourtLines,
   signedArea,
@@ -101,6 +102,28 @@ describe('quad validation', () => {
       [100, 150],
     ]
     expect(checkQuad(tiny, FRAME_W, FRAME_H).reason).toMatch(/piccola/)
+  })
+
+  it('accepts corners outside the frame, within reach of it', () => {
+    // Close camera: the near corners lie beyond the bottom corners of the picture.
+    const offFrame: Pt[] = [
+      [600, 300],
+      [1320, 300],
+      [2150, 1250],
+      [-230, 1250],
+    ]
+    expect(checkQuad(offFrame, FRAME_W, FRAME_H).valid).toBe(true)
+    expect(offFrame.map(p => isOffFrame(p, FRAME_W, FRAME_H))).toEqual([false, false, true, true])
+  })
+
+  it('rejects a corner far beyond the frame', () => {
+    const far: Pt[] = [
+      [600, 300],
+      [1320, 300],
+      [1800, 980],
+      [-2500, 980],
+    ]
+    expect(checkQuad(far, FRAME_W, FRAME_H).reason).toMatch(/lontano/)
   })
 
   it('treats the expected corner order as clockwise on screen', () => {

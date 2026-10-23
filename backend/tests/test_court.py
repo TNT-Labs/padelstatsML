@@ -71,6 +71,26 @@ def test_corner_order_is_not_silently_repaired():
         build_calibration(reversed_order, FRAME, CalibrationSource.MANUAL)
 
 
+def test_corners_outside_the_frame_are_extrapolated_exactly():
+    """A close camera leaves the near corners out of the picture: the user
+    places them where the visible lines meet, and the court is still
+    measured in full."""
+    off_frame = [[600, 300], [1320, 300], [2150, 1250], [-230, 1250]]
+    calib = build_calibration(off_frame, FRAME, CalibrationSource.MANUAL)
+    court = calib.floor_points_to_court(np.array(off_frame, dtype=np.float32))
+    expected = [[0, COURT_LENGTH_M], [COURT_WIDTH_M, COURT_LENGTH_M], [COURT_WIDTH_M, 0], [0, 0]]
+    assert np.allclose(court, expected, atol=1e-3)
+    x1, y1, x2, y2 = calib.roi_px()
+    assert 0 <= x1 < x2 <= 1920 and 0 <= y1 < y2 <= 1080
+
+
+def test_a_corner_far_beyond_the_frame_is_refused():
+    with pytest.raises(CalibrationError, match="lontano"):
+        build_calibration(
+            [[600, 300], [1320, 300], [1800, 980], [-2500, 980]], FRAME, CalibrationSource.MANUAL
+        )
+
+
 def test_roundtrip_through_dict(calibration):
     restored = calibration_from_dict(
         {
