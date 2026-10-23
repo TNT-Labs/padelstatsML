@@ -238,9 +238,21 @@ function Workspace({ me }: { me: Me }) {
           readOnly={readOnly}
           onBack={home}
           onRename={() => setView({ name: 'identify', stats: view.stats })}
-          onReanalyse={() =>
-            setView({ name: 'processing', matchId: view.stats.match_id, autoStart: true })
-          }
+          onReanalyse={async recalibrate => {
+            const matchId = view.stats.match_id
+            if (!recalibrate) {
+              setView({ name: 'processing', matchId, autoStart: true })
+              return
+            }
+            // The saved corners come back as the starting point; confirming
+            // them leads to the processing screen, which starts the analysis.
+            try {
+              setView({ name: 'calibrate', match: await api.getMatch(matchId) })
+            } catch (e) {
+              setError((e as Error).message)
+              setView({ name: 'home' })
+            }
+          }}
         />
       )
 

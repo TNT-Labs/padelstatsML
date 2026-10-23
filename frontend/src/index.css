@@ -132,6 +132,14 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
   font-size: .8rem; color: var(--muted);
 }
 .calib-legend > span { display: inline-flex; align-items: center; gap: .3rem; }
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; background: rgba(15, 23, 42, .55);
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+.modal { width: 100%; max-width: 480px; }
+.modal h2 { margin-bottom: .5rem; }
+.modal-actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 480px) { .modal-actions .btn { flex: 1 1 100%; } }
 .preset-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .88rem; }
 
 /* ── Heatmap ────────────────────────────────────────────────────────────── */
