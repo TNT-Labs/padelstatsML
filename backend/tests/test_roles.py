@@ -242,3 +242,53 @@ def test_pairs_in_one_kit_are_followed_by_re_id(calibration):
 
     assert len(result.changeovers) == 1 and abs(result.changeovers[0] - 67.0) < 1.0
     assert _people(result, truth) == [0, 1, 2, 3]
+
+
+def _static_object(calibration, duration_s, xy=(1.5, 19.6), on_s=8.0, off_s=2.0, first_id=1000):
+    """Something the detector takes for a person and that never moves — a
+    banner on the back fence — seen on and off for the whole match."""
+    pieces = []
+    start = 0.0
+    while start < duration_s:
+        observations = [
+            make_observation(calibration, xy, float(t), shirt=1)
+            for t in np.arange(start, min(start + on_s, duration_s), 1.0 / HZ)
+        ]
+        if len(observations) >= 3:
+            pieces.append(Tracklet(id=first_id + len(pieces), observations=observations))
+        start += on_s + off_s
+    return pieces
+
+
+def test_a_static_object_in_the_court_is_not_given_to_a_player(calibration):
+    """A banner inside the court margin used to become part of a far
+    player: its frames and the real player's were then contested, and both
+    dropped — the player's numbers came from the banner and from half of
+    their own detections."""
+    duration = 240.0
+    tracklets, truth = _play(calibration, duration, shirts=[0, 1, 2, 3])
+    clean = resolve_players(tracklets)
+    banner = _static_object(calibration, duration)
+
+    result = resolve_players(tracklets + banner)
+
+    assert _people(result, truth) == [0, 1, 2, 3]
+    assert not {t.id for t in banner} & {tid for p in result.players for tid in p.source_tracklets}
+    assert any("oggetto fermo" in w for w in result.warnings)
+    # Nobody loses detections to the banner.
+    assert [len(p) for p in result.players] == [len(p) for p in clean.players]
+
+
+def test_a_player_waiting_still_between_points_is_kept(calibration):
+    """Standing still for a while is what players do between points: only
+    an object in one place for minutes is static."""
+    tracklets, truth = _play(calibration, 120.0, shirts=[0, 1, 2, 3])
+    waiting = Tracklet(id=500, observations=[
+        make_observation(calibration, (7.5, 15.0), float(t), shirt=3, frame_index=int(round(t * HZ)) + 100_000)
+        for t in np.arange(0.0, 20.0, 1.0 / HZ)
+    ])
+
+    result = resolve_players(tracklets + [waiting])
+
+    assert 500 in {tid for p in result.players for tid in p.source_tracklets}
+    assert not any("oggetto fermo" in w or "oggetti fermi" in w for w in result.warnings)
