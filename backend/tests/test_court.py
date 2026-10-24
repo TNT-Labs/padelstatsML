@@ -16,6 +16,7 @@ from app.ml.court import (
 
 FRAME = (1920, 1080)
 GOOD = [[600, 300], [1320, 300], [1800, 980], [120, 980]]
+COURT_CORNERS_M_LIST = [(0.0, 20.0), (10.0, 20.0), (10.0, 0.0), (0.0, 0.0)]
 
 
 def test_corners_map_to_the_court_rectangle(calibration):
@@ -120,3 +121,43 @@ def test_suggestion_always_returns_four_usable_corners():
     # must never masquerade as a confident detection.
     assert suggestion.method == "default"
     assert suggestion.confidence == 0.0
+
+
+def _pinhole(height_m: float, tilt_deg: float, back_m: float = 6.0, f: float = 1100.0):
+    """A camera `back_m` behind the near baseline at `height_m`, looking down
+    the court tilted down by `tilt_deg`: returns world (x, y, z) -> pixel."""
+    tilt = np.radians(tilt_deg)
+    centre = np.array([5.0, -back_m, height_m])
+    forward = np.array([0.0, np.cos(tilt), -np.sin(tilt)])
+    right = np.array([1.0, 0.0, 0.0])
+    down = np.cross(forward, right)
+
+    def project(point):
+        d = np.asarray(point, dtype=float) - centre
+        z = d @ forward
+        return (960.0 + f * (d @ right) / z, 540.0 + f * (d @ down) / z)
+
+    return project
+
+
+@pytest.mark.parametrize("height_m, tilt_deg", [(1.7, 0.0), (1.7, 5.0), (3.5, 12.0), (4.0, 18.0)])
+def test_the_camera_height_is_read_from_the_players_boxes(height_m, tilt_deg):
+    from app.ml.court import estimate_camera_height
+
+    project = _pinhole(height_m, tilt_deg)
+    corners = [project((x, y, 0.0)) for x, y in COURT_CORNERS_M_LIST]
+    calib = build_calibration(corners, FRAME, CalibrationSource.MANUAL)
+    rng = np.random.default_rng(1)
+    boxes = []
+    for _ in range(200):
+        x, y = rng.uniform(0.5, 9.5), rng.uniform(0.5, 19.5)
+        # Players are 1.6-1.9 m tall, racket and stance included.
+        tall = rng.uniform(1.6, 1.9)
+        foot, head = project((x, y, 0.0)), project((x, y, tall))
+        left, right = project((x - 0.25, y, 0.0)), project((x + 0.25, y, 0.0))
+        boxes.append((left[0], head[1], right[0], foot[1]))
+
+    estimate = estimate_camera_height(calib, boxes)
+
+    assert estimate is not None
+    assert abs(estimate - height_m) / height_m < 0.15, estimate

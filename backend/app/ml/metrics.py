@@ -20,7 +20,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M, NET_Y_M, CourtCalibration
+from app.ml.court import (
+    COURT_LENGTH_M,
+    COURT_WIDTH_M,
+    LOW_CAMERA_M,
+    NET_Y_M,
+    CourtCalibration,
+    estimate_camera_height,
+)
 from app.ml.identity import IdentityResult, PlayerTrack
 from app.ml.rallies import Rally
 from app.ml.roles import ROLE_NAMES
@@ -213,6 +220,16 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
             "Giocatori seguiti per meno della metà della partita: "
             + ", ".join(f"P{int(p) + 1}" for p in sorted(poorly_tracked))
             + ". Distanza e copertura sono sottostimate per questi giocatori."
+        )
+
+    camera_m = estimate_camera_height(
+        calib, [o.bbox for player in data.players for o in player.observations]
+    )
+    if camera_m is not None and camera_m < LOW_CAMERA_M:
+        warnings.append(
+            f"Camera a circa {camera_m:.1f} m d'altezza: la rete nasconde i piedi della coppia "
+            "lontana e le sue posizioni sono poco affidabili (giocatori collocati più indietro "
+            "del vero, rilevazioni scartate). Monta la camera a 3-4 m, dietro il fondo campo."
         )
 
     if data.sample_hz < 4.0:

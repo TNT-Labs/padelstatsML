@@ -120,7 +120,7 @@ def main() -> int:
         )
         print(f"  {label}: {len(identity.players)} giocatori da {identity.clusters_found} cluster · "
               f"{len(rallies)} scambi · tracciati {tracked}")
-        for warning in identity.warnings:
+        for warning in result["data_quality"]["warnings"]:
             print(f"      ! {warning}")
 
     print("\n'Interrotte con la traccia ancora viva' conta le tracce che finiscono")
