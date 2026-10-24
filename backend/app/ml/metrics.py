@@ -28,7 +28,7 @@ from app.ml.court import (
     CourtCalibration,
     estimate_camera_height,
 )
-from app.ml.identity import IdentityResult, PlayerTrack
+from app.ml.identity import EXTRA_PERSON_HINT, IdentityResult, PlayerTrack
 from app.ml.rallies import Rally
 from app.ml.roles import ROLE_NAMES
 
@@ -226,6 +226,13 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
         calib, [o.bbox for player in data.players for o in player.observations]
     )
     if camera_m is not None and camera_m < LOW_CAMERA_M:
+        # Contested detections then come from the far pair, split into
+        # several tracks by feet hidden behind the net: not from a stranger.
+        warnings = [
+            w.replace(EXTRA_PERSON_HINT, "con la camera bassa è la coppia lontana, divisa in più "
+                      "tracce dai piedi nascosti dalla rete.")
+            for w in warnings
+        ]
         warnings.append(
             f"Camera a circa {camera_m:.1f} m d'altezza: la rete nasconde i piedi della coppia "
             "lontana e le sue posizioni sono poco affidabili (giocatori collocati più indietro "

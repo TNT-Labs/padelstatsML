@@ -143,3 +143,43 @@ def test_the_side_of_the_pair_is_reported_when_known(calibration):
     result = compute_metrics(_input(calibration, [by_role, by_link], analysed_s=10.0))
     assert result["per_player"]["0"]["role"] == "drive"
     assert result["per_player"]["1"]["role"] is None
+
+
+def _player_seen_by(height_m: float):
+    """A player walking the court, boxes drawn by a camera `height_m` high."""
+    from dataclasses import replace
+
+    import numpy as np
+
+    from app.ml.court import CalibrationSource, build_calibration
+    from test_court import COURT_CORNERS_M_LIST, FRAME, _pinhole
+
+    project = _pinhole(height_m, 3.0)
+    calib = build_calibration([project((x, y, 0.0)) for x, y in COURT_CORNERS_M_LIST], FRAME,
+                              CalibrationSource.MANUAL)
+    observations = []
+    for i, y in enumerate(np.linspace(1.0, 19.0, 90)):
+        x = 3.0 + 4.0 * (i % 2)
+        foot, head = project((x, y, 0.0)), project((x, y, 1.75))
+        obs = make_observation(calib, (x, float(y)), i / HZ, 0)
+        observations.append(replace(obs, bbox=(foot[0] - 20, head[1], foot[0] + 20, foot[1]),
+                                    foot_px=foot))
+    return calib, PlayerTrack(0, 0, observations, [0])
+
+
+def test_a_low_camera_is_reported_with_its_consequence():
+    from app.ml.identity import EXTRA_PERSON_HINT
+
+    contested = f"Il 24% delle rilevazioni è conteso fra due tracce dello stesso giocatore: {EXTRA_PERSON_HINT}"
+    calib, player = _player_seen_by(1.8)
+    warnings = compute_metrics(_input(calib, [player], analysed_s=18.0, warnings=[contested]))["data_quality"]["warnings"]
+
+    assert any("Camera a circa 1.8 m" in w for w in warnings)
+    # The contested detections are blamed on the camera, not on a stranger.
+    assert not any(EXTRA_PERSON_HINT in w for w in warnings)
+
+
+def test_a_camera_mounted_high_raises_no_warning():
+    calib, player = _player_seen_by(3.5)
+    warnings = compute_metrics(_input(calib, [player], analysed_s=18.0))["data_quality"]["warnings"]
+    assert not any("Camera a circa" in w for w in warnings)
