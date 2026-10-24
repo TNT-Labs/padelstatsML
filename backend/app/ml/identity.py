@@ -110,6 +110,23 @@ COEXIST_MIN_SHARED = 3
 CALIBRATION_MIN_PAIRS = 20
 _POSITIVE_MIN_EMBEDDED = 10
 _POSITIVE_MAX_DURATION_S = 20.0
+# Things that are not people but look like one to the detector — a banner
+# with a figure printed on it, a coat on the back fence — or people who
+# never move — a spectator behind the glass. They sit inside the court
+# margin, so the role path gave them to a player: that player then had two
+# detections in many frames, and both were dropped (see `one_per_frame`).
+# A tracklet is still when its box and its floor position stay put for its
+# whole length (90th percentile, so one bad box does not save it).
+STILL_MAX_SHIFT = 0.12        # box centre, in box heights
+STILL_MAX_RESIZE = 0.15       # box height, relative
+STILL_MAX_SHIFT_M = 0.5       # floor position, metres
+# Still tracklets on the same spot (median boxes overlapping this much) are
+# one object, whose detections come and go. It is static when it is seen
+# there for this long in total, across at least this span of the match: a
+# player waits still between points, but not in one box for minutes.
+STATIC_SPOT_IOU = 0.5
+STATIC_MIN_SEEN_S = 60.0
+STATIC_MIN_SPAN_S = 120.0
 
 
 @dataclass
@@ -315,6 +332,18 @@ def resolve_players(
     usable = [t for t in tracklets if len(t) >= 3]
     if not usable:
         return IdentityResult([], ["Nessun giocatore rilevato nel video."], 0, 0, 0)
+    usable, static_spots, static_obs = drop_static(usable)
+    if static_spots:
+        what = (
+            "un oggetto fermo scambiato per una persona" if static_spots == 1
+            else f"{static_spots} oggetti fermi scambiati per persone"
+        )
+        warnings.append(
+            f"Escluso dall'analisi {what} (es. cartellone, spettatore immobile): "
+            f"{static_obs} rilevazioni ignorate."
+        )
+    if not usable:
+        return IdentityResult([], warnings + ["Nessun giocatore rilevato nel video."], 0, 0, 0)
 
     # A tracklet that switched person mid-way — two players crossing, the
     # tracker keeping the wrong one — carries both. Linking treats a cluster
@@ -331,7 +360,9 @@ def resolve_players(
     # discarded observations too.
     total_obs = sum(len(t) for t in usable)
     if method == "roles" or (method == "auto" and roles_apply(pieces)):
-        return _resolve_by_role(pieces, appearance, appearance_summary, total_obs)
+        result = _resolve_by_role(pieces, appearance, appearance_summary, total_obs)
+        result.warnings[:0] = warnings
+        return result
     appearance_summary["method"] = "collegamento"
 
     clusters = _link_tracklets(pieces, max_speed_ms, progress=progress, appearance=appearance)
@@ -369,6 +400,68 @@ def resolve_players(
         observations_discarded=discarded,
         appearance=appearance_summary,
     )
+
+
+def drop_static(tracklets: list[Tracklet]) -> tuple[list[Tracklet], int, int]:
+    """Leave out the tracklets of static objects mistaken for people.
+    Returns the tracklets kept, how many static spots were found and how
+    many observations they held."""
+    still = sorted((t for t in tracklets if _is_still(t)), key=len, reverse=True)
+    if not still:
+        return tracklets, 0, 0
+    spots: list[tuple[np.ndarray, list[Tracklet]]] = []
+    for tracklet in still:
+        box = _median_box(tracklet)
+        for spot_box, members in spots:
+            if _iou(box, spot_box) >= STATIC_SPOT_IOU:
+                members.append(tracklet)
+                break
+        else:
+            spots.append((box, [tracklet]))
+
+    period = _sample_period(tracklets)
+    static: set[int] = set()
+    found = observations = 0
+    for _, members in spots:
+        seen = sum(len(t) for t in members) * period
+        span = max(t.end_s for t in members) - min(t.start_s for t in members)
+        if seen >= STATIC_MIN_SEEN_S and span >= STATIC_MIN_SPAN_S:
+            found += 1
+            observations += sum(len(t) for t in members)
+            static.update(id(t) for t in members)
+    if not static:
+        return tracklets, 0, 0
+    return [t for t in tracklets if id(t) not in static], found, observations
+
+
+def _is_still(tracklet: Tracklet) -> bool:
+    boxes = np.array([o.bbox for o in tracklet.observations], dtype=np.float64)
+    heights = boxes[:, 3] - boxes[:, 1]
+    height = float(np.median(heights))
+    if height <= 0:
+        return False
+    centres = np.stack([(boxes[:, 0] + boxes[:, 2]) / 2.0, (boxes[:, 1] + boxes[:, 3]) / 2.0], axis=1)
+    shift = np.linalg.norm(centres - np.median(centres, axis=0), axis=1) / height
+    resize = np.abs(heights - height) / height
+    floor = np.array([o.foot_court for o in tracklet.observations], dtype=np.float64)
+    shift_m = np.linalg.norm(floor - np.median(floor, axis=0), axis=1)
+    return bool(
+        np.percentile(shift, 90) <= STILL_MAX_SHIFT
+        and np.percentile(resize, 90) <= STILL_MAX_RESIZE
+        and np.percentile(shift_m, 90) <= STILL_MAX_SHIFT_M
+    )
+
+
+def _median_box(tracklet: Tracklet) -> np.ndarray:
+    return np.median(np.array([o.bbox for o in tracklet.observations], dtype=np.float64), axis=0)
+
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = w * h
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 def calibrate_appearance(tracklets: list[Tracklet]) -> tuple[Appearance | None, dict]:
