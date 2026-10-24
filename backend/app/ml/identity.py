@@ -124,6 +124,9 @@ STILL_MAX_SHIFT_M = 0.5       # floor position, metres
 # one object, whose detections come and go. It is static when it is seen
 # there for this long in total, across at least this span of the match: a
 # player waits still between points, but not in one box for minutes.
+# Ending of the warning on contested detections. Metrics swaps it for the
+# real cause when the camera is too low (see court.LOW_CAMERA_M).
+EXTRA_PERSON_HINT = "probabile una persona in più in campo."
 STATIC_SPOT_IOU = 0.5
 STATIC_MIN_SEEN_S = 60.0
 STATIC_MIN_SPAN_S = 120.0
@@ -388,7 +391,8 @@ def resolve_players(
     side_changes = _count_side_changes(players)
     if side_changes:
         warnings.append(
-            f"Rilevati {side_changes} cambi di campo: le heatmap uniscono "
+            f"{'Rilevato 1 cambio' if side_changes == 1 else f'Rilevati {side_changes} cambi'} "
+            "di campo: le heatmap uniscono "
             "le posizioni prima e dopo il cambio."
         )
 
@@ -939,12 +943,13 @@ def _resolve_by_role(
     if discarded > 0.20 * max(total_obs, 1):
         warnings.append(
             f"Il {discarded * 100 // max(total_obs, 1)}% delle rilevazioni è conteso fra due "
-            "tracce dello stesso giocatore: probabile una persona in più in campo."
+            f"tracce dello stesso giocatore: {EXTRA_PERSON_HINT}"
         )
     side_changes = len(assignment.changeovers)
     if side_changes:
         warnings.append(
-            f"Rilevati {side_changes} cambi di campo: le heatmap uniscono "
+            f"{'Rilevato 1 cambio' if side_changes == 1 else f'Rilevati {side_changes} cambi'} "
+            "di campo: le heatmap uniscono "
             "le posizioni prima e dopo il cambio."
         )
     return IdentityResult(
