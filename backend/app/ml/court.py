@@ -115,6 +115,15 @@ class CourtCalibration:
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
+    def horizon_y(self, x: float) -> float | None:
+        """Image row of the floor's horizon at column x: where the floor
+        plane runs to infinity. None when the horizon is vertical in the
+        picture (no real camera position does that)."""
+        h31, h32, h33 = (float(v) for v in self.homography[2])
+        if abs(h32) < 1e-12:
+            return None
+        return -(h31 * x + h33) / h32
+
     def court_polygon_px(self) -> np.ndarray:
         return self.corners_px.astype(np.float32)
 
@@ -163,6 +172,42 @@ class CourtCalibration:
             "net_error_m": self.net_error_m,
             "homography":  self.homography.tolist(),
         }
+
+
+# ── Camera height ────────────────────────────────────────────────────────────
+
+# Typical height of a player's box, racket and ready stance included.
+PLAYER_BOX_HEIGHT_M = 1.75
+# Below this the net hides the feet of the far pair: the detector closes their
+# box on the net tape, the foot point lands metres behind the player, and
+# their positions are unreliable. The recommended mount is 3-4 m.
+LOW_CAMERA_M = 2.3
+_CAMERA_MIN_SAMPLES = 50
+
+
+def estimate_camera_height(calib: CourtCalibration, boxes: list[tuple[float, float, float, float]]) -> float | None:
+    """The camera's height above the floor, in metres, from the players' boxes.
+
+    With an upright camera, a person standing on the floor spans in the
+    picture the same share of the distance between their feet and the
+    floor's horizon as their height is of the camera's: box height /
+    (foot row - horizon row) = person height / camera height. The horizon
+    comes from the calibration; the median over the match's boxes takes
+    care of jumps, crouches and wrong boxes. Boxes cut by the bottom of the
+    frame are left out. None with too few usable boxes."""
+    _, frame_h = calib.frame_size
+    ratios = []
+    for x1, y1, x2, y2 in boxes:
+        if y2 >= frame_h - 2:
+            continue
+        horizon = calib.horizon_y((x1 + x2) / 2.0)
+        if horizon is None or y2 - horizon < 20:
+            continue
+        ratios.append((y2 - y1) / (y2 - horizon))
+    if len(ratios) < _CAMERA_MIN_SAMPLES:
+        return None
+    ratio = float(np.median(ratios))
+    return PLAYER_BOX_HEIGHT_M / ratio if ratio > 0 else None
 
 
 # ── Construction & validation ────────────────────────────────────────────────

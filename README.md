@@ -271,7 +271,10 @@ L'accuratezza dipende quasi interamente dalla ripresa.
 
 - **Camera fissa** su treppiede. Se si muove, la calibrazione decade.
 - **In alto e dietro il fondo campo**, 3-4 m di altezza, tutto il campo nel
-  fotogramma compresi i quattro angoli.
+  fotogramma compresi i quattro angoli. Più in basso (sotto i 2,3 m circa) la
+  rete nasconde i piedi della coppia lontana: le loro posizioni finiscono
+  metri più indietro del vero e molte rilevazioni vanno perse. L'analisi
+  stima l'altezza della camera dai giocatori e lo segnala fra gli avvisi.
 - **1080p a 30 fps** è sufficiente; il 4K non aggiunge nulla e rallenta il
   decode.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva

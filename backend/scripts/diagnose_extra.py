@@ -61,12 +61,12 @@ def main() -> int:
         rally_min_duration_s=settings.rally_min_duration_s,
         rally_merge_gap_s=settings.rally_merge_gap_s,
     )
-    _, identity, _ = analyse_tracklets(
+    result, identity, _ = analyse_tracklets(
         tracklets=artifacts.tracklets, calibration=artifacts.calibration, config=config,
         sample_hz=artifacts.sample_hz, frames_sampled=artifacts.frames_sampled,
         analysed_s=artifacts.analysed_s,
     )
-    for warning in identity.warnings:
+    for warning in result["data_quality"]["warnings"]:
         print(f"! {warning}")
 
     usable = [t for t in artifacts.tracklets if len(t) >= 3]
