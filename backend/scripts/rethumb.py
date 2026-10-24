@@ -62,8 +62,8 @@ def main() -> int:
     identity = resolve_players(artifacts.tracklets, max_speed_ms=speed)
     if not matches_stats(identity.players, per_player):
         print("I giocatori ricalcolati non sono quelli delle statistiche: sono state\n"
-              "prodotte da una versione precedente del programma. Usa Rianalizza:\n"
-              "l'analisi sceglie già le foto con il nuovo criterio.", file=sys.stderr)
+              "prodotte da una versione precedente del programma. Usa\n"
+              "scripts/refresh.py, che aggiorna statistiche e foto insieme.", file=sys.stderr)
         return 1
 
     picks = choose_pictures(identity.players)
