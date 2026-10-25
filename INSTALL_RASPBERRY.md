@@ -651,6 +651,9 @@ Altre leve:
 - `DETECTOR_IMGSZ=416` — ~25% più veloce, perde qualche giocatore sul fondo.
 - `DETECTOR_CONF=0.25` — più rilevazioni, più falsi positivi (filtrati poi
   dal confine del campo).
+- `DETECTOR_CONF_WEAK=0.12` — soglia delle rilevazioni incerte, usate solo
+  per proseguire la traccia di un giocatore già seguito. Uguale a
+  `DETECTOR_CONF` per disattivarle.
 - `MAX_ANALYSIS_MINUTES` — tronca i video lunghi; la troncatura viene
   dichiarata nel risultato.
 

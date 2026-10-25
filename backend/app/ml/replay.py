@@ -35,6 +35,9 @@ def replay_tracking(
         max_speed_ms=max_speed_ms if max_speed_ms is not None else config.get("max_player_speed_ms", 8.0),
         max_age_s=max_age_s if max_age_s is not None else config.get("track_max_age_s", 1.2),
         min_observations=int(meta.get("min_observations", 3)),
+        # Runs that kept weak detections stored them with their confidence:
+        # they extend tracks again, and start none.
+        confirm_conf=float(config["detector_conf"]) if "detector_conf_weak" in config else 0.0,
     )
 
     by_frame: dict[int, list[Observation]] = defaultdict(list)

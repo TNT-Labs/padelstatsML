@@ -83,6 +83,18 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 </dd>
               </div>
             )}
+            {quality.tracking && (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0) && (
+              <div>
+                <dt>Tracciamento</dt>
+                <dd>
+                  {quality.tracking.feet_below_net > 0 &&
+                    `${quality.tracking.feet_below_net.toLocaleString('it-IT')} piedi coperti dalla rete stimati`}
+                  {quality.tracking.feet_below_net > 0 && quality.tracking.weak_detections > 0 && ' · '}
+                  {quality.tracking.weak_detections > 0 &&
+                    `${quality.tracking.weak_detections.toLocaleString('it-IT')} rilevazioni incerte usate per non perdere un giocatore`}
+                </dd>
+              </div>
+            )}
             {quality.verification && (
               <div>
                 <dt>Verifica a mano</dt>

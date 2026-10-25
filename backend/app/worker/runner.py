@@ -192,6 +192,7 @@ def _run_job(job_id: str) -> None:
                 detector_model=settings.detector_model,
                 detector_imgsz=settings.detector_imgsz,
                 detector_conf=settings.detector_conf,
+                detector_conf_weak=settings.detector_conf_weak,
                 detector_iou=settings.detector_iou,
                 detector_far_pass=settings.detector_far_pass,
                 inference_threads=settings.inference_threads,
