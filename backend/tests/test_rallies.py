@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.ml.identity import PlayerTrack
-from app.ml.rallies import detect_rallies
+from app.ml.rallies import ADAPTIVE_FLOOR_MS, activity_threshold, detect_rallies
 from tests.synthetic import make_observation
 
 HZ = 5.0
@@ -92,3 +92,33 @@ def test_implausible_speeds_do_not_create_rallies(calibration):
 
 def test_no_players_is_handled(calibration):
     assert detect_rallies([], sample_hz=HZ) == []
+
+
+def test_slow_rallies_are_found_with_the_threshold_of_the_match(calibration):
+    """Amateurs in a slow rally average under the fixed 1.1 m/s: with the
+    jitter filtered out, a fixed threshold lost every rally of such a match.
+    The threshold the match chooses separates its own play from its pauses."""
+    players = _players(
+        calibration,
+        [(0.0, 15.0, 0.8), (15.2, 35.0, 0.1), (35.2, 50.0, 0.8), (50.2, 70.0, 0.1)],
+    )
+    assert detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.1) == []
+
+    threshold = activity_threshold(players, HZ, ceiling_ms=1.1)
+    rallies = detect_rallies(players, sample_hz=HZ, speed_threshold_ms=threshold)
+
+    assert ADAPTIVE_FLOOR_MS <= threshold < 0.8
+    assert len(rallies) == 2
+    assert rallies[1].start_s == pytest.approx(35.2, abs=1.5)
+
+
+def test_the_threshold_of_the_match_stays_within_its_bounds(calibration):
+    # Fast play: never above the configured ceiling.
+    fast = _players(calibration, [(0.0, 15.0, 4.0), (15.2, 35.0, 2.5)])
+    assert activity_threshold(fast, HZ, ceiling_ms=1.1) <= 1.1
+    # Nobody moves: the floor keeps the jitter left after filtering from
+    # becoming play.
+    still = _players(calibration, [(0.0, 60.0, 0.1)])
+    threshold = activity_threshold(still, HZ, ceiling_ms=1.1)
+    assert threshold >= ADAPTIVE_FLOOR_MS
+    assert detect_rallies(still, sample_hz=HZ, speed_threshold_ms=threshold) == []

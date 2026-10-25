@@ -67,6 +67,12 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 <dd>dal minuto {clock(quality.analysis_start_s)} del video</dd>
               </div>
             )}
+            {quality.rally_speed_threshold_ms != null && (
+              <div>
+                <dt>Scambi</dt>
+                <dd>in gioco sopra {quality.rally_speed_threshold_ms.toFixed(2)} m/s di velocità media</dd>
+              </div>
+            )}
             <div>
               <dt>Campionamento</dt>
               <dd>

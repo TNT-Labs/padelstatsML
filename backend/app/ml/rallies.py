@@ -19,6 +19,13 @@ import numpy as np
 from app.ml.identity import PlayerTrack
 from app.ml.smoothing import SmoothedPath
 
+# Lowest threshold the match may choose: below it the filtered speed of a
+# player standing still is no longer told from slow play.
+ADAPTIVE_FLOOR_MS = 0.4
+# The two kinds of moment — playing, between points — are told apart on
+# this range of mean speeds; faster is play whatever the split.
+_ADAPTIVE_RANGE_MS = 3.0
+
 
 @dataclass(frozen=True)
 class Rally:
@@ -59,8 +66,59 @@ def detect_rallies(
     With `paths` (app.ml.smoothing) the speeds are the filtered ones: the
     raw steps carry the detector's jitter, which made players standing
     between points look like they were moving."""
-    if not players or sample_hz <= 0:
+    series = _activity(players, sample_hz, max_speed_ms, paths)
+    if series is None:
         return []
+    times, smoothed, counts = series
+    return _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players)
+
+
+def activity_threshold(
+    players: list[PlayerTrack],
+    sample_hz: float,
+    ceiling_ms: float,
+    max_speed_ms: float = 8.0,
+    min_players: int = 2,
+    paths: dict[int, SmoothedPath] | None = None,
+) -> float:
+    """The speed that separates play from the time between points, read
+    from the match itself, never above `ceiling_ms`.
+
+    With the jitter filtered out, a fixed threshold is a guess at how fast
+    these players move: amateurs in a slow rally average well under the
+    1.1 m/s that suited the raw speeds, and their rallies were lost. The
+    match's mean speeds form two groups — standing or walking between
+    points, moving in play — and the split that keeps each group tightest
+    (Otsu's) is where one ends and the other begins."""
+    series = _activity(players, sample_hz, max_speed_ms, paths)
+    if series is None:
+        return ceiling_ms
+    _, smoothed, counts = series
+    values = np.clip(smoothed[counts >= min_players], 0.0, _ADAPTIVE_RANGE_MS)
+    if values.size < 20:
+        return ceiling_ms
+    histogram, edges = np.histogram(values, bins=60, range=(0.0, _ADAPTIVE_RANGE_MS))
+    weights = histogram.astype(np.float64)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+    total, total_sum = weights.sum(), float((weights * centres).sum())
+    best, split = -1.0, ceiling_ms
+    below = below_sum = 0.0
+    for i in range(len(weights) - 1):
+        below += weights[i]
+        below_sum += weights[i] * centres[i]
+        above = total - below
+        if below == 0 or above == 0:
+            continue
+        between = below * above * (below_sum / below - (total_sum - below_sum) / above) ** 2
+        if between > best:
+            best, split = between, float(edges[i + 1])
+    return float(min(ceiling_ms, max(split, ADAPTIVE_FLOOR_MS)))
+
+
+def _activity(players, sample_hz, max_speed_ms, paths):
+    """(times, mean speed smoothed over ~1 s, players counted) or None."""
+    if not players or sample_hz <= 0:
+        return None
 
     speeds_by_time: dict[float, list[float]] = defaultdict(list)
     sample_period = 1.0 / sample_hz
@@ -92,7 +150,7 @@ def detect_rallies(
             speeds_by_time[round(cur.timestamp_s, 3)].append(speed)
 
     if not speeds_by_time:
-        return []
+        return None
 
     times = np.array(sorted(speeds_by_time), dtype=np.float64)
     mean_speed = np.array(
@@ -101,8 +159,10 @@ def detect_rallies(
     counts = np.array([len(speeds_by_time[round(t, 3)]) for t in times], dtype=np.int32)
 
     window = max(3, int(round(sample_hz)) | 1)        # ~1 s, forced odd
-    smoothed = _moving_median(mean_speed, window)
+    return times, _moving_median(mean_speed, window), counts
 
+
+def _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players):
     active = (smoothed >= speed_threshold_ms) & (counts >= min_players)
     segments = _segments_from_mask(times, active)
     segments = _merge_close(segments, merge_gap_s)

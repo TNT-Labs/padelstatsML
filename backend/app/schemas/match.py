@@ -185,6 +185,9 @@ class DataQuality(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     # Second of the video the analysis started from (0: the beginning).
     analysis_start_s: float = 0.0
+    # Mean speed above which the players were taken to be in play, chosen on
+    # the match; None for results from before it was.
+    rally_speed_threshold_ms: float | None = None
 
 
 class RallyRead(BaseModel):

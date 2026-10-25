@@ -33,7 +33,7 @@ from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.smoothing import smooth_path
-from app.ml.rallies import Rally, detect_rallies
+from app.ml.rallies import Rally, activity_threshold, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
 from app.ml.tracking import CourtTracker, Observation, Tracklet
@@ -56,6 +56,9 @@ class PipelineConfig:
     track_max_age_s: float = 1.2
     track_min_observations: int = 3
     rally_speed_threshold_ms: float = 1.1
+    # True: the match chooses its threshold, at most rally_speed_threshold_ms
+    # (rallies.activity_threshold). False: exactly rally_speed_threshold_ms.
+    rally_speed_adaptive: bool = True
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 1.5
     # Optional: without it identity falls back to kit colour.
@@ -311,6 +314,7 @@ class AnalysisPipeline:
                 "max_player_speed_ms": self.config.max_player_speed_ms,
                 "track_max_age_s": self.config.track_max_age_s,
                 "rally_speed_threshold_ms": self.config.rally_speed_threshold_ms,
+                "rally_speed_adaptive": self.config.rally_speed_adaptive,
                 "rally_min_duration_s": self.config.rally_min_duration_s,
                 "rally_merge_gap_s": self.config.rally_merge_gap_s,
             },
@@ -342,10 +346,16 @@ def analyse_tracklets(
     # Each player's path with the detector's jitter filtered out: what
     # distance, speed and the rally boundaries are measured on.
     paths = {p.player_id: smooth_path(p.observations, calibration) for p in identity.players}
+    # The configured threshold is the ceiling; the match picks its own below
+    # it (see rallies.activity_threshold).
+    threshold = activity_threshold(
+        identity.players, sample_hz, config.rally_speed_threshold_ms,
+        max_speed_ms=config.max_player_speed_ms, paths=paths,
+    ) if config.rally_speed_adaptive else config.rally_speed_threshold_ms
     rallies = detect_rallies(
         identity.players,
         sample_hz=sample_hz,
-        speed_threshold_ms=config.rally_speed_threshold_ms,
+        speed_threshold_ms=threshold,
         min_duration_s=config.rally_min_duration_s,
         merge_gap_s=config.rally_merge_gap_s,
         max_speed_ms=config.max_player_speed_ms,
@@ -367,6 +377,7 @@ def analyse_tracklets(
         )
     )
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
+    result["data_quality"]["rally_speed_threshold_ms"] = round(threshold, 2)
     return result, identity, rallies
 
 

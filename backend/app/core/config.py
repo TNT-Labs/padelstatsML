@@ -116,7 +116,12 @@ class Settings(BaseSettings):
     track_max_age_s: float = 1.2
 
     # ── Rally segmentation ───────────────────────────────────────────────────
+    # Mean speed of the players above which a point is in play. With
+    # rally_speed_adaptive (default) it is the ceiling and each match picks
+    # its own threshold below it — slow amateur rallies included; set
+    # RALLY_SPEED_ADAPTIVE=false to use exactly this value.
     rally_speed_threshold_ms: float = 1.1
+    rally_speed_adaptive: bool = True
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 1.5
 

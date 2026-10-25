@@ -192,6 +192,8 @@ export interface DataQuality {
   warnings: string[]
   /** Second of the video the analysis started from; absent in older results. */
   analysis_start_s?: number
+  /** Mean speed above which the players were in play, chosen on the match. */
+  rally_speed_threshold_ms?: number | null
 }
 
 export interface Rally {
