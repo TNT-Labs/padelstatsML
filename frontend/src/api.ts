@@ -194,6 +194,8 @@ export interface DataQuality {
   analysis_start_s?: number
   /** Mean speed above which the players were in play, chosen on the match. */
   rally_speed_threshold_ms?: number | null
+  /** The video's frame rate varied (phones): times were read from the video. */
+  variable_frame_rate?: boolean
   /** Last accuracy check against points marked by hand. */
   verification?: VerificationResult | null
 }

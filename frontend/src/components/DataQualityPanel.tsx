@@ -94,6 +94,7 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
               <dt>Campionamento</dt>
               <dd>
                 {quality.sample_hz.toFixed(1)} Hz · {quality.frames_sampled.toLocaleString('it-IT')} frame
+                {quality.variable_frame_rate && ' · video a frequenza variabile, tempi letti dal video'}
               </dd>
             </div>
             <div>
