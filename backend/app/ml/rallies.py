@@ -22,6 +22,9 @@ from app.ml.smoothing import SmoothedPath
 # Lowest threshold the match may choose: below it the filtered speed of a
 # player standing still is no longer told from slow play.
 ADAPTIVE_FLOOR_MS = 0.4
+# Once started, a rally lasts while the mean speed stays above this share of
+# the threshold that started it (1.0: a single threshold, as before).
+HYSTERESIS_RATIO = 0.6
 # The two kinds of moment — playing, between points — are told apart on
 # this range of mean speeds; faster is play whatever the split.
 _ADAPTIVE_RANGE_MS = 3.0
@@ -56,10 +59,11 @@ def detect_rallies(
     sample_hz: float,
     speed_threshold_ms: float = 1.1,
     min_duration_s: float = 3.0,
-    merge_gap_s: float = 1.5,
+    merge_gap_s: float = 3.0,
     max_speed_ms: float = 8.0,
     min_players: int = 2,
     paths: dict[int, SmoothedPath] | None = None,
+    hysteresis: float = HYSTERESIS_RATIO,
 ) -> list[Rally]:
     """Return the intervals during which a point is being played.
 
@@ -70,7 +74,8 @@ def detect_rallies(
     if series is None:
         return []
     times, smoothed, counts = series
-    return _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players)
+    return _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players,
+                    hysteresis)
 
 
 def activity_threshold(
@@ -162,8 +167,27 @@ def _activity(players, sample_hz, max_speed_ms, paths):
     return times, _moving_median(mean_speed, window), counts
 
 
-def _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players):
-    active = (smoothed >= speed_threshold_ms) & (counts >= min_players)
+def _rallies(times, smoothed, counts, speed_threshold_ms, min_duration_s, merge_gap_s, min_players,
+             hysteresis=HYSTERESIS_RATIO):
+    enough = counts >= min_players
+    if hysteresis >= 1.0:
+        active = (smoothed >= speed_threshold_ms) & enough
+    else:
+        # A rally starts above the threshold and lasts while the play stays
+        # above a lower one: the slow moments of a point — volleys at the
+        # net, a lob watched — no longer cut it in pieces, and walking
+        # between points still does not start one.
+        low = max(ADAPTIVE_FLOOR_MS, hysteresis * speed_threshold_ms)
+        active = np.zeros(len(times), dtype=bool)
+        playing = False
+        for i in range(len(times)):
+            if not enough[i]:
+                playing = False
+            elif playing:
+                playing = smoothed[i] >= low
+            else:
+                playing = smoothed[i] >= speed_threshold_ms
+            active[i] = playing
     segments = _segments_from_mask(times, active)
     segments = _merge_close(segments, merge_gap_s)
     segments = [(a, b) for a, b in segments if (b - a) >= min_duration_s]

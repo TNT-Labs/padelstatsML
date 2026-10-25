@@ -122,3 +122,20 @@ def test_the_threshold_of_the_match_stays_within_its_bounds(calibration):
     threshold = activity_threshold(still, HZ, ceiling_ms=1.1)
     assert threshold >= ADAPTIVE_FLOOR_MS
     assert detect_rallies(still, sample_hz=HZ, speed_threshold_ms=threshold) == []
+
+
+def test_a_slow_moment_inside_a_rally_does_not_cut_it(calibration):
+    """Four seconds of volleys at the net, everybody nearly still: with a
+    single threshold the rally fell in two; once started, it now lasts
+    while the play stays above a lower one — and walking between points,
+    slower still, does not start one."""
+    players = _players(
+        calibration,
+        [(0.0, 8.0, 1.5), (8.2, 12.0, 0.6), (12.2, 20.0, 1.5), (20.2, 45.0, 0.1)],
+    )
+    single = detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0, hysteresis=1.0)
+    rallies = detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0)
+
+    assert len(single) == 2
+    assert len(rallies) == 1
+    assert rallies[0].end_s == pytest.approx(20.0, abs=1.5)
