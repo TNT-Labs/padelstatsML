@@ -26,7 +26,15 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from app.ml.court import NET_Y_M, SERVICE_LINE_OFFSET_M, CourtCalibration
+from app.ml.court import (
+    COURT_CORNERS_M,
+    NET_Y_M,
+    SERVICE_LINE_OFFSET_M,
+    CalibrationError,
+    CourtCalibration,
+    build_calibration,
+    fit_corners,
+)
 from app.ml.identity import PlayerTrack
 from app.ml.rallies import Rally
 from app.ml.smoothing import MAX_BRIDGE_S, SmoothedPath
@@ -94,6 +102,8 @@ def calibration_errors(calib: CourtCalibration, marks: dict[str, tuple[float, fl
         error = float(np.hypot(x - landmark.x_m, y - landmark.y_m))
         items.append({
             "key": key, "label": landmark.label, "half": _half(landmark.y_m),
+            # Kept, so the calibration can be corrected from them later.
+            "px": [round(float(u), 1), round(float(v), 1)],
             "measured_m": [round(float(x), 2), round(float(y), 2)],
             "error_m": round(error, 2),
         })
@@ -219,3 +229,52 @@ def landmarks_payload() -> list[dict]:
         for lm in LANDMARKS
     ]
 
+
+
+# ── Correcting the calibration from the landmarks ────────────────────────────
+
+# The four corners the calibration was made from count in the fit too — a
+# corner out of the picture was placed by eye, so less than a landmark.
+CORNER_WEIGHT = 0.25
+# Fewer landmarks than this cannot be checked one against the others.
+REFINE_MIN_LANDMARKS = 4
+
+
+def refine_calibration(calib: CourtCalibration, marks: dict[str, tuple[float, float]]) -> dict:
+    """A calibration fitted on the corners and the marked landmarks, and
+    how wrong it is expected to be.
+
+    The error is measured honestly: each landmark is left out in turn, the
+    calibration fitted on the others, and the distance at the one left out
+    is its error — a fit is always right on the points it was made from."""
+    known = [(key, marks[key]) for key in (lm.key for lm in LANDMARKS) if key in marks]
+    if len(known) < REFINE_MIN_LANDMARKS:
+        raise CalibrationError(
+            f"Servono almeno {REFINE_MIN_LANDMARKS} punti del campo segnati per correggere la calibrazione."
+        )
+    corners_px = np.asarray(calib.corners_px, dtype=np.float64)
+    lm_px = np.array([p for _, p in known], dtype=np.float64)
+    lm_m = np.array([(_BY_KEY[k].x_m, _BY_KEY[k].y_m) for k, _ in known], dtype=np.float64)
+
+    def fit(skip: int | None) -> CourtCalibration:
+        keep = [i for i in range(len(known)) if i != skip]
+        corners = fit_corners(
+            np.vstack([corners_px, lm_px[keep]]),
+            np.vstack([COURT_CORNERS_M, lm_m[keep]]),
+            np.r_[np.full(4, CORNER_WEIGHT), np.ones(len(keep))],
+        )
+        return build_calibration(corners, calib.frame_size, calib.source)
+
+    before, after = [], []
+    for i, (key, (u, v)) in enumerate(known):
+        truth = lm_m[i]
+        before.append(float(np.linalg.norm(calib.floor_points_to_court(np.array([[u, v]], np.float32))[0] - truth)))
+        refit = fit(i)
+        after.append(float(np.linalg.norm(refit.floor_points_to_court(np.array([[u, v]], np.float32))[0] - truth)))
+    proposal = fit(None)
+    return {
+        "corners_px": [[round(float(x), 2), round(float(y), 2)] for x, y in proposal.corners_px],
+        "before": _summary(before),
+        "after": _summary(after),
+        "landmarks": len(known),
+    }

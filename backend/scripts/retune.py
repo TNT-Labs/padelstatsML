@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings                # noqa: E402
 from app.ml.artifacts import load_artifacts, resolve_artifacts_dir  # noqa: E402
+from app.ml.reprocess import match_calibration, with_calibration  # noqa: E402
 from app.ml.pipeline import PipelineConfig, analyse_tracklets   # noqa: E402
 
 SWEEPABLE = {
@@ -68,7 +69,7 @@ def main() -> int:
         print(f"Artefatti non trovati in {directory}.", file=sys.stderr)
         return 1
 
-    artifacts = load_artifacts(directory)
+    artifacts = with_calibration(load_artifacts(directory), match_calibration(directory.name))
     if not artifacts.complete:
         print(
             "ATTENZIONE: questa analisi non è conclusa. Il file delle tracce è\n"

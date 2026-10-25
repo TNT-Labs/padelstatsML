@@ -227,7 +227,14 @@ export interface ErrorSummary {
 export interface VerificationResult {
   at: string
   calibration: {
-    items: { key: string; label: string; half: string; measured_m: [number, number]; error_m: number }[]
+    items: {
+      key: string
+      label: string
+      half: string
+      measured_m: [number, number]
+      error_m: number
+      px?: Point
+    }[]
     all: ErrorSummary
     by_half: Record<'vicina' | 'rete' | 'lontana', ErrorSummary>
   }
@@ -240,6 +247,17 @@ export interface VerificationResult {
     raw: { all: ErrorSummary; by_half: Record<'vicina' | 'lontana', ErrorSummary> }
     smoothed: { all: ErrorSummary; by_half: Record<'vicina' | 'lontana', ErrorSummary> }
   } | null
+  /** Recorded after the calibration was corrected from these landmarks. */
+  refined?: boolean
+}
+
+export interface RefineProposal {
+  corners_px: Point[]
+  /** Error of the current calibration at the landmarks. */
+  before: ErrorSummary
+  /** Expected error of the corrected one: each landmark left out of the fit. */
+  after: ErrorSummary
+  landmarks: number
 }
 
 export interface VerificationPlan {
@@ -348,6 +366,16 @@ export const api = {
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
 
   getVerification: (id: string) => req<VerificationPlan>(`/api/matches/${id}/verification`),
+  refineCalibration: (id: string, landmarks: Record<string, Point>) =>
+    req<RefineProposal>(`/api/matches/${id}/verification/refine`, {
+      method: 'POST',
+      body: JSON.stringify({ landmarks }),
+    }),
+  applyRefinement: (id: string, landmarks: Record<string, Point>, corners_px: Point[]) =>
+    req<{ names_cleared: boolean }>(`/api/matches/${id}/verification/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ landmarks, corners_px }),
+    }),
   submitVerification: (
     id: string,
     body: { landmarks: Record<string, Point>; frames: { frame_index: number; feet: Point[] }[] },

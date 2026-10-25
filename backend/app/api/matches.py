@@ -702,14 +702,14 @@ async def get_player_tracks(
 ) -> Response:
     """Each player's box through the video, for the web player's overlay:
     see app/ml/player_boxes.py."""
-    await _get_match(db, match_id, user)
+    match = await _get_match(db, match_id, user)
     stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
     per_player = stats.per_player if stats is not None else None
     try:
         async with _BOXES_LOCK:
             data = await run_in_threadpool(
                 player_boxes_gz, artifacts_dir(match_id), per_player,
-                get_settings().max_player_speed_ms,
+                get_settings().max_player_speed_ms, match.calibration,
             )
     except BoxesUnavailable as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
