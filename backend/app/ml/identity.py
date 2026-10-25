@@ -129,6 +129,9 @@ STILL_MAX_SHIFT_M = 0.5       # floor position, metres
 EXTRA_PERSON_HINT = "probabile una persona in più in campo."
 STATIC_SPOT_IOU = 0.5
 STATIC_MIN_SEEN_S = 60.0
+# A detection inside any other tracklet whose box overlaps a static object's
+# this much is the object again.
+STATIC_MATCH_IOU = 0.6
 STATIC_MIN_SPAN_S = 120.0
 
 
@@ -435,7 +438,26 @@ def drop_static(tracklets: list[Tracklet]) -> tuple[list[Tracklet], int, int]:
             static.update(id(t) for t in members)
     if not static:
         return tracklets, 0, 0
-    return [t for t in tracklets if id(t) not in static], found, observations
+
+    # The object's detections also end up inside other tracklets: where a
+    # player stands near it — or is placed near it, feet hidden by the net —
+    # the tracker stitches the two together, and such a tracklet is not
+    # still. Those detections go too; the player's own stay.
+    boxes = [_median_box(t) for t in tracklets if id(t) in static]
+    kept: list[Tracklet] = []
+    for tracklet in tracklets:
+        if id(tracklet) in static:
+            continue
+        own = [o for o in tracklet.observations
+               if not any(_iou(np.asarray(o.bbox, dtype=np.float64), box) >= STATIC_MATCH_IOU for box in boxes)]
+        observations += len(tracklet) - len(own)
+        if len(own) == len(tracklet):
+            kept.append(tracklet)
+        elif len(own) >= MIN_PIECE_OBSERVATIONS:
+            kept.append(Tracklet(id=tracklet.id, observations=own))
+        else:
+            observations += len(own)
+    return kept, found, observations
 
 
 def _is_still(tracklet: Tracklet) -> bool:

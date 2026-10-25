@@ -292,3 +292,29 @@ def test_a_player_waiting_still_between_points_is_kept(calibration):
 
     assert 500 in {tid for p in result.players for tid in p.source_tracklets}
     assert not any("oggetto fermo" in w or "oggetti fermi" in w for w in result.warnings)
+
+
+def test_a_static_object_stitched_into_a_player_track_is_taken_out_of_it(calibration):
+    """The far players, feet hidden by the net, are placed near the back
+    wall, where the banner is: the tracker stitches banner detections into
+    their tracks, which are then not still. Once the banner is known, its
+    detections leave those tracks too — or it becomes a player's picture."""
+    duration = 240.0
+    banner_xy = (1.5, 19.6)
+    tracklets, truth = _play(calibration, duration, shirts=[0, 1, 2, 3])
+    banner = make_observation(calibration, banner_xy, 0.0, shirt=1)
+    mixed = []
+    for tracklet in tracklets:
+        observations = list(tracklet.observations)
+        if truth[tracklet.id] in (2, 3):
+            for i in range(0, len(observations), 4):
+                o = observations[i]
+                observations[i] = replace(banner, frame_index=o.frame_index, timestamp_s=o.timestamp_s)
+        mixed.append(Tracklet(id=tracklet.id, observations=observations))
+
+    result = resolve_players(mixed + _static_object(calibration, duration, xy=banner_xy))
+
+    assert _people(result, truth) == [0, 1, 2, 3]
+    assert not any(o.foot_court == banner_xy for p in result.players for o in p.observations)
+    from app.ml.thumbnails import choose_pictures
+    assert all(obs.foot_court != banner_xy for obs in choose_pictures(result.players).values())
