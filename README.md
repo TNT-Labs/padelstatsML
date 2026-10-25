@@ -30,11 +30,11 @@ Nulla viene stimato di nascosto.
 
 | Metrica | Come |
 |---|---|
-| Distanza percorsa (totale e negli scambi) | somma dei passi in coordinate campo |
-| Velocità media e di punta | derivata dalle posizioni, 95° percentile per la punta |
+| Distanza percorsa (totale e negli scambi) | somma dei passi sul percorso filtrato (Kalman), al netto del tremolio del rilevatore |
+| Velocità media e di punta | dal percorso filtrato, 95° percentile per la punta |
 | Occupazione del campo (heatmap 0,5 m) | istogramma delle posizioni dei piedi |
 | Quota di tempo a rete / metà campo / fondo | distanza dalla linea di rete |
-| Area di campo coperta | celle occupate × 0,25 m² |
+| Area di campo coperta | celle occupate per almeno 1 s × 0,25 m² |
 | Numero, durata e distribuzione degli scambi | segmentazione dal movimento dei giocatori |
 | Tempo di gioco effettivo | rapporto scambi / durata |
 | Copertura del tracciamento per giocatore | quanto della partita ciascuno è stato seguito |

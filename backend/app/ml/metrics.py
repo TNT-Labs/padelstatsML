@@ -31,12 +31,17 @@ from app.ml.court import (
 from app.ml.identity import EXTRA_PERSON_HINT, IdentityResult, PlayerTrack
 from app.ml.rallies import Rally
 from app.ml.roles import ROLE_NAMES
+from app.ml.smoothing import SmoothedPath, smooth_path
 
 # Heatmap resolution. 0.5 m cells give 20x40 = 800 cells, detailed enough to
 # show whether a player holds the net position and small enough to serialise.
 CELL_M = 0.5
 GRID_X = int(COURT_WIDTH_M / CELL_M)
 GRID_Y = int(COURT_LENGTH_M / CELL_M)
+
+# A cell counts towards the area covered once the player has spent this long
+# in it: one sample of jitter is not ground covered.
+COVERAGE_MIN_S = 1.0
 
 # Court zones measured as distance from the net.
 ZONE_NET_M = 3.0
@@ -54,6 +59,9 @@ class MetricsInput:
     analysed_s: float
     max_speed_ms: float
     detector_model: str
+    # Each player's filtered path (app.ml.smoothing), by player id; computed
+    # here when not given.
+    paths: dict[int, SmoothedPath] | None = None
 
 
 def compute_metrics(data: MetricsInput) -> dict:
@@ -62,11 +70,14 @@ def compute_metrics(data: MetricsInput) -> dict:
     heatmaps: dict[str, list[list[float]]] = {}
 
     sample_period = 1.0 / data.sample_hz if data.sample_hz > 0 else 0.2
-    max_step_s = sample_period * 2.5
     expected_samples = max(int(round(data.analysed_s * data.sample_hz)), 1)
+    paths = data.paths if data.paths is not None else {
+        p.player_id: smooth_path(p.observations, data.calibration) for p in data.players
+    }
 
     for player in data.players:
-        stats, grid = _player_metrics(player, data, max_step_s, expected_samples)
+        path = paths.get(player.player_id) or smooth_path(player.observations, data.calibration)
+        stats, grid = _player_metrics(player, path, data, sample_period, expected_samples)
         per_player[str(player.player_id)] = stats
         heatmaps[str(player.player_id)] = _serialise_grid(grid)
 
@@ -86,49 +97,41 @@ def compute_metrics(data: MetricsInput) -> dict:
 
 def _player_metrics(
     player: PlayerTrack,
+    path: SmoothedPath,
     data: MetricsInput,
-    max_step_s: float,
+    sample_period: float,
     expected_samples: int,
 ) -> tuple[dict, np.ndarray]:
+    """Everything is measured on the filtered path: the raw positions carry
+    the detector's jitter, which summed as distance inflated it by 15-80%
+    (see app/ml/smoothing.py)."""
     observations = player.observations
-    positions = np.array([o.foot_court for o in observations], dtype=np.float64)
-    times = np.array([o.timestamp_s for o in observations], dtype=np.float64)
+    positions = path.positions if len(path.times) else np.zeros((0, 2))
 
     grid = np.zeros((GRID_X, GRID_Y), dtype=np.float64)
-    ix = np.clip((positions[:, 0] / CELL_M).astype(int), 0, GRID_X - 1)
-    iy = np.clip((positions[:, 1] / CELL_M).astype(int), 0, GRID_Y - 1)
-    np.add.at(grid, (ix, iy), 1.0)
+    if len(positions):
+        ix = np.clip((positions[:, 0] / CELL_M).astype(int), 0, GRID_X - 1)
+        iy = np.clip((positions[:, 1] / CELL_M).astype(int), 0, GRID_Y - 1)
+        np.add.at(grid, (ix, iy), 1.0)
 
-    distance_total = 0.0
-    distance_rally = 0.0
-    speeds: list[float] = []
-    rally_time = 0.0
-    rejected_steps = 0
+    lengths, ends = path.steps()
+    same = path.segment[1:] == path.segment[:-1] if len(path.times) > 1 else np.zeros(0, dtype=bool)
+    durations = np.diff(path.times)[same] if len(path.times) > 1 else np.zeros(0)
+    in_rally = np.array([_in_any_rally(t, data.rallies) for t in ends], dtype=bool)
+    distance_total = float(lengths.sum())
+    distance_rally = float(lengths[in_rally].sum()) if in_rally.size else 0.0
+    rally_time = float(durations[in_rally].sum()) if in_rally.size else 0.0
 
-    for i in range(1, len(observations)):
-        dt = times[i] - times[i - 1]
-        if dt <= 1e-3 or dt > max_step_s:
-            continue                      # gap in tracking, not a real step
-        step = float(np.linalg.norm(positions[i] - positions[i - 1]))
-        speed = step / dt
-        if speed > data.max_speed_ms:
-            rejected_steps += 1           # homography noise or an id swap
-            continue
+    zone = _zone_distribution(positions[:, 1]) if len(positions) else _zone_distribution(np.zeros(0))
+    min_samples = max(COVERAGE_MIN_S / sample_period, 1.0)
+    occupied_cells = int(np.count_nonzero(grid >= min_samples))
 
-        distance_total += step
-        speeds.append(speed)
-        if _in_any_rally(times[i], data.rallies):
-            distance_rally += step
-            rally_time += dt
-
-    zone = _zone_distribution(positions[:, 1])
-    occupied_cells = int(np.count_nonzero(grid))
-
-    speeds_arr = np.array(speeds, dtype=np.float64)
+    speeds_arr = path.speeds
     avg_speed = float(distance_rally / rally_time) if rally_time > 0.5 else 0.0
-    # 95th percentile rather than the max: one bad association should not
-    # define a player's top speed.
+    # 95th percentile rather than the max: a turn the filter overshoots
+    # should not define a player's top speed.
     peak_speed = float(np.percentile(speeds_arr, 95)) if speeds_arr.size >= 10 else 0.0
+    rejected_steps = path.outliers
 
     stats = {
         "team": player.team,
