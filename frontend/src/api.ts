@@ -194,6 +194,8 @@ export interface DataQuality {
   analysis_start_s?: number
   /** Mean speed above which the players were in play, chosen on the match. */
   rally_speed_threshold_ms?: number | null
+  /** Last accuracy check against points marked by hand. */
+  verification?: VerificationResult | null
 }
 
 export interface Rally {
@@ -202,6 +204,49 @@ export interface Rally {
   end_s: number
   duration_s: number
   players_tracked: number
+}
+
+// ── Accuracy check ──────────────────────────────────────────────────────────
+
+export interface Landmark {
+  key: string
+  label: string
+  x_m: number
+  y_m: number
+  half: 'vicina' | 'rete' | 'lontana'
+}
+
+export interface ErrorSummary {
+  count: number
+  mean_m?: number
+  median_m?: number
+  p90_m?: number
+  max_m?: number
+}
+
+export interface VerificationResult {
+  at: string
+  calibration: {
+    items: { key: string; label: string; half: string; measured_m: [number, number]; error_m: number }[]
+    all: ErrorSummary
+    by_half: Record<'vicina' | 'rete' | 'lontana', ErrorSummary>
+  }
+  players: {
+    frames: number
+    marks: number
+    matched: number
+    missed: number
+    extra: number
+    raw: { all: ErrorSummary; by_half: Record<'vicina' | 'lontana', ErrorSummary> }
+    smoothed: { all: ErrorSummary; by_half: Record<'vicina' | 'lontana', ErrorSummary> }
+  } | null
+}
+
+export interface VerificationPlan {
+  landmarks: Landmark[]
+  frames: { frame_index: number; t: number }[]
+  frame_size: [number, number]
+  last: VerificationResult | null
 }
 
 export interface MatchStats {
@@ -301,6 +346,16 @@ export const api = {
   deleteMatch: (id: string) => req<void>(`/api/matches/${id}`, { method: 'DELETE' }),
 
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
+
+  getVerification: (id: string) => req<VerificationPlan>(`/api/matches/${id}/verification`),
+  submitVerification: (
+    id: string,
+    body: { landmarks: Record<string, Point>; frames: { frame_index: number; feet: Point[] }[] },
+  ) =>
+    req<VerificationResult>(`/api/matches/${id}/verification`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   videoUrl: (id: string) => `${BASE}/api/matches/${id}/video`,
   getPlayerTracks: (id: string) => req<PlayerTracks>(`/api/matches/${id}/tracks`),
 

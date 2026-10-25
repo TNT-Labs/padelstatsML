@@ -1,0 +1,114 @@
+"""Accuracy check against points marked by hand."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from app.ml.court import CalibrationSource, build_calibration
+from app.ml.identity import PlayerTrack
+from app.ml.rallies import Rally
+from app.ml.smoothing import smooth_path
+from app.ml.tracking import Observation
+from app.ml.verification import LANDMARKS, calibration_errors, choose_frames, player_errors
+from tests.test_court import COURT_CORNERS_M_LIST, FRAME, _pinhole
+
+HZ = 5.0
+
+
+def _camera(shift_near_px: float = 0.0):
+    """A camera and a calibration from its corners; the two near corners
+    placed `shift_near_px` too low, as a hurried hand would."""
+    project = _pinhole(3.5, 12.0)
+    corners = [list(project((x, y, 0.0))) for x, y in COURT_CORNERS_M_LIST]
+    corners[2][1] += shift_near_px
+    corners[3][1] += shift_near_px
+    return project, build_calibration(corners, FRAME, CalibrationSource.MANUAL)
+
+
+def test_a_right_calibration_lands_every_landmark_where_it_is():
+    project, calib = _camera()
+    marks = {lm.key: project((lm.x_m, lm.y_m, 0.0)) for lm in LANDMARKS}
+
+    result = calibration_errors(calib, marks)
+
+    assert result["all"]["count"] == len(LANDMARKS)
+    assert result["all"]["max_m"] < 0.02
+
+
+def test_a_misplaced_corner_shows_up_where_it_was_misplaced():
+    project, calib = _camera(shift_near_px=25.0)
+    marks = {lm.key: project((lm.x_m, lm.y_m, 0.0)) for lm in LANDMARKS}
+
+    result = calibration_errors(calib, marks)
+
+    assert result["by_half"]["vicina"]["mean_m"] > 0.2
+    assert result["by_half"]["vicina"]["mean_m"] > result["by_half"]["lontana"]["mean_m"]
+    # Unknown keys are ignored, not an error.
+    assert calibration_errors(calib, {"altro": (1.0, 1.0)})["all"] == {"count": 0}
+
+
+def _player(calib, project, pid, team, positions, start_frame=0):
+    observations = []
+    for k, (x, y) in enumerate(positions):
+        foot = project((x, y, 0.0))
+        court = calib.floor_points_to_court(np.array([foot], dtype=np.float32))[0]
+        observations.append(Observation(
+            start_frame + 6 * k, (start_frame + 6 * k) / 30.0, (foot[0] - 20, foot[1] - 120, foot[0] + 20, foot[1]),
+            foot, (float(court[0]), float(court[1])), 0.9, np.full(72, 1 / 72, np.float32),
+        ))
+    return PlayerTrack(pid, team, observations, [pid])
+
+
+def test_players_are_paired_with_the_marks_and_the_misses_counted():
+    project, calib = _camera()
+    homes = [(2.5, 5.0), (7.5, 5.0), (2.5, 15.0), (7.5, 15.0)]
+    players = [_player(calib, project, i, i // 2, [homes[i]] * 20) for i in range(3)]
+    paths = {p.player_id: smooth_path(p.observations, calib) for p in players}
+    frame = players[0].observations[10].frame_index
+    # Marked: the three placed, 10 cm off, and the fourth the analysis missed.
+    feet = [project((x + 0.1, y, 0.0)) for x, y in homes]
+
+    result = player_errors(calib, players, paths, [(frame, feet)])
+
+    assert result["matched"] == 3 and result["missed"] == 1 and result["extra"] == 0
+    assert result["raw"]["all"]["mean_m"] == pytest.approx(0.1, abs=0.03)
+    assert result["smoothed"]["all"]["count"] == 3
+    assert set(result["raw"]["by_half"]) == {"vicina", "lontana"}
+
+
+def test_a_player_placed_where_nobody_is_counts_as_extra():
+    project, calib = _camera()
+    players = [_player(calib, project, 0, 0, [(5.0, 5.0)] * 10)]
+    frame = players[0].observations[5].frame_index
+
+    result = player_errors(calib, players, {}, [(frame, [project((5.0, 15.0, 0.0))])])
+
+    assert result["matched"] == 0 and result["missed"] == 1 and result["extra"] == 1
+
+
+def test_frames_are_spread_and_half_of_them_inside_rallies():
+    project, calib = _camera()
+    players = [_player(calib, project, i, i // 2, [(2.0 + 2 * i, 5.0 + 3 * i)] * 300) for i in range(4)]
+    end = players[0].observations[-1].timestamp_s
+    rallies = [Rally(0, 10.0, 20.0, 4), Rally(1, 40.0, 50.0, 4)]
+
+    frames = choose_frames(players, rallies)
+
+    assert len(frames) == 8
+    assert len({f["frame_index"] for f in frames}) == 8
+    assert sum(1 for f in frames if any(r.contains(f["t"]) for r in rallies)) == 4
+    assert all(0.0 <= f["t"] <= end for f in frames)
+
+
+@pytest.mark.asyncio
+async def test_the_check_needs_a_completed_match_and_an_editor():
+    from tests.test_auth import _match_of, _name
+    from tests.conftest import signed_in
+
+    owner = await signed_in(_name("u"))
+    viewer = await signed_in(_name("vis"), "visualizzatore")
+    async with owner, viewer:
+        match_id = await _match_of(owner)
+        assert (await owner.get(f"/api/matches/{match_id}/verification")).status_code == 409
+        assert (await viewer.get(f"/api/matches/{match_id}/verification")).status_code == 403
+        assert (await viewer.post(f"/api/matches/{match_id}/verification", json={})).status_code == 403
