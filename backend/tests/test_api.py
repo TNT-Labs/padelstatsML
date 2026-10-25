@@ -541,3 +541,28 @@ async def test_without_artifacts_the_boxes_are_missing_with_a_reason(uploaded_ma
     response = await client.get(f"/api/matches/{match_id}/tracks")
     assert response.status_code == 404
     assert "KEEP_ARTIFACTS" in response.json()["detail"]
+
+
+async def test_the_analysis_start_is_stored_with_the_calibration(uploaded_match, client):
+    match_id, _ = uploaded_match
+    from app.core.database import sync_session
+    from app.models import Match
+
+    # The test clip lasts seconds: any start would leave nothing to analyse.
+    refused = await client.post(f"/api/matches/{match_id}/calibration",
+                                json={"corners_px": GOOD_CORNERS, "analysis_start_s": 2.0})
+    assert refused.status_code == 422 and "10 secondi" in refused.json()["detail"]
+
+    with sync_session() as session:
+        session.get(Match, match_id).duration_seconds = 1800.0
+    ok = await client.post(f"/api/matches/{match_id}/calibration",
+                           json={"corners_px": GOOD_CORNERS, "analysis_start_s": 95.5})
+    assert ok.status_code == 200, ok.text
+    assert (await client.get(f"/api/matches/{match_id}")).json()["analysis_start_s"] == 95.5
+
+    # Not sent: kept. Sent as 0: back to the beginning.
+    await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS})
+    assert (await client.get(f"/api/matches/{match_id}")).json()["analysis_start_s"] == 95.5
+    await client.post(f"/api/matches/{match_id}/calibration",
+                      json={"corners_px": GOOD_CORNERS, "analysis_start_s": 0})
+    assert (await client.get(f"/api/matches/{match_id}")).json()["analysis_start_s"] is None

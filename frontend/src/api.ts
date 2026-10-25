@@ -40,6 +40,8 @@ export interface Match {
   height: number | null
   player_names: string[] | null
   calibrated: boolean
+  /** Second of the video the analysis starts from; null: the beginning. */
+  analysis_start_s?: number | null
   /** Only for administrators, who see everyone's matches. */
   owner?: string | null
   created_at: string
@@ -188,6 +190,8 @@ export interface DataQuality {
   metrics_tier: number
   excluded_metrics: string[]
   warnings: string[]
+  /** Second of the video the analysis started from; absent in older results. */
+  analysis_start_s?: number
 }
 
 export interface Rally {
@@ -308,6 +312,7 @@ export const api = {
       net_px?: Point[] | null
       preset_id?: string
       save_as_preset?: string
+      analysis_start_s?: number
     },
   ) =>
     req<CalibrationResult>(`/api/matches/${id}/calibration`, {

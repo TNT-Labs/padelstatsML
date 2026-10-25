@@ -80,6 +80,7 @@ def main() -> int:
         sample_hz=artifacts.sample_hz,
         frames_sampled=artifacts.frames_sampled,
         analysed_s=artifacts.analysed_s,
+        start_s=float(artifacts.meta.get("start_s") or 0.0),
     )
     print(f"Partita {match_id[:8]}: {len(identity.players)} giocatori · {len(rallies)} scambi")
     for warning in result["data_quality"]["warnings"]:

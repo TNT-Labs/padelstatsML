@@ -22,6 +22,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FC, type PointerEvent } from 'react'
 import { api, ApiError, type CameraPreset, type Match, type Point } from '../api'
+import { parseClock } from '../lib/format'
+import { clock } from '../lib/videoOverlay'
 import {
   CORNER_LABELS,
   MAX_OFF_FRAME,
@@ -72,6 +74,9 @@ const MIN_HANDLE_PX = 9
 const MIN_GRAB_PX = 22
 // Below this width the full corner names would overlap: numbers only.
 const LABELS_MIN_WIDTH_PX = 600
+// The analysis must keep at least this much video after its start (the
+// server refuses less).
+const MIN_ANALYSED_S = 10
 
 export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const frameW = match.width ?? 1920
@@ -89,6 +94,12 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const [margin, setMargin] = useState(0)
   // Rendered width of the canvas, for the minimum on-screen handle size.
   const [renderWidth, setRenderWidth] = useState(0)
+  // Where the analysis starts, in seconds of video: the warm-up before the
+  // match, players walking on, are left out.
+  const [start, setStart] = useState(match.analysis_start_s ?? 0)
+  const [startText, setStartText] = useState(clock(match.analysis_start_s ?? 0))
+  const [videoBroken, setVideoBroken] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   const svgRef = useRef<SVGSVGElement>(null)
   const loaded = corners !== null
@@ -196,7 +207,11 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     setError(null)
     setSaving(true)
     try {
-      const result = await api.submitCalibration(match.id, { preset_id: preset.id })
+      if (startProblem) throw new ApiError(422, startProblem)
+      const result = await api.submitCalibration(match.id, {
+        preset_id: preset.id,
+        analysis_start_s: start,
+      })
       setCorners(result.corners_px.map(p => [p[0], p[1]] as Pt))
       setHint(result.message ?? `Preset "${preset.name}" applicato.`)
       onCalibrated()
@@ -208,7 +223,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   }
 
   const save = async () => {
-    if (!corners || !check.valid) return
+    if (!corners || !check.valid || startProblem) return
     setError(null)
     setSaving(true)
     try {
@@ -216,12 +231,31 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         corners_px: corners.map(p => [p[0], p[1]] as Point),
         net_px: netPoints ? netPoints.map(p => [p[0], p[1]] as Point) : null,
         save_as_preset: presetName.trim() || undefined,
+        analysis_start_s: start,
       })
       onCalibrated()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e))
       setSaving(false)
     }
+  }
+
+  const duration = match.duration_seconds ?? null
+  const startProblem =
+    duration !== null && start > Math.max(duration - MIN_ANALYSED_S, 0)
+      ? `L'inizio dell'analisi deve lasciare almeno ${MIN_ANALYSED_S} secondi di video (durata ${clock(duration)}).`
+      : null
+
+  const chooseStart = (seconds: number) => {
+    const value = Math.max(0, Math.round(seconds))
+    setStart(value)
+    setStartText(clock(value))
+  }
+
+  const typeStart = (text: string) => {
+    setStartText(text)
+    const seconds = parseClock(text)
+    if (seconds !== null) setStart(seconds)
   }
 
   /** Switching back to the keyframe only brings off-frame corners to its edge. */
@@ -532,6 +566,70 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
       )}
 
       <div className="card" style={{ marginTop: '1rem' }}>
+        <h2 style={{ marginBottom: '.35rem' }}>Inizio dell'analisi</h2>
+        <p className="muted-note" style={{ marginBottom: '.75rem' }}>
+          Escludi i minuti iniziali in cui i giocatori non sono ancora in campo: porta il video al
+          momento in cui inizia il gioco e premi <strong>Inizia da qui</strong>, oppure scrivi il
+          minuto.
+        </p>
+        {!videoBroken && (
+          <video
+            ref={videoRef}
+            className="start-video"
+            src={api.videoUrl(match.id)}
+            controls
+            playsInline
+            muted
+            preload="metadata"
+            onError={() => setVideoBroken(true)}
+          />
+        )}
+        {videoBroken && (
+          <p className="muted-note">
+            Il browser non riesce a riprodurre questo video: scrivi il minuto di inizio.
+          </p>
+        )}
+        <div className="start-row">
+          {!videoBroken && (
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              onClick={() => videoRef.current && chooseStart(videoRef.current.currentTime)}
+            >
+              Inizia da qui
+            </button>
+          )}
+          <label className="start-field">
+            Dal minuto
+            <input
+              type="text"
+              inputMode="numeric"
+              value={startText}
+              aria-invalid={parseClock(startText) === null || startProblem !== null}
+              onChange={e => typeStart(e.target.value)}
+              onBlur={() => parseClock(startText) !== null && setStartText(clock(start))}
+              placeholder="m:ss"
+            />
+          </label>
+          {start > 0 && (
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => chooseStart(0)}>
+              Dall'inizio del video
+            </button>
+          )}
+        </div>
+        {parseClock(startText) === null ? (
+          <p className="error-msg">Scrivi il minuto come m:ss, ad esempio 3:20.</p>
+        ) : (
+          startProblem && <p className="error-msg">{startProblem}</p>
+        )}
+        {!startProblem && start > 0 && (
+          <p className="muted-note">
+            L'analisi parte dal minuto {clock(start)}: la parte precedente non viene analizzata.
+          </p>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: '1rem' }}>
         <div className="form-group">
           <label>Salva questa posizione camera (opzionale)</label>
           <input
@@ -554,7 +652,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
           </button>
           <button
             className="btn btn-primary"
-            disabled={!check.valid || saving}
+            disabled={!check.valid || saving || startProblem !== null || parseClock(startText) === null}
             onClick={save}
           >
             {saving ? 'Salvataggio…' : 'Conferma calibrazione'}

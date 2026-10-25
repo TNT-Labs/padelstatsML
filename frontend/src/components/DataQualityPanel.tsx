@@ -9,6 +9,7 @@
  */
 import { useState, type FC } from 'react'
 import type { DataQuality } from '../api'
+import { clock } from '../lib/videoOverlay'
 
 const SOURCE_LABEL: Record<string, string> = {
   manual: 'angoli indicati manualmente',
@@ -60,6 +61,12 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 {quality.net_error_m !== null && ` · scarto rete ${quality.net_error_m.toFixed(2)} m`}
               </dd>
             </div>
+            {!!quality.analysis_start_s && (
+              <div>
+                <dt>Analisi</dt>
+                <dd>dal minuto {clock(quality.analysis_start_s)} del video</dd>
+              </div>
+            )}
             <div>
               <dt>Campionamento</dt>
               <dd>

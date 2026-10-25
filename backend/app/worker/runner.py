@@ -175,6 +175,7 @@ def _run_job(job_id: str) -> None:
             return
         match_id = match.id
         calibration_data = match.calibration
+        start_s = float(match.analysis_start_s or 0.0)
         attempts = job.attempts
 
     if not calibration_data:
@@ -208,6 +209,7 @@ def _run_job(job_id: str) -> None:
             calibration=calibration,
             progress=_progress_writer(job_id, match_id),
             artifacts_dir=artifacts_dir(match_id) if settings.keep_artifacts else None,
+            start_s=start_s,
         )
 
         crop_keys: dict[str, str] = {}

@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh, playerPlace } from './format'
+import { apiAsset, kmh, parseClock, playerPlace } from './format'
+
+describe('parseClock', () => {
+  it('reads seconds, minutes and hours', () => {
+    expect(parseClock('95')).toBe(95)
+    expect(parseClock('1:35')).toBe(95)
+    expect(parseClock(' 0:05 ')).toBe(5)
+    expect(parseClock('1:01:35')).toBe(3695)
+  })
+
+  it('refuses what is not a time', () => {
+    expect(parseClock('')).toBeNull()
+    expect(parseClock('1:75')).toBeNull()
+    expect(parseClock('a:10')).toBeNull()
+    expect(parseClock('1:2:3:4')).toBeNull()
+    expect(parseClock('-5')).toBeNull()
+  })
+})
 
 describe('kmh', () => {
   it('converts metres per second', () => {
@@ -26,12 +43,12 @@ describe('apiAsset', () => {
 
 describe('playerPlace', () => {
   it('names the pair by where it started, and the side when known', () => {
-    expect(playerPlace(0, 'reves')).toBe('Coppia vicina a inizio video · lato revés')
-    expect(playerPlace(1, 'drive')).toBe('Coppia lontana a inizio video · lato drive')
+    expect(playerPlace(0, 'reves')).toBe('Coppia vicina a inizio analisi · lato revés')
+    expect(playerPlace(1, 'drive')).toBe('Coppia lontana a inizio analisi · lato drive')
   })
 
   it('leaves the side out for results found by linking alone', () => {
-    expect(playerPlace(0)).toBe('Coppia vicina a inizio video')
-    expect(playerPlace(1, null)).toBe('Coppia lontana a inizio video')
+    expect(playerPlace(0)).toBe('Coppia vicina a inizio analisi')
+    expect(playerPlace(1, null)).toBe('Coppia lontana a inizio analisi')
   })
 })

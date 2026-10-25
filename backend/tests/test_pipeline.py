@@ -562,6 +562,45 @@ def test_a_run_with_a_re_id_model_stores_embeddings(synthetic_match, calibration
     assert len(output["per_player"]) == 4
 
 
+def test_an_analysis_from_a_later_start_leaves_out_what_comes_before(
+    synthetic_match, calibration, result, tmp_path,
+):
+    """Started later in the video, the run measures only what follows: the
+    analysed time counts from the start, every detection and rally lies
+    after it, timestamps stay those of the video, and a replay of the
+    stored run gives the same result."""
+    import json
+
+    import app.ml.pipeline as pipeline_module
+    from app.ml.artifacts import load_artifacts
+    from app.ml.pipeline import analyse_tracklets
+
+    start = 4.0
+    original = pipeline_module.PersonDetector
+    pipeline_module.PersonDetector = _BlobDetector
+    try:
+        late = AnalysisPipeline(PIPELINE_CONFIG).run(
+            synthetic_match, calibration=calibration, artifacts_dir=tmp_path / "late", start_s=start,
+        )
+    finally:
+        pipeline_module.PersonDetector = original
+
+    assert late["data_quality"]["analysis_start_s"] == pytest.approx(start, abs=0.2)
+    assert late["summary"]["analysed_s"] == pytest.approx(result["summary"]["analysed_s"] - start, abs=0.3)
+    assert all(rally["start_s"] >= start - 0.2 for rally in late["rallies"])
+    meta = json.loads((tmp_path / "late" / "meta.json").read_text())
+    assert meta["start_s"] == pytest.approx(start, abs=0.2)
+
+    artifacts = load_artifacts(tmp_path / "late")
+    assert min(o.timestamp_s for t in artifacts.tracklets for o in t.observations) >= start - 0.2
+    replayed, _, _ = analyse_tracklets(
+        tracklets=artifacts.tracklets, calibration=artifacts.calibration, config=PIPELINE_CONFIG,
+        sample_hz=artifacts.sample_hz, frames_sampled=artifacts.frames_sampled,
+        analysed_s=artifacts.analysed_s, start_s=meta["start_s"],
+    )
+    assert replayed["summary"] == late["summary"]
+
+
 # ── Player thumbnails ────────────────────────────────────────────────────────
 
 

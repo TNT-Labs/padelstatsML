@@ -85,8 +85,9 @@ class AnalysisPipeline:
         calibration: CourtCalibration,
         progress: ProgressCallback | None = None,
         artifacts_dir: str | Path | None = None,
+        start_s: float = 0.0,
     ) -> dict:
-        """Analyse a video.
+        """Analyse a video, from `start_s` seconds in.
 
         `artifacts_dir`, when given, receives the raw per-frame observations
         plus the run's metadata. Inference is the only expensive stage, so
@@ -118,7 +119,10 @@ class AnalysisPipeline:
             target_hz=self.config.sample_hz,
             info=info,
             max_duration_s=max_duration_s,
+            start_s=start_s,
         )
+        if sampler.start_frame:
+            report(2, f"Salto al minuto {_clock(sampler.start_s)}, inizio dell'analisi…")
         tracker = CourtTracker(
             calibration=calibration,
             max_speed_ms=self.config.max_player_speed_ms,
@@ -133,7 +137,7 @@ class AnalysisPipeline:
         expected = sampler.expected_samples
         crops: dict[int, _CropCandidate] = {}
         frames_sampled = 0
-        last_timestamp = 0.0
+        last_timestamp = sampler.start_s
         started = time.monotonic()
 
         writer: ArtifactWriter | None = None
@@ -163,11 +167,12 @@ class AnalysisPipeline:
                 if frames_sampled % 40 == 0:
                     report(
                         _pass_progress(frames_sampled, expected),
-                        _pass_message(frames_sampled, expected, started, last_timestamp),
+                        _pass_message(frames_sampled, expected, started, last_timestamp - sampler.start_s),
                     )
 
             tracklets = tracker.finish()
-            analysed_s = max(last_timestamp, 0.0)
+            # How much of the video was analysed: from the start, not from 0.
+            analysed_s = max(last_timestamp - sampler.start_s, 0.0)
 
             if writer is not None:
                 # Written before the downstream stages run, so a crash in
@@ -213,13 +218,14 @@ class AnalysisPipeline:
             frames_sampled=frames_sampled,
             analysed_s=analysed_s,
             identity_progress=identity_progress,
+            start_s=sampler.start_s,
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
-        if info.frame_count and analysed_s + 1.0 < info.duration_s:
+        if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s:
             result["data_quality"]["warnings"].append(
-                f"Analizzati i primi {analysed_s / 60:.0f} minuti su "
-                f"{info.duration_s / 60:.0f} (limite MAX_ANALYSIS_MINUTES)."
+                f"Analizzati {analysed_s / 60:.0f} minuti su "
+                f"{(info.duration_s - sampler.start_s) / 60:.0f} (limite MAX_ANALYSIS_MINUTES)."
             )
 
         # ── 6. Thumbnails ────────────────────────────────────────────────────
@@ -282,6 +288,7 @@ class AnalysisPipeline:
             "calibration": calibration.to_dict(),
             "sample_hz": sampler.effective_hz,
             "sample_step": sampler.step,
+            "start_s": round(sampler.start_s, 3),
             "frames_sampled": frames_sampled,
             "analysed_s": round(analysed_s, 2) if analysed_s is not None else None,
             "min_observations": self.config.track_min_observations,
@@ -317,6 +324,7 @@ def analyse_tracklets(
     frames_sampled: int,
     analysed_s: float,
     identity_progress: Callable[[int, int], None] | None = None,
+    start_s: float = 0.0,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -352,10 +360,15 @@ def analyse_tracklets(
             detector_model=Path(config.detector_model).name,
         )
     )
+    result["data_quality"]["analysis_start_s"] = round(start_s, 1)
     return result, identity, rallies
 
 
 # ── Progress helpers ─────────────────────────────────────────────────────────
+
+def _clock(seconds: float) -> str:
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
 
 def _pass_progress(done: int, expected: int) -> int:
     if expected <= 0:

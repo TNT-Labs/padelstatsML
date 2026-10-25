@@ -429,6 +429,14 @@ async def submit_calibration(
             status.HTTP_409_CONFLICT, "Carica prima il video: le dimensioni non sono note."
         )
 
+    if payload.analysis_start_s is not None:
+        # The analysis must keep something to look at.
+        if match.duration_seconds and payload.analysis_start_s > max(match.duration_seconds - 10.0, 0.0):
+            raise HTTPException(
+                HTTP_UNPROCESSABLE,
+                "L'inizio dell'analisi deve lasciare almeno 10 secondi di video.",
+            )
+
     frame_size = (match.width, match.height)
     corners, net_px, source, preset_id, note = await _resolve_corners(db, payload, frame_size, user)
 
@@ -446,6 +454,8 @@ async def submit_calibration(
         "net_px": [list(p) for p in net_px] if net_px is not None else None,
         "preset_id": preset_id,
     }
+    if payload.analysis_start_s is not None:
+        match.analysis_start_s = round(payload.analysis_start_s, 2) or None
     if match.status in (MatchStatus.NEEDS_CALIBRATION, MatchStatus.FAILED, MatchStatus.COMPLETED):
         match.status = MatchStatus.READY
         match.progress_message = "Pronto per l'analisi"
