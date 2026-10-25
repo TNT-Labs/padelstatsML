@@ -4,11 +4,13 @@ import {
   NET_Y_M,
   applyHomography,
   checkQuad,
+  distortPoint,
   homographyFromQuad,
   isOffFrame,
   netErrorMetres,
   projectCourtLines,
   signedArea,
+  undistortPoint,
   type Pt,
 } from './court'
 
@@ -149,5 +151,38 @@ describe('court overlay', () => {
 
   it('returns nothing for an unprojectable quad', () => {
     expect(projectCourtLines([[0, 0], [100, 0], [200, 0], [300, 0]])).toEqual([])
+  })
+})
+
+describe('wide-angle lens', () => {
+  const lens = { k1: 0.25, frameW: FRAME_W, frameH: FRAME_H }
+
+  it('straightens and bends back to the same point, as the server does', () => {
+    for (const p of [[0, 0], [960, 540], [1900, 60], [-300, 1250]] as Pt[]) {
+      const back = undistortPoint(distortPoint(p, lens), lens)
+      expect(back[0]).toBeCloseTo(p[0], 6)
+      expect(back[1]).toBeCloseTo(p[1], 6)
+    }
+    // Barrel: the edges come towards the centre, the centre stays.
+    expect(distortPoint([960, 540], lens)).toEqual([960, 540])
+    const edge = distortPoint([1900, 60], lens)
+    expect(Math.hypot(edge[0] - 960, edge[1] - 540)).toBeLessThan(Math.hypot(1900 - 960, 60 - 540))
+  })
+
+  it('draws the court lines as curves through the corners', () => {
+    const lines = projectCourtLines(GOOD, lens)
+    const outline = lines[0]
+    // The outline still passes through the four corners…
+    for (const corner of GOOD) {
+      expect(outline.some(p => Math.hypot(p[0] - corner[0], p[1] - corner[1]) < 1e-6)).toBe(true)
+    }
+    // …but between two corners it bends away from the straight segment.
+    const straight = projectCourtLines(GOOD)[0]
+    expect(outline.length).toBeGreaterThan(straight.length)
+    const mid = outline[12]
+    const chord: Pt = [(GOOD[3][0] + GOOD[2][0]) / 2, (GOOD[3][1] + GOOD[2][1]) / 2]
+    expect(Math.hypot(mid[0] - chord[0], mid[1] - chord[1])).toBeGreaterThan(3)
+    // No correction: the lines are exactly as before.
+    expect(projectCourtLines(GOOD, { ...lens, k1: 0 })).toEqual(projectCourtLines(GOOD))
   })
 })

@@ -505,7 +505,7 @@ const RefineCard: FC<{
     setBusy(true)
     setError(null)
     try {
-      const outcome = await api.applyRefinement(matchId, marks, proposal.corners_px)
+      const outcome = await api.applyRefinement(matchId, marks, proposal.corners_px, proposal.k1)
       const plan = await api.getVerification(matchId)
       if (plan.last) onApplied(plan.last, !outcome.names_cleared)
       setProposal(null)
@@ -541,6 +541,10 @@ const RefineCard: FC<{
               <tr>
                 <td>Errore atteso con la correzione</td>
                 <td>{proposal.after.mean_m?.toFixed(2)} m</td>
+              </tr>
+              <tr>
+                <td>Correzione grandangolo</td>
+                <td>{proposal.k1 > 0 ? proposal.k1.toFixed(2) : 'non necessaria'}</td>
               </tr>
             </tbody>
           </table>

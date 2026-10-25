@@ -45,6 +45,45 @@ export const CORNER_LABELS = [
 export type Matrix3 = number[] // row-major, length 9
 
 /**
+ * Lens correction for a wide-angle lens, as on the server (app/ml/court.py):
+ * straight = c + (p - c)(1 + k1 r^2), r = |p - c| / half diagonal.
+ */
+export interface Lens {
+  k1: number
+  frameW: number
+  frameH: number
+}
+
+/** Highest correction offered: a phone's 0.6x needs about 0.1-0.3. */
+export const MAX_K1 = 0.5
+
+export function undistortPoint(p: Pt, lens: Lens): Pt {
+  if (!lens.k1) return p
+  const cx = lens.frameW / 2
+  const cy = lens.frameH / 2
+  const radius = Math.hypot(lens.frameW, lens.frameH) / 2
+  const dx = p[0] - cx
+  const dy = p[1] - cy
+  const scale = 1 + (lens.k1 * (dx * dx + dy * dy)) / (radius * radius)
+  return [cx + dx * scale, cy + dy * scale]
+}
+
+export function distortPoint(p: Pt, lens: Lens): Pt {
+  if (!lens.k1) return p
+  const cx = lens.frameW / 2
+  const cy = lens.frameH / 2
+  const radius = Math.hypot(lens.frameW, lens.frameH) / 2
+  const dx = p[0] - cx
+  const dy = p[1] - cy
+  const ru = Math.hypot(dx, dy) / radius
+  if (ru < 1e-12) return p
+  let rd = ru
+  for (let i = 0; i < 30; i++) rd -= (rd + lens.k1 * rd ** 3 - ru) / (1 + 3 * lens.k1 * rd * rd)
+  const scale = rd / ru
+  return [cx + dx * scale, cy + dy * scale]
+}
+
+/**
  * Exact 4-point homography via the direct linear transform.
  * Returns null when the system is singular (degenerate quadrilateral).
  */
@@ -140,14 +179,16 @@ export interface QuadCheck {
  * Mirrors the server-side validation so the user is told what is wrong while
  * dragging, instead of after pressing save.
  */
-export function checkQuad(pts: Pt[], frameW: number, frameH: number): QuadCheck {
-  if (pts.length !== 4) return { valid: false, reason: 'Servono 4 angoli.' }
+export function checkQuad(raw: Pt[], frameW: number, frameH: number, k1 = 0): QuadCheck {
+  if (raw.length !== 4) return { valid: false, reason: 'Servono 4 angoli.' }
 
   const mx = MAX_OFF_FRAME * frameW
   const my = MAX_OFF_FRAME * frameH
-  if (pts.some(([x, y]) => x < -mx || x > frameW + mx || y < -my || y > frameH + my)) {
+  if (raw.some(([x, y]) => x < -mx || x > frameW + mx || y < -my || y > frameH + my)) {
     return { valid: false, reason: "Un angolo è troppo lontano dall'inquadratura." }
   }
+  // The shape is judged on the straightened picture, as the server does.
+  const pts = raw.map(p => undistortPoint(p, { k1, frameW, frameH }))
 
   for (let i = 0; i < 4; i++) {
     for (let j = i + 1; j < 4; j++) {
@@ -201,16 +242,29 @@ export const COURT_LINES_M: Pt[][] = [
 ]
 
 /** Project the court model into image pixels. Returns [] if unprojectable. */
-export function projectCourtLines(corners: Pt[]): Pt[][] {
-  const h = homographyFromQuad(COURT_CORNERS_M, corners)
+export function projectCourtLines(corners: Pt[], lens?: Lens): Pt[][] {
+  const bent = !!lens && lens.k1 > 0
+  const straight = bent ? corners.map(p => undistortPoint(p, lens)) : corners
+  const h = homographyFromQuad(COURT_CORNERS_M, straight)
   if (!h) return []
   const out: Pt[][] = []
   for (const line of COURT_LINES_M) {
+    // Through a wide-angle lens a straight line on the court is a curve in
+    // the picture: sampled along each segment, then bent.
+    const samples: Pt[] = []
+    for (let i = 0; i < line.length - 1; i++) {
+      const steps = bent ? 24 : 1
+      for (let k = 0; k <= steps; k++) {
+        if (i > 0 && k === 0) continue
+        const f = k / steps
+        samples.push([line[i][0] + (line[i + 1][0] - line[i][0]) * f, line[i][1] + (line[i + 1][1] - line[i][1]) * f])
+      }
+    }
     const projected: Pt[] = []
-    for (const point of line) {
+    for (const point of samples) {
       const p = applyHomography(h, point)
       if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return []
-      projected.push(p)
+      projected.push(bent ? distortPoint(p, lens!) : p)
     }
     out.push(projected)
   }
@@ -218,11 +272,12 @@ export function projectCourtLines(corners: Pt[]): Pt[][] {
 }
 
 /** Distance, in metres, between a marked net line and the true Y = 10 m. */
-export function netErrorMetres(corners: Pt[], netPx: Pt[]): number | null {
-  const toCourt = homographyFromQuad(corners, COURT_CORNERS_M)
+export function netErrorMetres(corners: Pt[], netPx: Pt[], lens?: Lens): number | null {
+  const straighten = (p: Pt) => (lens ? undistortPoint(p, lens) : p)
+  const toCourt = homographyFromQuad(corners.map(straighten), COURT_CORNERS_M)
   if (!toCourt || netPx.length !== 2) return null
   let worst = 0
-  for (const point of netPx) {
+  for (const point of netPx.map(straighten)) {
     const court = applyHomography(toCourt, point)
     if (!court) return null
     worst = Math.max(worst, Math.abs(court[1] - NET_Y_M))

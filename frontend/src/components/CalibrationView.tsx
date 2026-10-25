@@ -26,6 +26,7 @@ import { parseClock } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import {
   CORNER_LABELS,
+  MAX_K1,
   MAX_OFF_FRAME,
   checkQuad,
   isOffFrame,
@@ -92,6 +93,9 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const [hint, setHint] = useState<string | null>(null)
   // Fraction of the frame added on every side; 0 = the keyframe only.
   const [margin, setMargin] = useState(0)
+  // Lens correction for a wide-angle lens (phone 0.6x, action cameras): the
+  // projected lines bend with it, to follow the real ones.
+  const [k1, setK1] = useState(0)
   // Rendered width of the canvas, for the minimum on-screen handle size.
   const [renderWidth, setRenderWidth] = useState(0)
   // Where the analysis starts, in seconds of video: the warm-up before the
@@ -118,6 +122,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
       .then(([suggestion, presetList]) => {
         if (cancelled) return
         const initial = suggestion.corners_px.map(p => [p[0], p[1]] as Pt)
+        setK1(suggestion.k1 ?? 0)
         setCorners(initial)
         // A saved calibration may already have corners out of the picture.
         if (initial.some(p => isOffFrame(p, frameW, frameH))) {
@@ -139,16 +144,16 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   }, [match.id, frameW, frameH])
 
   const check = useMemo(
-    () => (corners ? checkQuad(corners, frameW, frameH) : { valid: false }),
-    [corners, frameW, frameH],
+    () => (corners ? checkQuad(corners, frameW, frameH, k1) : { valid: false }),
+    [corners, frameW, frameH, k1],
   )
   const courtLines = useMemo(
-    () => (corners && check.valid ? projectCourtLines(corners) : []),
-    [corners, check.valid],
+    () => (corners && check.valid ? projectCourtLines(corners, { k1, frameW, frameH }) : []),
+    [corners, check.valid, k1, frameW, frameH],
   )
   const netError = useMemo(
-    () => (corners && netPoints && check.valid ? netErrorMetres(corners, netPoints) : null),
-    [corners, netPoints, check.valid],
+    () => (corners && netPoints && check.valid ? netErrorMetres(corners, netPoints, { k1, frameW, frameH }) : null),
+    [corners, netPoints, check.valid, k1, frameW, frameH],
   )
 
   // The visible area, in image pixels: the keyframe plus the margin.
@@ -232,6 +237,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         net_px: netPoints ? netPoints.map(p => [p[0], p[1]] as Point) : null,
         save_as_preset: presetName.trim() || undefined,
         analysis_start_s: start,
+        k1,
       })
       onCalibrated()
     } catch (e) {
@@ -406,7 +412,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
           )}
 
           <polygon
-            points={corners.map(p => p.join(',')).join(' ')}
+            points={(courtLines[0] ?? corners).map(p => p.join(',')).join(' ')}
             fill={check.valid ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.15)'}
             stroke={check.valid ? '#22c55e' : '#ef4444'}
             strokeWidth={scale * 0.0025}
@@ -543,6 +549,34 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card card-sm lens-row">
+        <label htmlFor="lens-k1">
+          <strong>Obiettivo grandangolare</strong>
+          <span className="muted-note">
+            {' '}
+            (es. 0.6x del telefono): se le linee reali del campo sono curve, aumenta finché le linee bianche le
+            seguono.
+          </span>
+        </label>
+        <div className="lens-control">
+          <input
+            id="lens-k1"
+            type="range"
+            min={0}
+            max={MAX_K1}
+            step={0.01}
+            value={k1}
+            onChange={e => setK1(Number(e.target.value))}
+          />
+          <span className="lens-value">{k1 > 0 ? k1.toFixed(2) : 'nessuna'}</span>
+          {k1 > 0 && (
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setK1(0)}>
+              Azzera
+            </button>
+          )}
+        </div>
       </div>
 
       {hint && !error && <p className="muted-note">{hint}</p>}

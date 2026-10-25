@@ -147,6 +147,7 @@ class RefineSubmit(BaseModel):
 
 class ApplySubmit(RefineSubmit):
     corners_px: list[Point] = Field(min_length=4, max_length=4)
+    k1: float = Field(default=0.0, ge=0, le=0.5)
 
 
 @router.post("/{match_id}/verification/refine")
@@ -172,7 +173,7 @@ async def apply_refinement(
     match, stats = await _completed(db, match_id, user)
     try:
         calibration = build_calibration(
-            [tuple(p) for p in payload.corners_px], (match.width, match.height))
+            [tuple(p) for p in payload.corners_px], (match.width, match.height), k1=payload.k1)
     except CalibrationError as exc:
         raise HTTPException(422, str(exc)) from exc
     calibration_data = {
@@ -183,6 +184,7 @@ async def apply_refinement(
         "net_px": None,
         "preset_id": None,
         "refined_from_landmarks": len(payload.landmarks),
+        "k1": payload.k1,
     }
     directory = artifacts_dir(match_id)
     settings = get_settings()

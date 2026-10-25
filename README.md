@@ -275,10 +275,16 @@ L'accuratezza dipende quasi interamente dalla ripresa.
   rete nasconde i piedi della coppia lontana: le loro posizioni finiscono
   metri più indietro del vero e molte rilevazioni vanno perse. L'analisi
   stima l'altezza della camera dai giocatori e lo segnala fra gli avvisi.
+- **Giocatori lontani piccoli** (camera lontana dal campo o risoluzione
+  bassa): `DETECTOR_FAR_PASS=true` nel `.env` aggiunge un secondo passaggio
+  del rilevatore sulla metà lontana. Costa il 50-80% di tempo in più.
 - **1080p a 30 fps** è sufficiente; il 4K non aggiunge nulla e rallenta il
   decode.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva
   fotogramma per fotogramma.
+- **Grandangolo (0.6x, action cam)**: si può usare. La curvatura delle linee
+  si corregge nella calibrazione (cursore *Obiettivo grandangolare*) oppure
+  in automatico da *Verifica accuratezza → Correggi la calibrazione*.
 - Maglie di colore diverso fra i due della stessa coppia aiutano molto la
   ricostruzione dell'identità dopo le occlusioni.
 

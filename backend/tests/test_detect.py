@@ -181,3 +181,19 @@ def test_the_detector_returns_one_box_for_a_player_detected_twice():
     detections = detector._postprocess(raw, 1.0, (0.0, 0.0), (0.0, 0.0), (480, 480), (480, 480))
     assert len(detections) == 1
     assert detections[0].bbox[3] == pytest.approx(400.0)     # the whole body, feet included
+
+
+def test_two_looks_at_one_frame_count_each_person_once():
+    from app.ml.detect import Detection, merge_detections
+
+    whole = [Detection((100, 100, 140, 200), 0.6), Detection((400, 300, 460, 450), 0.9)]
+    far = [
+        Detection((102, 98, 141, 202), 0.8),     # the same person, seen better
+        Detection((600, 90, 620, 140), 0.7),     # someone only the closer look found
+        Detection((102, 98, 141, 150), 0.75),    # the upper half of the first: a part
+    ]
+
+    merged = merge_detections(whole, far)
+
+    assert len(merged) == 3
+    assert {round(d.confidence, 2) for d in merged} == {0.9, 0.8, 0.7}

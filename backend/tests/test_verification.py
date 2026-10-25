@@ -171,3 +171,32 @@ def test_stored_detections_are_placed_again_with_a_corrected_calibration(tmp_pat
     x, y = fixed.tracklets[0].observations[0].foot_court
     assert x == pytest.approx(3.0, abs=0.05) and y == pytest.approx(4.0, abs=0.05)
     assert fixed.tracklets[0].observations[0].foot_px == player.observations[0].foot_px
+
+
+def test_the_lens_correction_is_found_from_the_landmarks():
+    """A wide-angle lens close to the court: the landmarks along the bent
+    lines show the bend, and the correction that explains it is kept."""
+    from app.ml.court import distort_points
+    from app.ml.verification import refine_calibration
+
+    k1 = 0.2
+    project = _pinhole(2.0, 3.0)
+    seen = lambda x, y: distort_points(np.array([project((x, y, 0.0))]), k1, FRAME)[0]
+    calib = build_calibration([seen(x, y) for x, y in COURT_CORNERS_M_LIST], FRAME, CalibrationSource.MANUAL)
+    rng = np.random.default_rng(0)
+    marks = {lm.key: tuple(seen(lm.x_m, lm.y_m) + rng.normal(0, 3, 2)) for lm in LANDMARKS}
+
+    proposal = refine_calibration(calib, marks)
+
+    assert proposal["k1"] == pytest.approx(k1, abs=0.06)
+    assert proposal["after"]["mean_m"] < proposal["before"]["mean_m"] - 0.05
+
+
+def test_no_lens_correction_where_there_is_no_bend():
+    from app.ml.verification import refine_calibration
+
+    project, calib = _camera()
+    rng = np.random.default_rng(2)
+    marks = {lm.key: tuple(np.array(project((lm.x_m, lm.y_m, 0.0))) + rng.normal(0, 3, 2)) for lm in LANDMARKS}
+
+    assert refine_calibration(calib, marks)["k1"] == 0.0

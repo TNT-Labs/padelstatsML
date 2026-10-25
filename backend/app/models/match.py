@@ -191,6 +191,8 @@ class CameraPreset(Base):
     frame_width: Mapped[int] = mapped_column(Integer)
     frame_height: Mapped[int] = mapped_column(Integer)
     net_px: Mapped[list | None] = mapped_column(JSON, nullable=True)  # optional sanity check
+    # Lens correction of this camera (app.ml.court, k1); None or 0: none.
+    k1: Mapped[float | None] = mapped_column(Float, nullable=True)
     times_used: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

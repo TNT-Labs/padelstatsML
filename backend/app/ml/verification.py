@@ -33,7 +33,9 @@ from app.ml.court import (
     CalibrationError,
     CourtCalibration,
     build_calibration,
+    distort_points,
     fit_corners,
+    undistort_points,
 )
 from app.ml.identity import PlayerTrack
 from app.ml.rallies import Rally
@@ -238,15 +240,21 @@ def landmarks_payload() -> list[dict]:
 CORNER_WEIGHT = 0.25
 # Fewer landmarks than this cannot be checked one against the others.
 REFINE_MIN_LANDMARKS = 4
+# Lens corrections tried, and how much better than none one must do — in
+# metres of expected error — to be kept.
+LENS_STEPS = tuple(round(0.02 * i, 2) for i in range(26))       # 0 … 0.5
+LENS_MIN_GAIN_M = 0.03
 
 
 def refine_calibration(calib: CourtCalibration, marks: dict[str, tuple[float, float]]) -> dict:
-    """A calibration fitted on the corners and the marked landmarks, and
-    how wrong it is expected to be.
+    """A calibration fitted on the corners and the marked landmarks — lens
+    correction included when it helps — and how wrong it is expected to be.
 
     The error is measured honestly: each landmark is left out in turn, the
     calibration fitted on the others, and the distance at the one left out
-    is its error — a fit is always right on the points it was made from."""
+    is its error — a fit is always right on the points it was made from.
+    The lens correction is chosen the same way, among LENS_STEPS values: a
+    wide-angle lens bends the lines, and the landmarks along them show it."""
     known = [(key, marks[key]) for key in (lm.key for lm in LANDMARKS) if key in marks]
     if len(known) < REFINE_MIN_LANDMARKS:
         raise CalibrationError(
@@ -255,25 +263,40 @@ def refine_calibration(calib: CourtCalibration, marks: dict[str, tuple[float, fl
     corners_px = np.asarray(calib.corners_px, dtype=np.float64)
     lm_px = np.array([p for _, p in known], dtype=np.float64)
     lm_m = np.array([(_BY_KEY[k].x_m, _BY_KEY[k].y_m) for k, _ in known], dtype=np.float64)
+    frame = calib.frame_size
 
-    def fit(skip: int | None) -> CourtCalibration:
+    def fit(k1: float, skip: int | None) -> CourtCalibration:
         keep = [i for i in range(len(known)) if i != skip]
+        straight = undistort_points(np.vstack([corners_px, lm_px[keep]]), k1, frame)
         corners = fit_corners(
-            np.vstack([corners_px, lm_px[keep]]),
+            straight,
             np.vstack([COURT_CORNERS_M, lm_m[keep]]),
             np.r_[np.full(4, CORNER_WEIGHT), np.ones(len(keep))],
         )
-        return build_calibration(corners, calib.frame_size, calib.source)
+        return build_calibration(distort_points(corners, k1, frame), frame, calib.source, k1=k1)
 
-    before, after = [], []
-    for i, (key, (u, v)) in enumerate(known):
-        truth = lm_m[i]
-        before.append(float(np.linalg.norm(calib.floor_points_to_court(np.array([[u, v]], np.float32))[0] - truth)))
-        refit = fit(i)
-        after.append(float(np.linalg.norm(refit.floor_points_to_court(np.array([[u, v]], np.float32))[0] - truth)))
-    proposal = fit(None)
+    def error_at(c: CourtCalibration, i: int) -> float:
+        court = c.floor_points_to_court(lm_px[i:i + 1].astype(np.float32))[0]
+        return float(np.linalg.norm(court - lm_m[i]))
+
+    before = [error_at(calib, i) for i in range(len(known))]
+    best: tuple[float, float, list[float]] | None = None
+    for k1 in LENS_STEPS:
+        try:
+            errors = [error_at(fit(k1, i), i) for i in range(len(known))]
+        except CalibrationError:
+            continue
+        mean = float(np.mean(errors))
+        # A lens correction must earn its place over none.
+        if best is None or mean < best[0] - (LENS_MIN_GAIN_M if best[1] == 0.0 else 0.0):
+            best = (mean, k1, errors)
+    if best is None:
+        raise CalibrationError("Con questi punti non si ottiene una calibrazione valida.")
+    _, k1, after = best
+    proposal = fit(k1, None)
     return {
         "corners_px": [[round(float(x), 2), round(float(y), 2)] for x, y in proposal.corners_px],
+        "k1": round(k1, 3),
         "before": _summary(before),
         "after": _summary(after),
         "landmarks": len(known),

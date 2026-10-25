@@ -139,7 +139,13 @@ def _draw_court(canvas: np.ndarray, calibration: CourtCalibration) -> None:
     ]
     height, width = canvas.shape[:2]
     for points_m, color, thickness in lines_m:
-        projected = calibration.court_to_pixels(np.array(points_m, dtype=np.float32))
+        # Sampled along each segment: through a wide-angle lens a straight
+        # line on the court is a curve in the picture.
+        corners = np.array(points_m, dtype=np.float32)
+        dense = np.vstack([
+            a + (b - a) * f for a, b in zip(corners[:-1], corners[1:]) for f in np.linspace(0, 1, 24)[:, None]
+        ]) if calibration.k1 else corners
+        projected = calibration.court_to_pixels(dense.astype(np.float32))
         if not np.isfinite(projected).all():
             continue
         # Clamp generously rather than dropping: a court line leaving the

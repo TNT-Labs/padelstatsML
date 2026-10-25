@@ -65,6 +65,53 @@ CORNER_LABELS = ("Fondo sinistra", "Fondo destra", "Vicino destra", "Vicino sini
 MAX_OFF_FRAME = 1.0
 
 
+# ── Lens distortion ──────────────────────────────────────────────────────────
+#
+# A wide-angle lens (a phone's 0.6x, an action camera) bends straight lines
+# outwards, most at the edges of the picture — where, with the camera close
+# to the court, the corners are. A homography cannot follow a bent line, so
+# the picture is first straightened with one radial coefficient:
+#
+#     p_straight = c + (p - c) * (1 + k1 * r^2),   r = |p - c| / R
+#
+# c the centre of the frame, R half its diagonal. k1 = 0 is no correction;
+# barrel distortion, the wide-angle kind, needs a positive k1. Corners and
+# boxes stay in the picture as it is; only the step to metres straightens.
+
+MAX_K1 = 0.5
+
+
+def _lens_frame(frame_size: tuple[int, int]) -> tuple[np.ndarray, float]:
+    w, h = float(frame_size[0]), float(frame_size[1])
+    return np.array([w / 2.0, h / 2.0]), 0.5 * float(np.hypot(w, h))
+
+
+def undistort_points(points_px, k1: float, frame_size: tuple[int, int]) -> np.ndarray:
+    """Picture pixels to the pixels of a lens without distortion."""
+    pts = np.asarray(points_px, dtype=np.float64).reshape(-1, 2)
+    if not k1:
+        return pts
+    centre, radius = _lens_frame(frame_size)
+    offset = pts - centre
+    r2 = np.sum((offset / radius) ** 2, axis=1, keepdims=True)
+    return centre + offset * (1.0 + k1 * r2)
+
+
+def distort_points(points_px, k1: float, frame_size: tuple[int, int]) -> np.ndarray:
+    """The inverse: where a straight-lens pixel lands in the picture."""
+    pts = np.asarray(points_px, dtype=np.float64).reshape(-1, 2)
+    if not k1:
+        return pts
+    centre, radius = _lens_frame(frame_size)
+    offset = pts - centre
+    ru = np.linalg.norm(offset, axis=1) / radius
+    rd = ru.copy()
+    for _ in range(30):                 # Newton on rd + k1 rd^3 = ru (monotone for k1 >= 0)
+        rd -= (rd + k1 * rd ** 3 - ru) / (1.0 + 3.0 * k1 * rd ** 2)
+    scale = np.where(ru > 1e-12, rd / np.maximum(ru, 1e-12), 1.0)
+    return centre + offset * scale[:, None]
+
+
 class CalibrationSource(str, Enum):
     MANUAL = "manual"
     PRESET = "preset"
@@ -89,6 +136,8 @@ class CourtCalibration:
     frame_size: tuple[int, int]   # (w, h)
     source: CalibrationSource
     net_error_m: float | None = None   # deviation of the marked net from Y=10 m
+    # Lens distortion (see above): the homography maps straightened pixels.
+    k1: float = 0.0
 
     # ── Projections ──────────────────────────────────────────────────────────
 
@@ -102,6 +151,8 @@ class CourtCalibration:
         pts = np.asarray(points_px, dtype=np.float32)
         if pts.size == 0:
             return pts.reshape(-1, 2)
+        if self.k1:
+            pts = undistort_points(pts, self.k1, self.frame_size).astype(np.float32)
         pts = pts.reshape(-1, 1, 2)
         return cv2.perspectiveTransform(pts, self.homography).reshape(-1, 2)
 
@@ -111,7 +162,10 @@ class CourtCalibration:
         if pts.size == 0:
             return pts.reshape(-1, 2)
         pts = pts.reshape(-1, 1, 2)
-        return cv2.perspectiveTransform(pts, self.homography_inv).reshape(-1, 2)
+        out = cv2.perspectiveTransform(pts, self.homography_inv).reshape(-1, 2)
+        if self.k1:
+            out = distort_points(out, self.k1, self.frame_size).astype(np.float32)
+        return out
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -164,6 +218,40 @@ class CourtCalibration:
             return 0, 0, w, h
         return x1, y1, x2, y2
 
+    def far_roi_px(self, margin_m: float = 1.0, player_height_m: float = 2.3) -> tuple[int, int, int, int] | None:
+        """The far half of the court with room above it for the players,
+        for a second, closer look of the detector (see pipeline): there the
+        players are a few dozen pixels tall, and the whole-court crop shrinks
+        them further before the network sees them.
+
+        None when the far half is not much smaller than the whole court in
+        the picture: cropping it would enlarge nobody."""
+        w, h = self.frame_size
+        floor = self.court_to_pixels(np.array([
+            [-margin_m, NET_Y_M - margin_m],
+            [COURT_WIDTH_M + margin_m, NET_Y_M - margin_m],
+            [COURT_WIDTH_M + margin_m, COURT_LENGTH_M + margin_m],
+            [-margin_m, COURT_LENGTH_M + margin_m],
+        ], dtype=np.float32))
+        if not np.isfinite(floor).all():
+            return None
+        # Players stand above the floor: about their height in the
+        # picture's scale at the far baseline.
+        baseline = self.court_to_pixels(np.array([[0.0, COURT_LENGTH_M], [COURT_WIDTH_M, COURT_LENGTH_M]], np.float32))
+        per_metre = float(np.linalg.norm(baseline[1] - baseline[0])) / COURT_WIDTH_M
+        x1 = int(np.clip(floor[:, 0].min(), 0, w - 1))
+        x2 = int(np.clip(floor[:, 0].max(), 1, w))
+        y2 = int(np.clip(floor[:, 1].max(), 1, h))
+        y1 = int(np.clip(floor[:, 1].min() - player_height_m * per_metre, 0, h - 1))
+        if x2 - x1 < 32 or y2 - y1 < 32:
+            return None
+        rx1, ry1, rx2, ry2 = self.roi_px()
+        # The network sees the longer side at a fixed size: the gain is how
+        # much shorter the far crop's longer side is than the whole crop's.
+        if max(x2 - x1, y2 - y1) > 0.75 * max(rx2 - rx1, ry2 - ry1):
+            return None
+        return x1, y1, x2, y2
+
     def to_dict(self) -> dict:
         return {
             "corners_px":  self.corners_px.tolist(),
@@ -171,6 +259,7 @@ class CourtCalibration:
             "source":      self.source.value,
             "net_error_m": self.net_error_m,
             "homography":  self.homography.tolist(),
+            "k1":          self.k1,
         }
 
 
@@ -217,8 +306,10 @@ def build_calibration(
     frame_size: tuple[int, int],
     source: CalibrationSource = CalibrationSource.MANUAL,
     net_px: np.ndarray | list | None = None,
+    k1: float = 0.0,
 ) -> CourtCalibration:
-    """Build and validate a calibration from four user-placed court corners.
+    """Build and validate a calibration from four user-placed court corners,
+    seen through a lens of distortion `k1` (0: none).
 
     `corners_px` must be in COURT_CORNERS_M order (far-left, far-right,
     near-right, near-left). The UI labels each handle, so no automatic
@@ -237,15 +328,22 @@ def build_calibration(
     if w <= 0 or h <= 0:
         raise CalibrationError("Dimensioni del frame non valide.")
 
-    _validate_quad(pts, w, h)
+    k1 = float(k1 or 0.0)
+    if not 0.0 <= k1 <= MAX_K1:
+        raise CalibrationError("Correzione dell'obiettivo fuori dai limiti.")
+    _validate_bounds(pts, w, h)
+    # Shape and perspective are judged on the straightened picture, where the
+    # court is a true quadrilateral.
+    straight = undistort_points(pts, k1, (w, h)).astype(np.float32)
+    _validate_quad(straight, w, h)
 
     # Exact 4-point solve: with four correspondences the homography is unique,
     # so RANSAC would only add a failure mode.
-    homography = cv2.getPerspectiveTransform(pts, COURT_CORNERS_M)
+    homography = cv2.getPerspectiveTransform(straight, COURT_CORNERS_M)
     if homography is None or not np.isfinite(homography).all():
         raise CalibrationError("Impossibile calcolare l'omografia dagli angoli indicati.")
 
-    if not _homography_is_stable(homography, pts):
+    if not _homography_is_stable(homography, straight):
         raise CalibrationError(
             "Gli angoli indicati producono una prospettiva degenere: "
             "controlla che seguano il perimetro del campo senza incrociarsi."
@@ -259,6 +357,7 @@ def build_calibration(
         corners_px=pts,
         frame_size=(w, h),
         source=source,
+        k1=k1,
     )
 
     net_error = _net_error_m(calib, net_px)
@@ -270,6 +369,7 @@ def build_calibration(
             frame_size=calib.frame_size,
             source=calib.source,
             net_error_m=net_error,
+            k1=k1,
         )
     return calib
 
@@ -323,10 +423,11 @@ def calibration_from_dict(data: dict) -> CourtCalibration:
         frame_size=(int(fw), int(fh)),
         source=source,
         net_px=data.get("net_px"),
+        k1=float(data.get("k1") or 0.0),
     )
 
 
-def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
+def _validate_bounds(pts: np.ndarray, w: int, h: int) -> None:
     # Off-frame corners are allowed (partly framed court), within reason.
     if (
         (pts[:, 0] < -MAX_OFF_FRAME * w).any() or (pts[:, 0] > (1 + MAX_OFF_FRAME) * w).any()
@@ -336,6 +437,8 @@ def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
             "Un angolo è troppo lontano dall'inquadratura: avvicinalo al bordo del fotogramma."
         )
 
+
+def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
     # Distinct points
     for i in range(4):
         for j in range(i + 1, 4):
