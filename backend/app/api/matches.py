@@ -7,6 +7,7 @@
     PUT    /api/matches/{id}/video               whole video in one request (LAN)
     GET    /api/matches/{id}/keyframe            frame used for calibration
     GET    /api/matches/{id}/calibration/suggestion
+    POST   /api/matches/{id}/calibration/snap    corners snapped onto the painted lines
     POST   /api/matches/{id}/calibration         validate and store the corners
     POST   /api/matches/{id}/start               queue the analysis
     GET    /api/matches/{id}                     poll status
@@ -62,10 +63,13 @@ from app.ml.court import (
     suggest_corners,
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
+from app.ml.snap import snap_to_lines
 from app.ml.video import VideoError, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
 from app.schemas.match import (
     CalibrationResult,
+    CalibrationSnapRequest,
+    CalibrationSnapResult,
     CalibrationSubmit,
     CalibrationSuggestion,
     MatchCreate,
@@ -413,6 +417,43 @@ async def calibration_suggestion(
         frame_size=(frame.shape[1], frame.shape[0]),
         corner_labels=list(CORNER_LABELS),
     )
+
+
+# The snap takes a few seconds of CPU on the Pi: one at a time.
+_SNAP_LOCK = asyncio.Lock()
+
+
+@router.post("/{match_id}/calibration/snap", response_model=CalibrationSnapResult)
+async def snap_calibration(
+    match_id: str, payload: CalibrationSnapRequest,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> CalibrationSnapResult:
+    """The corners on screen snapped onto the painted lines of the keyframe.
+    A proposal for the calibration page: nothing is saved."""
+    match = await _get_match(db, match_id, user)
+    if not match.width or not match.height:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Carica prima il video: le dimensioni non sono note."
+        )
+    path = keyframe_path(match_id)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Keyframe non disponibile.")
+    frame_size = (match.width, match.height)
+
+    def run() -> dict:
+        frame = cv2.imread(str(path))
+        if frame is None:
+            raise CalibrationError("Keyframe illeggibile.")
+        calibration = build_calibration(
+            corners_px=[tuple(p) for p in payload.corners_px], frame_size=frame_size, k1=payload.k1)
+        return snap_to_lines(calibration, frame)
+
+    async with _SNAP_LOCK:
+        try:
+            result = await run_in_threadpool(run)
+        except CalibrationError as exc:
+            raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
+    return CalibrationSnapResult(**result)
 
 
 @router.post("/{match_id}/calibration", response_model=CalibrationResult)
