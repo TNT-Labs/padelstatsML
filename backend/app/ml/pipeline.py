@@ -32,6 +32,7 @@ from app.ml.detect import PersonDetector
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
+from app.ml.smoothing import smooth_path
 from app.ml.rallies import Rally, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
@@ -338,6 +339,9 @@ def analyse_tracklets(
     if not identity.players:
         raise RuntimeError("Impossibile ricostruire i giocatori dalle tracce rilevate.")
 
+    # Each player's path with the detector's jitter filtered out: what
+    # distance, speed and the rally boundaries are measured on.
+    paths = {p.player_id: smooth_path(p.observations, calibration) for p in identity.players}
     rallies = detect_rallies(
         identity.players,
         sample_hz=sample_hz,
@@ -345,6 +349,7 @@ def analyse_tracklets(
         min_duration_s=config.rally_min_duration_s,
         merge_gap_s=config.rally_merge_gap_s,
         max_speed_ms=config.max_player_speed_ms,
+        paths=paths,
     )
 
     result = compute_metrics(
@@ -358,6 +363,7 @@ def analyse_tracklets(
             analysed_s=analysed_s,
             max_speed_ms=config.max_player_speed_ms,
             detector_model=Path(config.detector_model).name,
+            paths=paths,
         )
     )
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)

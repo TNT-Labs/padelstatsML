@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.ml.identity import PlayerTrack
+from app.ml.smoothing import SmoothedPath
 
 
 @dataclass(frozen=True)
@@ -51,8 +52,13 @@ def detect_rallies(
     merge_gap_s: float = 1.5,
     max_speed_ms: float = 8.0,
     min_players: int = 2,
+    paths: dict[int, SmoothedPath] | None = None,
 ) -> list[Rally]:
-    """Return the intervals during which a point is being played."""
+    """Return the intervals during which a point is being played.
+
+    With `paths` (app.ml.smoothing) the speeds are the filtered ones: the
+    raw steps carry the detector's jitter, which made players standing
+    between points look like they were moving."""
     if not players or sample_hz <= 0:
         return []
 
@@ -63,6 +69,12 @@ def detect_rallies(
     max_step_s = sample_period * 2.5
 
     for player in players:
+        path = paths.get(player.player_id) if paths is not None else None
+        if path is not None:
+            for t, speed in zip(path.times, path.speeds):
+                if speed <= max_speed_ms:
+                    speeds_by_time[round(float(t), 3)].append(float(speed))
+            continue
         observations = player.observations
         for prev, cur in zip(observations, observations[1:]):
             dt = cur.timestamp_s - prev.timestamp_s
