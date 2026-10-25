@@ -77,6 +77,16 @@ Se la camera è vicina e un angolo resta fuori dall'inquadratura,
 l'angolo si posiziona lì, dove si incontrerebbero le linee visibili, e
 l'omografia estrapola il campo intero.
 
+**Aggancia alle linee** rifinisce da solo gli angoli messi a stima: cerca
+nel fotogramma le linee dipinte (fondo, laterali, servizio, centrale) e
+riadatta angoli e correzione del grandangolo finché il modello ci si
+sovrappone. Il nastro della rete, la linea più evidente dell'immagine, è
+riconosciuto come tale e non scambiato per la linea di fondo. Un aggancio che
+sposterebbe il campo di oltre 1.5 m viene rifiutato; si può sempre annullare.
+Su una partita già analizzata lo stesso aggancio è in *Verifica accuratezza →
+Correggi la calibrazione*: lì è misurato sui punti segnati a mano (che non
+usa) e le statistiche si ricalcolano in pochi secondi, senza rifare l'analisi.
+
 La calibrazione si salva come **preset camera** e si riusa con un clic per
 ogni partita successiva ripresa dalla stessa posizione.
 
@@ -283,8 +293,9 @@ L'accuratezza dipende quasi interamente dalla ripresa.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva
   fotogramma per fotogramma.
 - **Grandangolo (0.6x, action cam)**: si può usare. La curvatura delle linee
-  si corregge nella calibrazione (cursore *Obiettivo grandangolare*) oppure
-  in automatico da *Verifica accuratezza → Correggi la calibrazione*.
+  si corregge nella calibrazione (cursore *Obiettivo grandangolare*), oppure
+  in automatico con *Aggancia alle linee* o da *Verifica accuratezza →
+  Correggi la calibrazione*.
 - Maglie di colore diverso fra i due della stessa coppia aiutano molto la
   ricostruzione dell'identità dopo le occlusioni.
 

@@ -115,6 +115,21 @@ export interface CalibrationSuggestion {
   k1?: number
 }
 
+/** The corners snapped onto the painted lines: a proposal, nothing saved. */
+export interface CalibrationSnap {
+  corners_px: Point[]
+  k1: number
+  /** Share of the court model lying on a painted line. */
+  aligned_before: number
+  aligned_after: number
+  /** Median distance of the lines found from the model, on the court. */
+  before_cm: number | null
+  after_cm: number | null
+  improved: boolean
+  /** Mean displacement of the positions on the court. */
+  shift_m: number
+}
+
 export interface CalibrationResult {
   ok: boolean
   corners_px: Point[]
@@ -256,17 +271,25 @@ export interface VerificationResult {
   } | null
   /** Recorded after the calibration was corrected from these landmarks. */
   refined?: boolean
+  /** Recorded after the calibration was snapped onto the painted lines. */
+  snapped?: boolean
 }
 
 export interface RefineProposal {
+  /** "landmarks": fitted on the marked points; "lines": snapped onto the
+   *  painted lines, the marked points only measuring it. */
+  method: 'landmarks' | 'lines'
   corners_px: Point[]
   /** Lens correction chosen with the corners (0: none). */
   k1: number
   /** Error of the current calibration at the landmarks. */
   before: ErrorSummary
-  /** Expected error of the corrected one: each landmark left out of the fit. */
+  /** Expected error of the corrected one: each landmark left out of the fit
+   *  ("landmarks"), or measured on them directly ("lines"). */
   after: ErrorSummary
   landmarks: number
+  /** Only for "lines": the share of the model on the lines, and their distance. */
+  lines?: { aligned_before: number; aligned_after: number; before_cm: number | null; after_cm: number | null; shift_m: number }
 }
 
 export interface VerificationPlan {
@@ -375,15 +398,20 @@ export const api = {
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
 
   getVerification: (id: string) => req<VerificationPlan>(`/api/matches/${id}/verification`),
-  refineCalibration: (id: string, landmarks: Record<string, Point>) =>
+  refineCalibration: (id: string, landmarks: Record<string, Point>, method: RefineProposal['method']) =>
     req<RefineProposal>(`/api/matches/${id}/verification/refine`, {
       method: 'POST',
-      body: JSON.stringify({ landmarks }),
+      body: JSON.stringify({ landmarks, method }),
     }),
-  applyRefinement: (id: string, landmarks: Record<string, Point>, corners_px: Point[], k1: number) =>
+  applyRefinement: (id: string, landmarks: Record<string, Point>, proposal: RefineProposal) =>
     req<{ names_cleared: boolean }>(`/api/matches/${id}/verification/apply`, {
       method: 'POST',
-      body: JSON.stringify({ landmarks, corners_px, k1 }),
+      body: JSON.stringify({
+        landmarks,
+        corners_px: proposal.corners_px,
+        k1: proposal.k1,
+        method: proposal.method,
+      }),
     }),
   submitVerification: (
     id: string,
@@ -398,6 +426,12 @@ export const api = {
 
   getSuggestion: (id: string) =>
     req<CalibrationSuggestion>(`/api/matches/${id}/calibration/suggestion`),
+
+  snapCalibration: (id: string, corners_px: Point[], k1: number) =>
+    req<CalibrationSnap>(`/api/matches/${id}/calibration/snap`, {
+      method: 'POST',
+      body: JSON.stringify({ corners_px, k1 }),
+    }),
 
   submitCalibration: (
     id: string,
