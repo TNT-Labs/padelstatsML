@@ -601,6 +601,47 @@ def test_an_analysis_from_a_later_start_leaves_out_what_comes_before(
     assert replayed["summary"] == late["summary"]
 
 
+class _SmallBlindDetector(_BlobDetector):
+    """Like the real network: what is too small once the crop is shrunk to
+    its input size is not found."""
+
+    MIN_INPUT_PX = 36
+
+    def detect(self, frame: np.ndarray, roi=None) -> list[Detection]:
+        x1, y1, x2, y2 = roi if roi is not None else (0, 0, frame.shape[1], frame.shape[0])
+        scale = 480 / max(x2 - x1, y2 - y1)
+        return [d for d in super().detect(frame, roi) if d.height * scale >= self.MIN_INPUT_PX]
+
+
+def test_a_closer_look_at_the_far_half_finds_the_far_players(synthetic_match, calibration, tmp_path):
+    """The far players are too small in the whole-court crop for the
+    network; a second look at the far half alone finds them."""
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+
+    original = pipeline_module.PersonDetector
+    pipeline_module.PersonDetector = _SmallBlindDetector
+    try:
+        runs = {
+            far: AnalysisPipeline(replace(PIPELINE_CONFIG, detector_far_pass=far)).run(
+                synthetic_match, calibration=calibration, artifacts_dir=tmp_path / str(far))
+            for far in (False, True)
+        }
+    finally:
+        pipeline_module.PersonDetector = original
+
+    def far_tracked(result):
+        return sum(p["tracked_ratio"] for p in result["per_player"].values() if p["team"] == 1)
+
+    # Two far players: about a quarter of the match each without, all of it with.
+    assert far_tracked(runs[False]) < 0.7
+    assert far_tracked(runs[True]) > 1.8
+    assert runs[True]["data_quality"]["far_pass"]["active"]
+    assert runs[True]["data_quality"]["far_pass"]["added"] > 0
+    assert len(runs[True]["per_player"]) == 4
+
+
 # ── Player thumbnails ────────────────────────────────────────────────────────
 
 

@@ -73,6 +73,16 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 <dd>in gioco sopra {quality.rally_speed_threshold_ms.toFixed(2)} m/s di velocità media</dd>
               </div>
             )}
+            {quality.far_pass && (
+              <div>
+                <dt>Metà lontana</dt>
+                <dd>
+                  {quality.far_pass.active
+                    ? `secondo passaggio del rilevatore: +${quality.far_pass.added.toLocaleString('it-IT')} rilevazioni`
+                    : 'secondo passaggio non applicato: con questa inquadratura non ingrandisce i giocatori'}
+                </dd>
+              </div>
+            )}
             {quality.verification && (
               <div>
                 <dt>Verifica a mano</dt>

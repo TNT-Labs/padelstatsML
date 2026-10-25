@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     detector_imgsz: int = 480
     detector_conf: float = 0.30
     detector_iou: float = 0.55
+    # A second detector look at the far half of the court, where players are
+    # smallest. More far detections; the analysis takes ~50-80% longer on a
+    # Pi. Worth it with the camera high (3-4 m): lower, the net hides the
+    # far players' feet whatever the detector sees.
+    detector_far_pass: bool = False
     # onnxruntime intra-op threads. 0 = auto (physical cores, capped at 4).
     inference_threads: int = 0
 

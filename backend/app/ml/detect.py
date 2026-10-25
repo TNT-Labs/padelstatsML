@@ -207,6 +207,22 @@ class PersonDetector:
         return out
 
 
+def merge_detections(first: list[Detection], second: list[Detection], iou: float = 0.5) -> list[Detection]:
+    """One list from two looks at the same frame (whole court, far half): a
+    person found by both is kept once, by the more confident box, and a box
+    that is part of another's is dropped as in a single look."""
+    combined = list(first) + list(second)
+    if len(combined) < 2:
+        return combined
+    boxes = [[d.bbox[0], d.bbox[1], d.width, d.height] for d in combined]
+    keep = cv2.dnn.NMSBoxes(boxes, [d.confidence for d in combined], 0.0, iou)
+    kept = [combined[i] for i in np.asarray(keep).reshape(-1)] if len(keep) else []
+    drop = part_of_another([d.bbox for d in kept])
+    out = [d for d, dropped in zip(kept, drop) if not dropped]
+    out.sort(key=lambda d: -d.confidence)
+    return out
+
+
 # A box is part of another person's box when this much of it lies inside…
 PART_CONTAINMENT = 0.8
 # …and it shares that box's top (a head-and-torso box) or bottom (a legs box)

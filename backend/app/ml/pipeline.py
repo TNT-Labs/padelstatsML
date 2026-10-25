@@ -28,7 +28,7 @@ import numpy as np
 
 from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
-from app.ml.detect import PersonDetector
+from app.ml.detect import PersonDetector, merge_detections
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
@@ -61,6 +61,10 @@ class PipelineConfig:
     rally_speed_adaptive: bool = True
     rally_min_duration_s: float = 3.0
     rally_merge_gap_s: float = 3.0
+    # A second look of the detector at the far half alone, where players are
+    # smallest: more of them found, at the cost of a second inference per
+    # sampled frame (see CourtCalibration.far_roi_px).
+    detector_far_pass: bool = False
     # Optional: without it identity falls back to kit colour.
     reid_model: str | None = None
 
@@ -135,6 +139,8 @@ class AnalysisPipeline:
             embedder=embedder,
         )
         roi = calibration.roi_px()
+        far_roi = calibration.far_roi_px() if self.config.detector_far_pass else None
+        far_added = 0
 
         # ── 2. Single decode pass ────────────────────────────────────────────
         report(3, "Analisi dei frame…")
@@ -155,6 +161,10 @@ class AnalysisPipeline:
 
             for frame in sampler:
                 detections = detector.detect(frame.image, roi=roi)
+                if far_roi is not None:
+                    seen = len(detections)
+                    detections = merge_detections(detections, detector.detect(frame.image, roi=far_roi))
+                    far_added += max(len(detections) - seen, 0)
                 tracked = tracker.update(
                     frame_index=frame.index,
                     timestamp_s=frame.timestamp_s,
@@ -227,6 +237,9 @@ class AnalysisPipeline:
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         result["data_quality"]["variable_frame_rate"] = sampler.variable_frame_rate
+        if self.config.detector_far_pass:
+            # How much the second look added: tells whether it is worth its time.
+            result["data_quality"]["far_pass"] = {"active": far_roi is not None, "added": far_added}
         if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s:
             result["data_quality"]["warnings"].append(
                 f"Analizzati {analysed_s / 60:.0f} minuti su "
@@ -319,6 +332,7 @@ class AnalysisPipeline:
                 "track_max_age_s": self.config.track_max_age_s,
                 "rally_speed_threshold_ms": self.config.rally_speed_threshold_ms,
                 "rally_speed_adaptive": self.config.rally_speed_adaptive,
+                "detector_far_pass": self.config.detector_far_pass,
                 "rally_min_duration_s": self.config.rally_min_duration_s,
                 "rally_merge_gap_s": self.config.rally_merge_gap_s,
             },

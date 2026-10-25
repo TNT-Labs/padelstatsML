@@ -198,3 +198,24 @@ def test_a_calibration_through_a_wide_angle_lens_places_points_right():
     # And back: court to picture follows the curve.
     assert np.allclose(lens.court_to_pixels(np.array(probes, np.float32)), pixels, atol=0.5)
     assert calibration_from_dict({**lens.to_dict(), "k1": k1}).k1 == k1
+
+
+def test_the_far_half_crop_holds_the_far_players_and_is_smaller(calibration):
+    roi = calibration.far_roi_px()
+    assert roi is not None
+    x1, y1, x2, y2 = roi
+    # A far player's feet, at the baseline corners, are inside, with room
+    # above for their height.
+    for x, y in ((0.0, 20.0), (10.0, 20.0), (5.0, 11.0)):
+        u, v = calibration.court_to_pixels(np.array([[x, y]], np.float32))[0]
+        assert x1 <= u <= x2 and y1 + 40 <= v <= y2
+    rx1, ry1, rx2, ry2 = calibration.roi_px()
+    assert max(x2 - x1, y2 - y1) <= 0.75 * max(rx2 - rx1, ry2 - ry1)
+
+
+def test_no_far_crop_when_it_would_enlarge_nobody():
+    """Seen from above, the far half is as large as the near one: a crop of
+    it gives the network nothing bigger to look at."""
+    overhead = build_calibration([[400, 100], [1500, 100], [1500, 1000], [400, 1000]], FRAME,
+                                 CalibrationSource.MANUAL)
+    assert overhead.far_roi_px() is None

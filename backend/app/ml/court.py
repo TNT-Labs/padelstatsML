@@ -218,6 +218,40 @@ class CourtCalibration:
             return 0, 0, w, h
         return x1, y1, x2, y2
 
+    def far_roi_px(self, margin_m: float = 1.0, player_height_m: float = 2.3) -> tuple[int, int, int, int] | None:
+        """The far half of the court with room above it for the players,
+        for a second, closer look of the detector (see pipeline): there the
+        players are a few dozen pixels tall, and the whole-court crop shrinks
+        them further before the network sees them.
+
+        None when the far half is not much smaller than the whole court in
+        the picture: cropping it would enlarge nobody."""
+        w, h = self.frame_size
+        floor = self.court_to_pixels(np.array([
+            [-margin_m, NET_Y_M - margin_m],
+            [COURT_WIDTH_M + margin_m, NET_Y_M - margin_m],
+            [COURT_WIDTH_M + margin_m, COURT_LENGTH_M + margin_m],
+            [-margin_m, COURT_LENGTH_M + margin_m],
+        ], dtype=np.float32))
+        if not np.isfinite(floor).all():
+            return None
+        # Players stand above the floor: about their height in the
+        # picture's scale at the far baseline.
+        baseline = self.court_to_pixels(np.array([[0.0, COURT_LENGTH_M], [COURT_WIDTH_M, COURT_LENGTH_M]], np.float32))
+        per_metre = float(np.linalg.norm(baseline[1] - baseline[0])) / COURT_WIDTH_M
+        x1 = int(np.clip(floor[:, 0].min(), 0, w - 1))
+        x2 = int(np.clip(floor[:, 0].max(), 1, w))
+        y2 = int(np.clip(floor[:, 1].max(), 1, h))
+        y1 = int(np.clip(floor[:, 1].min() - player_height_m * per_metre, 0, h - 1))
+        if x2 - x1 < 32 or y2 - y1 < 32:
+            return None
+        rx1, ry1, rx2, ry2 = self.roi_px()
+        # The network sees the longer side at a fixed size: the gain is how
+        # much shorter the far crop's longer side is than the whole crop's.
+        if max(x2 - x1, y2 - y1) > 0.75 * max(rx2 - rx1, ry2 - ry1):
+            return None
+        return x1, y1, x2, y2
+
     def to_dict(self) -> dict:
         return {
             "corners_px":  self.corners_px.tolist(),

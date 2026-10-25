@@ -199,6 +199,8 @@ export interface DataQuality {
   rally_speed_threshold_ms?: number | null
   /** The video's frame rate varied (phones): times were read from the video. */
   variable_frame_rate?: boolean
+  /** Second detector look at the far half, when enabled. */
+  far_pass?: { active: boolean; added: number } | null
   /** Last accuracy check against points marked by hand. */
   verification?: VerificationResult | null
 }

@@ -195,6 +195,8 @@ class DataQuality(BaseModel):
     rally_speed_threshold_ms: float | None = None
     # The video's frame rate varied (phones): times were read from the video.
     variable_frame_rate: bool = False
+    # Second detector look at the far half: {"active", "added"}, when enabled.
+    far_pass: dict | None = None
     # Last accuracy check against points marked by hand (app.ml.verification).
     verification: dict | None = None
 
