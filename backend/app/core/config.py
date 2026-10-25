@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     rally_speed_threshold_ms: float = 1.1
     rally_speed_adaptive: bool = True
     rally_min_duration_s: float = 3.0
-    rally_merge_gap_s: float = 1.5
+    rally_merge_gap_s: float = 3.0
 
     # ── Artifacts ────────────────────────────────────────────────────────────
     # Keep the raw per-frame observations of each analysis (~17 MB per hour of

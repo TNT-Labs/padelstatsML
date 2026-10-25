@@ -60,7 +60,7 @@ class PipelineConfig:
     # (rallies.activity_threshold). False: exactly rally_speed_threshold_ms.
     rally_speed_adaptive: bool = True
     rally_min_duration_s: float = 3.0
-    rally_merge_gap_s: float = 1.5
+    rally_merge_gap_s: float = 3.0
     # Optional: without it identity falls back to kit colour.
     reid_model: str | None = None
 
