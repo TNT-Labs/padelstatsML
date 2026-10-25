@@ -235,6 +235,7 @@ def load_artifacts(directory: str | Path) -> LoadedArtifacts:
         frame_size=tuple(calibration_data["frame_size"]),
         source=CalibrationSource(calibration_data.get("source", "manual")),
         net_px=calibration_data.get("net_px"),
+        k1=float(calibration_data.get("k1") or 0.0),
     )
 
     # The pipeline drops tracks shorter than this; replaying must drop the

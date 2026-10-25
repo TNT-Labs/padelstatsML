@@ -402,6 +402,7 @@ async def calibration_suggestion(
             confidence=1.0,
             frame_size=(frame.shape[1], frame.shape[0]),
             corner_labels=list(CORNER_LABELS),
+            k1=float(match.calibration.get("k1") or 0.0),
         )
 
     suggestion = suggest_corners(frame)
@@ -438,11 +439,12 @@ async def submit_calibration(
             )
 
     frame_size = (match.width, match.height)
-    corners, net_px, source, preset_id, note = await _resolve_corners(db, payload, frame_size, user)
+    corners, net_px, source, preset_id, note, k1 = await _resolve_corners(
+        db, payload, frame_size, user, float((match.calibration or {}).get("k1") or 0.0))
 
     try:
         calibration = build_calibration(
-            corners_px=corners, frame_size=frame_size, source=source, net_px=net_px
+            corners_px=corners, frame_size=frame_size, source=source, net_px=net_px, k1=k1
         )
     except CalibrationError as exc:
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
@@ -453,6 +455,7 @@ async def submit_calibration(
         "source": source.value,
         "net_px": [list(p) for p in net_px] if net_px is not None else None,
         "preset_id": preset_id,
+        "k1": k1,
     }
     if payload.analysis_start_s is not None:
         match.analysis_start_s = round(payload.analysis_start_s, 2) or None
@@ -464,7 +467,7 @@ async def submit_calibration(
     saved_preset_id = preset_id
     if payload.save_as_preset:
         saved_preset_id = await _save_preset(
-            db, user, payload.save_as_preset, calibration.corners_px.tolist(), frame_size, net_px
+            db, user, payload.save_as_preset, calibration.corners_px.tolist(), frame_size, net_px, k1
         )
 
     await db.flush()
@@ -482,8 +485,10 @@ async def _resolve_corners(
     payload: CalibrationSubmit,
     frame_size: tuple[int, int],
     user: User,
+    current_k1: float = 0.0,
 ):
-    """Corners come either from a saved preset (rescaled) or from the UI."""
+    """Corners come either from a saved preset (rescaled) or from the UI;
+    the lens correction with them (from the UI when sent, else kept)."""
     from app.ml.court import CalibrationSource
 
     if payload.preset_id:
@@ -494,7 +499,7 @@ async def _resolve_corners(
         corners, note = _rescale_preset(preset, frame_size)
         net = _rescale_points(preset.net_px, preset, frame_size) if preset.net_px else None
         preset.times_used += 1
-        return corners, net, CalibrationSource.PRESET, preset.id, note
+        return corners, net, CalibrationSource.PRESET, preset.id, note, float(preset.k1 or 0.0)
 
     if not payload.corners_px:
         raise HTTPException(
@@ -503,7 +508,8 @@ async def _resolve_corners(
         )
     source = CalibrationSource(payload.source.value)
     net = [tuple(p) for p in payload.net_px] if payload.net_px else None
-    return [tuple(p) for p in payload.corners_px], net, source, None, None
+    k1 = payload.k1 if payload.k1 is not None else current_k1
+    return [tuple(p) for p in payload.corners_px], net, source, None, None, k1
 
 
 def _rescale_preset(preset: CameraPreset, frame_size: tuple[int, int]):
@@ -529,6 +535,7 @@ async def _save_preset(
     corners: list,
     frame_size: tuple[int, int],
     net_px,
+    k1: float = 0.0,
 ) -> str:
     existing = await db.scalar(
         select(CameraPreset).where(CameraPreset.owner_id == user.id, CameraPreset.name == name)
@@ -537,6 +544,7 @@ async def _save_preset(
         existing.corners_px = corners
         existing.frame_width, existing.frame_height = frame_size
         existing.net_px = [list(p) for p in net_px] if net_px else None
+        existing.k1 = k1 or None
         return existing.id
 
     preset = CameraPreset(
@@ -546,6 +554,7 @@ async def _save_preset(
         frame_width=frame_size[0],
         frame_height=frame_size[1],
         net_px=[list(p) for p in net_px] if net_px else None,
+        k1=k1 or None,
     )
     db.add(preset)
     await db.flush()

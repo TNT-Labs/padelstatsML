@@ -566,3 +566,24 @@ async def test_the_analysis_start_is_stored_with_the_calibration(uploaded_match,
     await client.post(f"/api/matches/{match_id}/calibration",
                       json={"corners_px": GOOD_CORNERS, "analysis_start_s": 0})
     assert (await client.get(f"/api/matches/{match_id}")).json()["analysis_start_s"] is None
+
+
+async def test_the_lens_correction_is_stored_and_travels_with_the_preset(uploaded_match, client):
+    match_id, _ = uploaded_match
+    saved = await client.post(f"/api/matches/{match_id}/calibration",
+                              json={"corners_px": GOOD_CORNERS, "k1": 0.2, "save_as_preset": "Grandangolo"})
+    assert saved.status_code == 200, saved.text
+    suggestion = (await client.get(f"/api/matches/{match_id}/calibration/suggestion")).json()
+    assert suggestion["method"] == "saved" and suggestion["k1"] == 0.2
+
+    # Not sent: kept.
+    await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS})
+    assert (await client.get(f"/api/matches/{match_id}/calibration/suggestion")).json()["k1"] == 0.2
+
+    preset = next(p for p in (await client.get("/api/presets")).json() if p["name"] == "Grandangolo")
+    assert preset["k1"] == 0.2
+    await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": GOOD_CORNERS, "k1": 0})
+    await client.post(f"/api/matches/{match_id}/calibration", json={"preset_id": preset["id"]})
+    assert (await client.get(f"/api/matches/{match_id}/calibration/suggestion")).json()["k1"] == 0.2
+    assert (await client.post(f"/api/matches/{match_id}/calibration",
+                              json={"corners_px": GOOD_CORNERS, "k1": 0.9})).status_code == 422

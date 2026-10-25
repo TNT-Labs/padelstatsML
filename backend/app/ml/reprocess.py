@@ -25,7 +25,8 @@ def with_calibration(artifacts: LoadedArtifacts, calibration_data: dict | None) 
         return artifacts
     stored = np.asarray(artifacts.calibration.corners_px, dtype=np.float64)
     current = np.asarray(calibration_data["corners_px"], dtype=np.float64)
-    if stored.shape == current.shape and np.allclose(stored, current, atol=1e-3):
+    same_lens = abs(float(calibration_data.get("k1") or 0.0) - artifacts.calibration.k1) < 1e-9
+    if stored.shape == current.shape and np.allclose(stored, current, atol=1e-3) and same_lens:
         return artifacts
     calibration = calibration_from_dict(calibration_data)
     return replace(

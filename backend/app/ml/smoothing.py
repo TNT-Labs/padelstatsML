@@ -224,27 +224,19 @@ def _process_noise(dt: float) -> np.ndarray:
 
 def _measurement_noise(observations: list[Observation], calibration: CourtCalibration) -> np.ndarray:
     """Covariance of each foot position in metres: the pixel jitter of its
-    box, through the homography's local Jacobian at the foot."""
-    h = calibration.homography
+    box, through the local Jacobian of the pixels-to-metres mapping at the
+    foot (lens correction included)."""
+    feet = np.array([o.foot_px for o in observations], dtype=np.float64)
+    base = calibration.floor_points_to_court(feet).astype(np.float64)
+    step = 1.0
+    dx = (calibration.floor_points_to_court(feet + [step, 0.0]) - base) / step
+    dy = (calibration.floor_points_to_court(feet + [0.0, step]) - base) / step
     out = np.zeros((len(observations), 2, 2))
     for i, obs in enumerate(observations):
         x1, y1, x2, y2 = obs.bbox
         height = max(y2 - y1, 1.0)
         sx = max(JITTER_X * height, JITTER_MIN_PX)
         sy = max(JITTER_Y * height, JITTER_MIN_PX)
-        jac = _jacobian(h, obs.foot_px)
+        jac = np.column_stack([dx[i], dy[i]])
         out[i] = jac @ np.diag([sx * sx, sy * sy]) @ jac.T + np.eye(2) * 1e-4
     return out
-
-
-def _jacobian(h: np.ndarray, point: tuple[float, float]) -> np.ndarray:
-    """d(court metres) / d(pixels) of the homography at `point`."""
-    u, v = float(point[0]), float(point[1])
-    p = np.array([u, v, 1.0])
-    num_x, num_y, w = h[0] @ p, h[1] @ p, h[2] @ p
-    if abs(w) < 1e-12:
-        return np.eye(2)
-    return np.array([
-        [(h[0, 0] * w - num_x * h[2, 0]) / w ** 2, (h[0, 1] * w - num_x * h[2, 1]) / w ** 2],
-        [(h[1, 0] * w - num_y * h[2, 0]) / w ** 2, (h[1, 1] * w - num_y * h[2, 1]) / w ** 2],
-    ])

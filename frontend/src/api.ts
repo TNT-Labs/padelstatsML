@@ -111,6 +111,8 @@ export interface CalibrationSuggestion {
   confidence: number
   frame_size: [number, number]
   corner_labels: string[]
+  /** Lens correction of the saved calibration (0: none). */
+  k1?: number
 }
 
 export interface CalibrationResult {
@@ -128,6 +130,7 @@ export interface CameraPreset {
   frame_width: number
   frame_height: number
   net_px: Point[] | null
+  k1?: number | null
   times_used: number
   created_at: string
 }
@@ -255,6 +258,8 @@ export interface VerificationResult {
 
 export interface RefineProposal {
   corners_px: Point[]
+  /** Lens correction chosen with the corners (0: none). */
+  k1: number
   /** Error of the current calibration at the landmarks. */
   before: ErrorSummary
   /** Expected error of the corrected one: each landmark left out of the fit. */
@@ -373,10 +378,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ landmarks }),
     }),
-  applyRefinement: (id: string, landmarks: Record<string, Point>, corners_px: Point[]) =>
+  applyRefinement: (id: string, landmarks: Record<string, Point>, corners_px: Point[], k1: number) =>
     req<{ names_cleared: boolean }>(`/api/matches/${id}/verification/apply`, {
       method: 'POST',
-      body: JSON.stringify({ landmarks, corners_px }),
+      body: JSON.stringify({ landmarks, corners_px, k1 }),
     }),
   submitVerification: (
     id: string,
@@ -400,6 +405,7 @@ export const api = {
       preset_id?: string
       save_as_preset?: string
       analysis_start_s?: number
+      k1?: number
     },
   ) =>
     req<CalibrationResult>(`/api/matches/${id}/calibration`, {

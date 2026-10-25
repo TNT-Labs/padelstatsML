@@ -105,6 +105,8 @@ class CalibrationSuggestion(BaseModel):
     confidence: float
     frame_size: tuple[int, int]
     corner_labels: list[str]
+    # Lens correction of the saved calibration (0: none).
+    k1: float = 0.0
 
 
 class CalibrationSubmit(BaseModel):
@@ -122,6 +124,9 @@ class CalibrationSubmit(BaseModel):
     save_as_preset: str | None = Field(default=None, min_length=1, max_length=100)
     # Second of the video the analysis starts from; None keeps the current one.
     analysis_start_s: float | None = Field(default=None, ge=0)
+    # Lens correction for a wide-angle lens (app.ml.court); None keeps the
+    # current one.
+    k1: float | None = Field(default=None, ge=0, le=0.5)
 
 
 class CalibrationResult(BaseModel):
@@ -221,6 +226,7 @@ class PresetCreate(BaseModel):
     frame_width: int = Field(gt=0)
     frame_height: int = Field(gt=0)
     net_px: list[Point] | None = Field(default=None, min_length=2, max_length=2)
+    k1: float = Field(default=0.0, ge=0, le=0.5)
 
 
 class PresetRead(BaseModel):
@@ -232,6 +238,7 @@ class PresetRead(BaseModel):
     frame_width: int
     frame_height: int
     net_px: list | None
+    k1: float | None = None
     times_used: int
     created_at: datetime
 

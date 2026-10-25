@@ -161,3 +161,40 @@ def test_the_camera_height_is_read_from_the_players_boxes(height_m, tilt_deg):
 
     assert estimate is not None
     assert abs(estimate - height_m) / height_m < 0.15, estimate
+
+
+def test_lens_correction_round_trips():
+    from app.ml.court import distort_points, undistort_points
+
+    points = np.array([[0, 0], [960, 540], [1900, 50], [-400, 1300], [2300, 900]], dtype=np.float64)
+    for k1 in (0.0, 0.1, 0.35):
+        back = undistort_points(distort_points(points, k1, FRAME), k1, FRAME)
+        assert np.allclose(back, points, atol=1e-6)
+    # Barrel distortion pulls the edges towards the centre; the centre stays.
+    bent = distort_points(points, 0.2, FRAME)
+    assert np.allclose(bent[1], [960, 540])
+    assert np.linalg.norm(bent[2] - [960, 540]) < np.linalg.norm(points[2] - [960, 540])
+
+
+def test_a_calibration_through_a_wide_angle_lens_places_points_right():
+    """Seen through a wide-angle lens the court's lines are curves: a plain
+    homography misplaces the middle of the court; with the lens correction
+    every point of the court lands where it is."""
+    from app.ml.court import distort_points
+
+    k1 = 0.25
+    project = _pinhole(2.0, 3.0)
+    seen = lambda x, y: distort_points(np.array([project((x, y, 0.0))]), k1, FRAME)[0]
+    corners = [seen(x, y) for x, y in COURT_CORNERS_M_LIST]
+    plain = build_calibration(corners, FRAME, CalibrationSource.MANUAL)
+    lens = build_calibration(corners, FRAME, CalibrationSource.MANUAL, k1=k1)
+
+    probes = [(5.0, 3.05), (0.0, 10.0), (10.0, 10.0), (5.0, 16.95), (2.0, 7.0)]
+    pixels = np.array([seen(x, y) for x, y in probes], dtype=np.float32)
+    plain_error = np.linalg.norm(plain.floor_points_to_court(pixels) - probes, axis=1).max()
+    lens_error = np.linalg.norm(lens.floor_points_to_court(pixels) - probes, axis=1).max()
+    assert plain_error > 0.3
+    assert lens_error < 0.02
+    # And back: court to picture follows the curve.
+    assert np.allclose(lens.court_to_pixels(np.array(probes, np.float32)), pixels, atol=0.5)
+    assert calibration_from_dict({**lens.to_dict(), "k1": k1}).k1 == k1

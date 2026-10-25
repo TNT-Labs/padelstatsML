@@ -451,6 +451,9 @@ creano da **menu utente → Gestione utenti** ([passo 11b](#11b-utenti-e-accesso
    (camera vicina), premi *Estendi oltre l'inquadratura* e portalo nella
    cornice scura dove si incontrerebbero le linee; lasciato sul bordo, la
    cornice si allarga. In questo caso usa anche *Verifica con la rete*.
+   Se riprendi con un grandangolo (lo 0.6x del telefono, un'action cam) le
+   linee reali del campo sono curve: alza **Obiettivo grandangolare** finché
+   le linee bianche le seguono.
    Sotto, in **Inizio dell'analisi**, porta il video al momento in cui
    inizia il gioco e premi *Inizia da qui* (o scrivi il minuto, es. `3:20`):
    il riscaldamento e l'ingresso in campo restano fuori dalle statistiche.

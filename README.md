@@ -279,6 +279,9 @@ L'accuratezza dipende quasi interamente dalla ripresa.
   decode.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva
   fotogramma per fotogramma.
+- **Grandangolo (0.6x, action cam)**: si può usare. La curvatura delle linee
+  si corregge nella calibrazione (cursore *Obiettivo grandangolare*) oppure
+  in automatico da *Verifica accuratezza → Correggi la calibrazione*.
 - Maglie di colore diverso fra i due della stessa coppia aiutano molto la
   ricostruzione dell'identità dopo le occlusioni.
 

@@ -50,6 +50,7 @@ async def create_preset(
             frame_size=(payload.frame_width, payload.frame_height),
             source=CalibrationSource.PRESET,
             net_px=[tuple(p) for p in payload.net_px] if payload.net_px else None,
+            k1=payload.k1,
         )
     except CalibrationError as exc:
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
@@ -71,6 +72,7 @@ async def create_preset(
         frame_width=payload.frame_width,
         frame_height=payload.frame_height,
         net_px=[list(p) for p in payload.net_px] if payload.net_px else None,
+        k1=payload.k1 or None,
     )
     db.add(preset)
     await db.flush()
