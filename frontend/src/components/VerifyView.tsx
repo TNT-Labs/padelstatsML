@@ -15,6 +15,7 @@ import {
   type ErrorSummary,
   type Landmark,
   type Point,
+  type RefineProposal,
   type VerificationPlan,
   type VerificationResult,
 } from '../api'
@@ -40,6 +41,7 @@ export const VerifyView: FC<Props> = ({ matchId, title, onBack }) => {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [changed, setChanged] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     api
@@ -123,6 +125,19 @@ export const VerifyView: FC<Props> = ({ matchId, title, onBack }) => {
           </div>
         </div>
         {result && <ResultCards result={result} />}
+        {result && (
+          <RefineCard
+            matchId={matchId}
+            result={result}
+            onApplied={(fresh, namesKept) => {
+              setResult(fresh)
+              setChanged(true)
+              setNotice(namesKept ? 'Calibrazione corretta e statistiche ricalcolate.'
+                : 'Calibrazione corretta: i giocatori sono cambiati, i nomi vanno reinseriti.')
+            }}
+          />
+        )}
+        {notice && <div className="callout callout-info">{notice}</div>}
       </div>
     )
   }
@@ -205,6 +220,22 @@ export const VerifyView: FC<Props> = ({ matchId, title, onBack }) => {
       {header}
       {error && <p className="error-msg">{error}</p>}
       {result && <ResultCards result={result} />}
+      {result && (
+        <RefineCard
+          matchId={matchId}
+          result={result}
+          onApplied={(fresh, namesKept) => {
+            setResult(fresh)
+            setChanged(true)
+            setNotice(
+              namesKept
+                ? 'Calibrazione corretta e statistiche ricalcolate.'
+                : 'Calibrazione corretta e statistiche ricalcolate: i giocatori sono cambiati, i nomi vanno reinseriti.',
+            )
+          }}
+        />
+      )}
+      {notice && <div className="callout callout-info" style={{ marginBottom: '1rem' }}>{notice}</div>}
       <div className="action-row" style={{ marginTop: '1rem' }}>
         <button className="btn btn-ghost btn-sm" onClick={() => setStep('intro')}>
           Ripeti la verifica
@@ -433,6 +464,103 @@ const CourtDiagram: FC<{ target: Landmark }> = ({ target }) => {
   )
 }
 
+// ── Correcting the calibration ───────────────────────────────────────────────
+
+const RefineCard: FC<{
+  matchId: string
+  result: VerificationResult
+  onApplied: (result: VerificationResult, namesKept: boolean) => void
+}> = ({ matchId, result, onApplied }) => {
+  const [proposal, setProposal] = useState<RefineProposal | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const marks: Record<string, Point> = {}
+  for (const item of result.calibration.items) if (item.px) marks[item.key] = item.px
+  const count = Object.keys(marks).length
+
+  if (result.refined) {
+    return (
+      <div className="callout callout-info" style={{ marginBottom: '1rem' }}>
+        La calibrazione è stata corretta con questi punti: gli errori qui sopra sono misurati sugli stessi
+        punti e quindi ottimistici. Per una misura indipendente ripeti la verifica.
+      </div>
+    )
+  }
+  if (count < 4) return null
+
+  const propose = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      setProposal(await api.refineCalibration(matchId, marks))
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const apply = async () => {
+    if (!proposal) return
+    setBusy(true)
+    setError(null)
+    try {
+      const outcome = await api.applyRefinement(matchId, marks, proposal.corners_px)
+      const plan = await api.getVerification(matchId)
+      if (plan.last) onApplied(plan.last, !outcome.names_cleared)
+      setProposal(null)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const better = proposal && (proposal.after.mean_m ?? Infinity) < (proposal.before.mean_m ?? 0) - 0.05
+  return (
+    <div className="card" style={{ marginBottom: '1rem' }}>
+      <h2 style={{ marginBottom: '.5rem' }}>Correggi la calibrazione</h2>
+      <p className="muted-note" style={{ marginBottom: '.6rem' }}>
+        La calibrazione usa solo i 4 angoli, spesso fuori inquadratura e messi a stima. Con i {count} punti
+        che hai segnato si può ricalcolare: le statistiche si aggiornano in pochi secondi, senza rifare
+        l'analisi.
+      </p>
+      {!proposal && (
+        <button className="btn btn-primary btn-sm" disabled={busy} onClick={propose}>
+          {busy ? 'Calcolo…' : 'Calcola la correzione'}
+        </button>
+      )}
+      {proposal && (
+        <>
+          <table className="stat-table" style={{ marginBottom: '.6rem' }}>
+            <tbody>
+              <tr>
+                <td>Errore attuale</td>
+                <td>{proposal.before.mean_m?.toFixed(2)} m</td>
+              </tr>
+              <tr>
+                <td>Errore atteso con la correzione</td>
+                <td>{proposal.after.mean_m?.toFixed(2)} m</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="muted-note" style={{ marginBottom: '.6rem' }}>
+            L'errore atteso è misurato su ogni punto escluso a turno dal calcolo: non è ottimistico.
+          </p>
+          {better ? (
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={apply}>
+              {busy ? 'Ricalcolo delle statistiche…' : 'Applica e ricalcola le statistiche'}
+            </button>
+          ) : (
+            <p>La correzione non migliora la calibrazione: lasciala com'è.</p>
+          )}
+        </>
+      )}
+      {error && <p className="error-msg">{error}</p>}
+    </div>
+  )
+}
+
 // ── Results ──────────────────────────────────────────────────────────────────
 
 /** In words, for a mean error in metres. */
@@ -508,6 +636,14 @@ export const ResultCards: FC<{ result: VerificationResult }> = ({ result }) => {
               <tr>
                 <td>Rilevazioni grezze</td>
                 <td>{metres(players.raw.all)}</td>
+              </tr>
+              <tr>
+                <td>· metà vicina</td>
+                <td>{metres(players.raw.by_half.vicina)}</td>
+              </tr>
+              <tr>
+                <td>· metà lontana</td>
+                <td>{metres(players.raw.by_half.lontana)}</td>
               </tr>
             </tbody>
           </table>

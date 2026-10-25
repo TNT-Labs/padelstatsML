@@ -28,7 +28,8 @@ from app.core.config import get_settings                          # noqa: E402
 from app.core.database import sync_session                         # noqa: E402
 from app.core.storage import save_crop, video_path                 # noqa: E402
 from app.ml.artifacts import ArtifactWriter, load_artifacts, resolve_artifacts_dir  # noqa: E402
-from app.ml.pipeline import PipelineConfig, analyse_tracklets      # noqa: E402
+from app.ml.player_boxes import save_player_boxes                 # noqa: E402
+from app.ml.reprocess import pipeline_config, recompute, same_slots  # noqa: E402
 from app.ml.thumbnails import choose_pictures, pictures_from_video  # noqa: E402
 from app.models import Match, MatchStats, MatchStatus              # noqa: E402
 
@@ -65,24 +66,12 @@ def main() -> int:
             return 1
         old = session.get(MatchStats, match_id)
         old_players = dict(old.per_player) if old is not None else {}
+        calibration_data = match.calibration
 
-    config = artifacts.meta.get("config") or {}
-    result, identity, rallies = analyse_tracklets(
-        tracklets=artifacts.tracklets,
-        calibration=artifacts.calibration,
-        config=PipelineConfig(
-            detector_model=settings.detector_model,
-            max_player_speed_ms=float(config.get("max_player_speed_ms") or settings.max_player_speed_ms),
-            rally_speed_threshold_ms=settings.rally_speed_threshold_ms,
-            rally_speed_adaptive=settings.rally_speed_adaptive,
-            rally_min_duration_s=settings.rally_min_duration_s,
-            rally_merge_gap_s=settings.rally_merge_gap_s,
-        ),
-        sample_hz=artifacts.sample_hz,
-        frames_sampled=artifacts.frames_sampled,
-        analysed_s=artifacts.analysed_s,
-        start_s=float(artifacts.meta.get("start_s") or 0.0),
-    )
+    # Through the match's calibration, which may have been corrected after
+    # the analysis (Verifica accuratezza).
+    result, identity, rallies, artifacts = recompute(
+        directory, calibration_data, pipeline_config(settings, artifacts.meta))
     threshold = result["data_quality"].get("rally_speed_threshold_ms")
     print(f"Partita {match_id[:8]}: {len(identity.players)} giocatori · {len(rallies)} scambi "
           f"(in gioco sopra {threshold} m/s)")
@@ -97,7 +86,7 @@ def main() -> int:
         pictures = pictures_from_video(source, picks)
 
     crops = {str(pid): save_crop(match_id, pid, image) for pid, image in pictures.items()}
-    same_people = _same_slots(old_players, result["per_player"])
+    same_people = same_slots(old_players, result["per_player"])
     with sync_session() as session:
         session.query(MatchStats).filter(MatchStats.match_id == match_id).delete()
         session.add(MatchStats(
@@ -113,6 +102,9 @@ def main() -> int:
         if not same_people and match.player_names:
             match.player_names = None
     ArtifactWriter(directory).write_result(result)
+    video = artifacts.meta.get("video") or {}
+    save_player_boxes(directory, identity, artifacts.sample_hz,
+                      {"width": video.get("width"), "height": video.get("height")}, result["per_player"])
 
     for player_id, stats in sorted(result["per_player"].items(), key=lambda kv: int(kv[0])):
         print(f"  G{int(player_id) + 1}: tracciato {stats['tracked_ratio'] * 100:.0f}%"
@@ -122,12 +114,6 @@ def main() -> int:
     print("Fatto: ricarica la pagina delle statistiche.")
     return 0
 
-
-def _same_slots(old: dict, new: dict) -> bool:
-    """Whether every id is the same pair and side as before."""
-    def slots(per_player):
-        return {str(k): ((v or {}).get("team"), (v or {}).get("role")) for k, v in per_player.items()}
-    return bool(old) and slots(old) == slots(new)
 
 
 if __name__ == "__main__":

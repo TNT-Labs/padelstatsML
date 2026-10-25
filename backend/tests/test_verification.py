@@ -112,3 +112,62 @@ async def test_the_check_needs_a_completed_match_and_an_editor():
         assert (await owner.get(f"/api/matches/{match_id}/verification")).status_code == 409
         assert (await viewer.get(f"/api/matches/{match_id}/verification")).status_code == 403
         assert (await viewer.post(f"/api/matches/{match_id}/verification", json={})).status_code == 403
+
+
+def test_landmarks_correct_a_calibration_made_on_misplaced_corners():
+    from app.ml.verification import refine_calibration
+
+    project, calib = _camera(shift_near_px=60.0)
+    rng = np.random.default_rng(0)
+    # Marked by hand: a few pixels off.
+    marks = {lm.key: tuple(np.array(project((lm.x_m, lm.y_m, 0.0))) + rng.normal(0, 4, 2)) for lm in LANDMARKS}
+
+    proposal = refine_calibration(calib, marks)
+
+    # Measured on each landmark left out of the fit, not on the fit itself.
+    assert proposal["before"]["mean_m"] > 0.5
+    assert proposal["after"]["mean_m"] < 0.3
+    true_corners = np.array([project((x, y, 0.0)) for x, y in COURT_CORNERS_M_LIST])
+    assert np.abs(np.array(proposal["corners_px"]) - true_corners).max() < 25.0
+
+
+def test_right_corners_are_not_made_worse():
+    from app.ml.verification import refine_calibration
+
+    project, calib = _camera()
+    rng = np.random.default_rng(1)
+    marks = {lm.key: tuple(np.array(project((lm.x_m, lm.y_m, 0.0))) + rng.normal(0, 4, 2)) for lm in LANDMARKS}
+
+    proposal = refine_calibration(calib, marks)
+
+    assert proposal["after"]["mean_m"] <= proposal["before"]["mean_m"] + 0.05
+
+
+def test_too_few_landmarks_cannot_refine():
+    from app.ml.court import CalibrationError
+    from app.ml.verification import refine_calibration
+
+    project, calib = _camera()
+    marks = {lm.key: project((lm.x_m, lm.y_m, 0.0)) for lm in LANDMARKS[:3]}
+    with pytest.raises(CalibrationError):
+        refine_calibration(calib, marks)
+
+
+def test_stored_detections_are_placed_again_with_a_corrected_calibration(tmp_path):
+    from app.ml.artifacts import LoadedArtifacts
+    from app.ml.reprocess import with_calibration
+    from app.ml.tracking import Tracklet
+
+    project, wrong = _camera(shift_near_px=60.0)
+    _, right = _camera()
+    player = _player(wrong, project, 0, 0, [(3.0, 4.0)] * 5)
+    artifacts = LoadedArtifacts(tmp_path, {}, [Tracklet(0, player.observations)], wrong, None)
+    assert abs(player.observations[0].foot_court[1] - 4.0) > 0.3     # placed wrong
+
+    same = with_calibration(artifacts, {"corners_px": wrong.corners_px.tolist(), "frame_size": list(FRAME)})
+    fixed = with_calibration(artifacts, {"corners_px": right.corners_px.tolist(), "frame_size": list(FRAME)})
+
+    assert same is artifacts
+    x, y = fixed.tracklets[0].observations[0].foot_court
+    assert x == pytest.approx(3.0, abs=0.05) and y == pytest.approx(4.0, abs=0.05)
+    assert fixed.tracklets[0].observations[0].foot_px == player.observations[0].foot_px

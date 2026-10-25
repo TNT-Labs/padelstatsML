@@ -29,6 +29,7 @@ import numpy as np  # noqa: E402
 from app.core.config import get_settings                     # noqa: E402
 from app.core.storage import video_path                      # noqa: E402
 from app.ml.artifacts import load_artifacts, resolve_artifacts_dir  # noqa: E402
+from app.ml.reprocess import match_calibration, with_calibration  # noqa: E402
 from app.ml.identity import drop_static                      # noqa: E402
 from app.ml.pipeline import PipelineConfig, analyse_tracklets  # noqa: E402
 from app.ml.tracking import observation_key                  # noqa: E402
@@ -53,7 +54,7 @@ def main() -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
-    artifacts = load_artifacts(directory)
+    artifacts = with_calibration(load_artifacts(directory), match_calibration(directory.name))
     config = PipelineConfig(
         detector_model=settings.detector_model,
         max_player_speed_ms=settings.max_player_speed_ms,

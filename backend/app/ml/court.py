@@ -274,6 +274,46 @@ def build_calibration(
     return calib
 
 
+def fit_corners(
+    points_px: np.ndarray | list,
+    points_m: np.ndarray | list,
+    weights: np.ndarray | list | None = None,
+) -> np.ndarray:
+    """The four court corners in pixels of the homography that best fits
+    several (pixel, metre) pairs: weighted least squares (normalised DLT).
+
+    Four corners fix a homography exactly but give no protection against a
+    misplaced one — and a corner out of the picture is placed by eye. More
+    points, landmarks on the visible lines, average the errors out. The
+    result is expressed as corners again, so every calibration keeps one
+    shape: the 4-point homography through them is the fitted one."""
+    px = np.asarray(points_px, dtype=np.float64).reshape(-1, 2)
+    m = np.asarray(points_m, dtype=np.float64).reshape(-1, 2)
+    if len(px) < 4 or len(px) != len(m):
+        raise CalibrationError("Servono almeno 4 punti per calcolare la calibrazione.")
+    w = np.ones(len(px)) if weights is None else np.asarray(weights, dtype=np.float64)
+
+    def normaliser(points):
+        centre = points.mean(axis=0)
+        scale = np.sqrt(2.0) / max(float(np.mean(np.linalg.norm(points - centre, axis=1))), 1e-9)
+        return np.array([[scale, 0, -scale * centre[0]], [0, scale, -scale * centre[1]], [0, 0, 1.0]])
+
+    tm, tp = normaliser(m), normaliser(px)
+    hm = np.c_[m, np.ones(len(m))] @ tm.T
+    hp = np.c_[px, np.ones(len(px))] @ tp.T
+    rows = []
+    for (x, y, _), (u, v, _), weight in zip(hm, hp, np.sqrt(w)):
+        rows.append(weight * np.array([x, y, 1, 0, 0, 0, -u * x, -u * y, -u]))
+        rows.append(weight * np.array([0, 0, 0, x, y, 1, -v * x, -v * y, -v]))
+    _, _, vt = np.linalg.svd(np.asarray(rows))
+    h = vt[-1].reshape(3, 3)                     # metres -> pixels, normalised
+    h = np.linalg.inv(tp) @ h @ tm
+    corners = np.c_[COURT_CORNERS_M, np.ones(4)] @ h.T
+    if np.any(np.abs(corners[:, 2]) < 1e-12):
+        raise CalibrationError("I punti indicati non definiscono una prospettiva valida.")
+    return (corners[:, :2] / corners[:, 2:3]).astype(np.float64)
+
+
 def calibration_from_dict(data: dict) -> CourtCalibration:
     """Rebuild a calibration from the JSON stored on the match row."""
     source = CalibrationSource(data.get("source", CalibrationSource.MANUAL.value))

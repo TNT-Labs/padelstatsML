@@ -1,7 +1,9 @@
 """Accuracy check of an analysed match against points marked by hand.
 
-    GET  /api/matches/{id}/verification   landmarks, frames to mark, last result
-    POST /api/matches/{id}/verification   the marks: returns and stores the errors
+    GET  /api/matches/{id}/verification          landmarks, frames to mark, last result
+    POST /api/matches/{id}/verification          the marks: returns and stores the errors
+    POST /api/matches/{id}/verification/refine   a calibration fitted on the landmarks too
+    POST /api/matches/{id}/verification/apply    use it: statistics recomputed in seconds
 
 See app/ml/verification.py for what is measured.
 """
@@ -24,7 +26,9 @@ from app.core.storage import artifacts_dir
 from app.ml.artifacts import load_artifacts
 from app.ml.court import CourtCalibration, calibration_from_dict
 from app.ml.identity import PlayerTrack, resolve_players
-from app.ml.player_boxes import matches_stats
+from app.ml.court import CalibrationError, build_calibration
+from app.ml.player_boxes import matches_stats, save_player_boxes
+from app.ml.reprocess import pipeline_config, recompute, same_slots, with_calibration
 from app.ml.rallies import Rally
 from app.ml.smoothing import SmoothedPath, smooth_path
 from app.ml.verification import (
@@ -32,6 +36,7 @@ from app.ml.verification import (
     choose_frames,
     landmarks_payload,
     player_errors,
+    refine_calibration,
 )
 from app.models import MatchStats, MatchStatus, User
 
@@ -74,11 +79,11 @@ def _players(match_id: str, per_player: dict, calibration_data: dict):
             status.HTTP_409_CONFLICT,
             "Rilevazioni non salvate per questa partita (KEEP_ARTIFACTS): verifica non possibile.",
         )
-    key = (match_id, tracks.stat().st_mtime_ns,
+    key = (match_id, tracks.stat().st_mtime_ns, str(calibration_data.get("corners_px")),
            tuple(sorted((str(k), (v or {}).get("samples")) for k, v in per_player.items())))
     if key in _CACHE:
         return _CACHE[key]
-    artifacts = load_artifacts(directory)
+    artifacts = with_calibration(load_artifacts(directory), calibration_data)
     config = artifacts.meta.get("config") or {}
     speed = float(config.get("max_player_speed_ms") or get_settings().max_player_speed_ms)
     identity = resolve_players(artifacts.tracklets, max_speed_ms=speed)
@@ -128,9 +133,93 @@ async def submit_verification(
         "calibration": calibration_errors(calibration, dict(payload.landmarks)),
         "players": player_errors(
             calibration, players, paths, [(f.frame_index, list(f.feet)) for f in payload.frames]
-        ) if payload.frames else None,
+        ) if any(f.feet for f in payload.frames) else None,
     }
     # A new dict, not an edit in place: the JSON column must see the change.
     stats.data_quality = {**(stats.data_quality or {}), "verification": result}
     await db.flush()
     return result
+
+
+class RefineSubmit(BaseModel):
+    landmarks: dict[str, Point]
+
+
+class ApplySubmit(RefineSubmit):
+    corners_px: list[Point] = Field(min_length=4, max_length=4)
+
+
+@router.post("/{match_id}/verification/refine")
+async def propose_refinement(
+    match_id: str, payload: RefineSubmit,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> dict:
+    """A calibration fitted on the corners and the landmarks; nothing saved."""
+    match, _ = await _completed(db, match_id, user)
+    try:
+        return refine_calibration(calibration_from_dict(match.calibration), dict(payload.landmarks))
+    except CalibrationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/{match_id}/verification/apply")
+async def apply_refinement(
+    match_id: str, payload: ApplySubmit,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> dict:
+    """Make the corrected calibration the match's, and recompute its
+    statistics from the stored detections — projected again through it."""
+    match, stats = await _completed(db, match_id, user)
+    try:
+        calibration = build_calibration(
+            [tuple(p) for p in payload.corners_px], (match.width, match.height))
+    except CalibrationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    calibration_data = {
+        **(match.calibration or {}),
+        "corners_px": calibration.corners_px.tolist(),
+        "frame_size": [match.width, match.height],
+        # The net check and the preset were for the corners placed by hand.
+        "net_px": None,
+        "preset_id": None,
+        "refined_from_landmarks": len(payload.landmarks),
+    }
+    directory = artifacts_dir(match_id)
+    settings = get_settings()
+
+    def run():
+        artifacts = load_artifacts(directory)
+        result, identity, _, used = recompute(directory, calibration_data, pipeline_config(settings, artifacts.meta))
+        video = used.meta.get("video") or {}
+        save_player_boxes(directory, identity, used.sample_hz,
+                          {"width": video.get("width"), "height": video.get("height")}, result["per_player"])
+        return result
+
+    async with _LOCK:
+        try:
+            result = await run_in_threadpool(run)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Ricalcolo non riuscito: {exc}") from exc
+        _CACHE.clear()
+
+    result["data_quality"]["verification"] = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        # Measured on the landmarks the calibration was just fitted on: an
+        # optimistic figure, said so on screen; the expected error is the
+        # one measured leaving each out (refine).
+        "calibration": calibration_errors(calibration, dict(payload.landmarks)),
+        "players": None,
+        "refined": True,
+    }
+    names_cleared = bool(match.player_names) and not same_slots(stats.per_player, result["per_player"])
+    if names_cleared:
+        match.player_names = None
+    match.calibration = calibration_data
+    stats.per_player = result["per_player"]
+    stats.heatmaps = result["heatmaps"]
+    stats.rallies = result["rallies"]
+    stats.summary = result["summary"]
+    stats.data_quality = result["data_quality"]
+    await db.flush()
+    return {"summary": result["summary"], "verification": result["data_quality"]["verification"],
+            "names_cleared": names_cleared}

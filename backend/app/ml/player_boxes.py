@@ -32,7 +32,10 @@ class BoxesUnavailable(Exception):
     """No boxes for this match, with the reason to show the viewer."""
 
 
-def player_boxes_gz(directory: Path, stats_per_player: dict | None, default_speed_ms: float) -> bytes:
+def player_boxes_gz(
+    directory: Path, stats_per_player: dict | None, default_speed_ms: float,
+    calibration_data: dict | None = None,
+) -> bytes:
     """The overlay payload as gzip-compressed JSON, from the cache when
     it is still valid."""
     tracks = directory / "tracks.jsonl"
@@ -43,7 +46,8 @@ def player_boxes_gz(directory: Path, stats_per_player: dict | None, default_spee
     cache = _cache_path(directory, stats_per_player)
     if cache.exists():
         return cache.read_bytes()
-    return _store(directory, build_payload(directory, stats_per_player, default_speed_ms), stats_per_player)
+    return _store(directory, build_payload(directory, stats_per_player, default_speed_ms, calibration_data),
+                  stats_per_player)
 
 
 def save_player_boxes(
@@ -54,10 +58,16 @@ def save_player_boxes(
     _store(directory, payload_from(identity, sample_hz, frame, stats_per_player), stats_per_player)
 
 
-def build_payload(directory: Path, stats_per_player: dict | None, default_speed_ms: float) -> dict:
+def build_payload(
+    directory: Path, stats_per_player: dict | None, default_speed_ms: float,
+    calibration_data: dict | None = None,
+) -> dict:
     """Recompute the players from the stored artifacts — for matches
-    analysed before the cache was written by the analysis itself."""
-    artifacts = load_artifacts(directory)
+    analysed before the cache was written by the analysis itself — through
+    the match's current calibration."""
+    from app.ml.reprocess import with_calibration
+
+    artifacts = with_calibration(load_artifacts(directory), calibration_data)
     if not artifacts.complete:
         raise BoxesUnavailable("Riquadri non disponibili: l'analisi è ancora in corso.")
     config = artifacts.meta.get("config") or {}
