@@ -123,6 +123,7 @@ class FrameSampler:
         target_hz: float,
         info: VideoInfo | None = None,
         max_duration_s: float | None = None,
+        start_s: float = 0.0,
     ) -> None:
         self.video_path = str(video_path)
         self.info = info or probe(video_path)
@@ -131,17 +132,28 @@ class FrameSampler:
         self.step = max(1, int(round(self.info.fps / self.target_hz)))
         # Effective rate after integer rounding — report this, not the request.
         self.effective_hz = self.info.fps / self.step
+        # Measured from `start_s`, not from the beginning of the video.
         self.max_duration_s = max_duration_s
+        # First frame to emit, on the sampling grid (a multiple of step), so
+        # that frame numbers — and a replay of the stored run — line up
+        # whatever the start.
+        self.start_frame = (int(max(0.0, start_s) * self.info.fps) // self.step) * self.step
+
+    @property
+    def start_s(self) -> float:
+        """Video time of the first emitted frame."""
+        return self.start_frame / self.info.fps
 
     @property
     def expected_samples(self) -> int:
         total = self.info.frame_count
         if self.max_duration_s is not None and self.info.fps > 0:
-            total = min(total or 0, int(self.max_duration_s * self.info.fps))
+            total = min(total or 0, self.start_frame + int(self.max_duration_s * self.info.fps))
+        total -= self.start_frame
         if total <= 0:
             # Unknown length (some containers); caller must handle a 0 estimate.
             return 0
-        return total // self.step + 1
+        return (total + self.step - 1) // self.step
 
     def __iter__(self) -> Iterator[Frame]:
         cap = cv2.VideoCapture(self.video_path)
@@ -150,7 +162,7 @@ class FrameSampler:
 
         limit_frames: int | None = None
         if self.max_duration_s is not None:
-            limit_frames = int(self.max_duration_s * self.info.fps)
+            limit_frames = self.start_frame + int(self.max_duration_s * self.info.fps)
 
         try:
             idx = 0
@@ -159,7 +171,10 @@ class FrameSampler:
                     break
                 if not cap.grab():
                     break
-                if idx % self.step == 0:
+                # Frames before the start are decoded in order, not sought:
+                # seeking lands a few frames off on some videos, and the
+                # frame numbers must be exact.
+                if idx >= self.start_frame and idx % self.step == 0:
                     ok, image = cap.retrieve()
                     if ok and image is not None:
                         yield Frame(

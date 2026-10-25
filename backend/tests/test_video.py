@@ -78,3 +78,20 @@ def test_extract_keyframe_writes_a_readable_jpeg(sample_video, tmp_path):
 def test_extract_keyframe_clamps_past_the_end(sample_video, tmp_path):
     out = tmp_path / "key2.jpg"
     assert extract_keyframe(sample_video, out, at_second=9999.0) == (320, 180)
+
+
+def test_sampler_starts_where_asked_on_the_sampling_grid(sample_video):
+    sampler = FrameSampler(sample_video, target_hz=5.0, start_s=1.1)
+    frames = list(sampler)
+    # 1.1 s = frame 33, back to the grid of step 6: frame 30. Frame numbers
+    # and timestamps stay those of the whole video.
+    assert sampler.start_s == pytest.approx(1.0)
+    assert [f.index for f in frames[:3]] == [30, 36, 42]
+    assert frames[0].timestamp_s == pytest.approx(1.0)
+    assert len(frames) == sampler.expected_samples
+
+
+def test_the_duration_cap_counts_from_the_start(sample_video):
+    frames = list(FrameSampler(sample_video, target_hz=10.0, start_s=1.0, max_duration_s=1.0))
+    assert frames[0].timestamp_s == pytest.approx(1.0)
+    assert max(f.timestamp_s for f in frames) < 2.05

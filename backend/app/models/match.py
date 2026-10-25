@@ -110,6 +110,9 @@ class Match(Base):
     # {"corners_px": [[x,y] x4], "frame_size": [w,h], "source": "manual",
     #  "net_px": [[x,y],[x,y]] | null, "preset_id": "..." | null}
     calibration: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Second of the video the analysis starts from: what comes before it —
+    # warm-up, players walking on — is left out. None or 0: the beginning.
+    analysis_start_s: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     player_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
 

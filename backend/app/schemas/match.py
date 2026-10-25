@@ -60,6 +60,7 @@ class MatchRead(BaseModel):
     height: int | None
     player_names: list[str] | None
     calibrated: bool
+    analysis_start_s: float | None = None
     # Only filled in for administrators, who see everyone's matches.
     owner: str | None = None
     created_at: datetime
@@ -84,6 +85,7 @@ class MatchRead(BaseModel):
             height=match.height,
             player_names=match.player_names,
             calibrated=bool(match.calibration),
+            analysis_start_s=match.analysis_start_s,
             owner=owner,
             created_at=match.created_at,
             updated_at=match.updated_at,
@@ -118,6 +120,8 @@ class CalibrationSubmit(BaseModel):
     source: CalibrationSource = CalibrationSource.MANUAL
     preset_id: str | None = None
     save_as_preset: str | None = Field(default=None, min_length=1, max_length=100)
+    # Second of the video the analysis starts from; None keeps the current one.
+    analysis_start_s: float | None = Field(default=None, ge=0)
 
 
 class CalibrationResult(BaseModel):
@@ -179,6 +183,8 @@ class DataQuality(BaseModel):
     metrics_tier: int = 1
     excluded_metrics: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Second of the video the analysis started from (0: the beginning).
+    analysis_start_s: float = 0.0
 
 
 class RallyRead(BaseModel):

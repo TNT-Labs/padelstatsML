@@ -521,8 +521,12 @@ def test_a_database_from_before_accounts_is_upgraded_in_place(tmp_path):
     init_schema(engine)
     init_schema(engine)          # a second start finds nothing to do
     with engine.connect() as conn:
-        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == 1
+        from app.core.database import SCHEMA_VERSION
+
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == SCHEMA_VERSION
         assert conn.exec_driver_sql("SELECT count(*) FROM matches").scalar() == 1
+        # Every step ran, the latest included.
+        assert conn.exec_driver_sql("SELECT analysis_start_s FROM matches").scalar() is None
         assert conn.exec_driver_sql("SELECT name, times_used FROM camera_presets").one() == ("Campo 1", 3)
 
     with Session(engine) as session:

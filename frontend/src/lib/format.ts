@@ -1,5 +1,17 @@
 /** Formatting shared by the views. Pure, so it is unit-tested. */
 
+/**
+ * A time typed by a person — "95", "1:35", "1:01:35" — in seconds, or null
+ * when it is not one. Seconds and minutes past the first field stay under 60.
+ */
+export function parseClock(text: string): number | null {
+  const parts = text.trim().split(':')
+  if (parts.length > 3 || parts.some(p => !/^\d+$/.test(p))) return null
+  const values = parts.map(Number)
+  if (values.slice(1).some(v => v >= 60)) return null
+  return values.reduce((total, v) => total * 60 + v, 0)
+}
+
 /** Metres per second to km/h, the unit a padel player thinks in. */
 export function kmh(metresPerSecond: number): string {
   return `${(metresPerSecond * 3.6).toFixed(1)} km/h`
@@ -26,11 +38,11 @@ export function apiAsset(url: string, base: string): string {
 
 /**
  * Pair and side of a player, for the cards. The pair is the one on the half
- * near the camera, or far from it, at the start of the video: at changeovers
+ * near the camera, or far from it, where the analysis starts: at changeovers
  * the pairs trade ends and keep their ids.
  */
 export function playerPlace(team: number, role?: 'drive' | 'reves' | null): string {
-  const pair = team === 0 ? 'Coppia vicina a inizio video' : team === 1 ? 'Coppia lontana a inizio video' : '—'
+  const pair = team === 0 ? 'Coppia vicina a inizio analisi' : team === 1 ? 'Coppia lontana a inizio analisi' : '—'
   if (role === 'drive') return `${pair} · lato drive`
   if (role === 'reves') return `${pair} · lato revés`
   return pair

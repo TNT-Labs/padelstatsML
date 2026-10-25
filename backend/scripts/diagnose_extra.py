@@ -65,6 +65,7 @@ def main() -> int:
         tracklets=artifacts.tracklets, calibration=artifacts.calibration, config=config,
         sample_hz=artifacts.sample_hz, frames_sampled=artifacts.frames_sampled,
         analysed_s=artifacts.analysed_s,
+        start_s=float(artifacts.meta.get("start_s") or 0.0),
     )
     for warning in result["data_quality"]["warnings"]:
         print(f"! {warning}")

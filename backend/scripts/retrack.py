@@ -110,6 +110,7 @@ def main() -> int:
                 sample_hz=artifacts.sample_hz,
                 frames_sampled=artifacts.frames_sampled,
                 analysed_s=artifacts.analysed_s,
+                start_s=float(artifacts.meta.get("start_s") or 0.0),
             )
         except RuntimeError as exc:
             print(f"  {label}: errore — {exc}")

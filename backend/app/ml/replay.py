@@ -51,7 +51,9 @@ def replay_tracking(
     last_obs = by_frame[last_index][0]
     seconds_per_frame = last_obs.timestamp_s / last_index if last_index else 0.0
     step = int(meta.get("sample_step") or 1)
-    indices = sorted(set(range(0, last_index + 1, step)) | set(by_frame))
+    # From the first stored frame: an analysis that started later in the
+    # video has nothing before it, and empty frames there change nothing.
+    indices = sorted(set(range(min(by_frame), last_index + 1, step)) | set(by_frame))
 
     for index in indices:
         observations = by_frame.get(index, [])
