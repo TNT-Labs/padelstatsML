@@ -73,6 +73,23 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 <dd>in gioco sopra {quality.rally_speed_threshold_ms.toFixed(2)} m/s di velocità media</dd>
               </div>
             )}
+            {quality.verification && (
+              <div>
+                <dt>Verifica a mano</dt>
+                <dd>
+                  {quality.verification.calibration.all.count > 0 &&
+                    `calibrazione ${quality.verification.calibration.all.mean_m?.toFixed(2)} m`}
+                  {quality.verification.calibration.all.count > 0 && quality.verification.players && ' · '}
+                  {quality.verification.players?.smoothed.all.count
+                    ? `giocatori ${quality.verification.players.smoothed.all.mean_m?.toFixed(2)} m`
+                    : ''}
+                  {' '}
+                  <span className="muted-note">
+                    ({new Date(quality.verification.at).toLocaleDateString('it-IT')})
+                  </span>
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Campionamento</dt>
               <dd>

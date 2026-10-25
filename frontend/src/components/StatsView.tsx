@@ -17,6 +17,7 @@ interface Props {
   readOnly?: boolean
   onBack: () => void
   onRename: () => void
+  onVerify: () => void
   /** `recalibrate`: place the court corners again before analysing. */
   onReanalyse: (recalibrate: boolean) => void
 }
@@ -28,7 +29,7 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
-export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename, onReanalyse }) => {
+export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename, onVerify, onReanalyse }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
@@ -59,6 +60,9 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
             <>
               <button className="btn btn-ghost btn-sm" onClick={onRename}>
                 Rinomina giocatori
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={onVerify}>
+                Verifica accuratezza
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setAsking(true)}>
                 Rianalizza

@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Mount, Route
 
-from app.api import admin, auth, matches, presets
+from app.api import admin, auth, matches, presets, verification
 from app.core.config import get_settings
 from app.core.http import SecurityMiddleware
 
@@ -84,6 +84,7 @@ def create_app(base_path: str | None = None) -> FastAPI:
     app.include_router(admin.router)
     app.include_router(matches.router)
     app.include_router(presets.router)
+    app.include_router(verification.router)
 
     @app.get("/api/health")
     async def health(request: Request) -> JSONResponse:

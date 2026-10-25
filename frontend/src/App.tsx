@@ -10,6 +10,7 @@ import { ProcessingView } from './components/ProcessingView'
 import { StatsView } from './components/StatsView'
 import { UploadView } from './components/UploadView'
 import { UserBar } from './components/UserBar'
+import { VerifyView } from './components/VerifyView'
 
 /**
  * Screen flow:
@@ -32,6 +33,7 @@ type View =
   | { name: 'loading'; matchId: string; then: 'identify' | 'stats' }
   | { name: 'identify'; stats: MatchStats }
   | { name: 'stats'; stats: MatchStats }
+  | { name: 'verify'; stats: MatchStats }
 
 /**
  * Access: nothing but the sign-in form is shown until the server confirms a
@@ -213,6 +215,21 @@ function Workspace({ me }: { me: Me }) {
         />
       )
 
+    case 'verify':
+      return (
+        <VerifyView
+          matchId={view.stats.match_id}
+          title={view.stats.title}
+          onBack={changed =>
+            setView(
+              changed
+                ? { name: 'loading', matchId: view.stats.match_id, then: 'stats' }
+                : { name: 'stats', stats: view.stats },
+            )
+          }
+        />
+      )
+
     case 'loading':
       return (
         <div className="layout" style={{ textAlign: 'center', paddingTop: '5rem' }}>
@@ -238,6 +255,7 @@ function Workspace({ me }: { me: Me }) {
           readOnly={readOnly}
           onBack={home}
           onRename={() => setView({ name: 'identify', stats: view.stats })}
+          onVerify={() => setView({ name: 'verify', stats: view.stats })}
           onReanalyse={async recalibrate => {
             const matchId = view.stats.match_id
             if (!recalibrate) {
