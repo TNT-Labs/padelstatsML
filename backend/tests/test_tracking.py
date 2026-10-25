@@ -237,3 +237,57 @@ def test_a_kit_signature_is_a_distribution():
     signature = _painted(RED, BLACK)
     assert signature.shape == (COLOR_DIM,)
     assert abs(float(signature.sum()) - 1.0) < 1e-5
+
+
+def _detections(calibration, players, confidences):
+    from dataclasses import replace
+
+    frame, detections = render_frame(calibration, players)
+    return frame, [replace(d, confidence=c) for d, c in zip(detections, confidences)]
+
+
+def test_a_weak_detection_keeps_a_track_alive_but_never_starts_one(calibration):
+    tracker = CourtTracker(calibration, confirm_conf=0.3)
+    for i in range(15):
+        frame, detections = _detections(
+            calibration, [SyntheticPlayer((3.0, 4.0 + 0.2 * i), 0)], [0.2 if 5 <= i < 10 else 0.8])
+        tracker.update(i, i * DT, detections, frame)
+    # Weak only, from the start: nobody.
+    for i in range(15, 30):
+        frame, detections = _detections(calibration, [SyntheticPlayer((8.0, 15.0), 1)], [0.2])
+        tracker.update(i, i * DT, detections, frame)
+
+    tracklets = tracker.finish()
+    assert len(tracklets) == 1 and len(tracklets[0]) == 15
+    assert tracker.weak_kept == 5
+
+
+def test_a_weak_detection_away_from_the_expected_player_is_ignored(calibration):
+    tracker = CourtTracker(calibration, confirm_conf=0.3)
+    for i in range(5):
+        frame, detections = _detections(calibration, [SyntheticPlayer((3.0, 4.0), 0)], [0.8])
+        tracker.update(i, i * DT, detections, frame)
+    # Within reach of a running player, but 1.8 m from where this one stood.
+    frame, detections = _detections(calibration, [SyntheticPlayer((4.8, 4.0), 0)], [0.2])
+    tracker.update(5, 5 * DT, detections, frame)
+
+    assert tracker.weak_kept == 0
+    assert [len(t) for t in tracker.finish()] == [5]
+
+
+def test_players_being_followed_are_not_pushed_out_by_newcomers(calibration):
+    """Six places per frame: the four players followed keep theirs even when
+    the detector is surer of four people appearing at the edge."""
+    players = [SyntheticPlayer((2.0, 4.0), 0), SyntheticPlayer((8.0, 4.0), 1),
+               SyntheticPlayer((3.0, 16.0), 2), SyntheticPlayer((7.0, 16.0), 3)]
+    others = [SyntheticPlayer((x, 20.8), 4) for x in (1.0, 4.0, 6.0, 9.0)]
+    tracker = CourtTracker(calibration, max_players_per_frame=6)
+    for i in range(5):
+        frame, detections = _detections(calibration, players, [0.5] * 4)
+        tracker.update(i, i * DT, detections, frame)
+    frame, detections = _detections(calibration, players + others, [0.5] * 4 + [0.9] * 4)
+    tracked = tracker.update(5, 5 * DT, detections, frame)
+
+    assert len(tracked) == 6
+    followed = sorted(len(t.observations) for t in tracker._active)
+    assert followed.count(6) == 4

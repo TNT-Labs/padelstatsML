@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # than 640 with a small recall loss on distant players.
     detector_imgsz: int = 480
     detector_conf: float = 0.30
+    # Detections between this and detector_conf never start a track, but
+    # extend one that lost its player, close to where it expects them: the
+    # far, small, half-hidden players the detector is least sure of. Set it
+    # equal to detector_conf to turn it off.
+    detector_conf_weak: float = 0.12
     detector_iou: float = 0.55
     # A second detector look at the far half of the court, where players are
     # smallest. More far detections; the analysis takes ~50-80% longer on a

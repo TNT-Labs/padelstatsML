@@ -1,11 +1,15 @@
 """The stored detections, placed with the match's current calibration.
 
-The artifacts keep every detection's foot in pixels as well as in metres.
-When the calibration of a match is corrected after its analysis — refined
-from landmarks marked by hand — the metres change and the pixels do not:
-projecting the pixels again gives the positions the new calibration
+The artifacts keep every detection's box and foot in pixels as well as in
+metres. When the calibration of a match is corrected after its analysis —
+refined from landmarks marked by hand — the metres change and the pixels do
+not: projecting the pixels again gives the positions the new calibration
 implies, without running the detector again. Who was associated with whom
 (the tracklets) stays as the analysis found it.
+
+The foot points are taken again from the boxes on the way (app.ml.footpoint:
+a box cut by the net), with the new calibration — and for runs recorded
+before that correction existed even when the calibration is the same.
 """
 from __future__ import annotations
 
@@ -15,34 +19,47 @@ import numpy as np
 
 from app.ml.artifacts import LoadedArtifacts
 from app.ml.court import CourtCalibration, calibration_from_dict
+from app.ml.footpoint import FOOT_MODEL_VERSION, FootModel
 from app.ml.tracking import Tracklet
 
 
 def with_calibration(artifacts: LoadedArtifacts, calibration_data: dict | None) -> LoadedArtifacts:
     """`artifacts` as seen through `calibration_data` (the match's own,
-    `Match.calibration`): unchanged when it is the one of the analysis."""
-    if not calibration_data or not calibration_data.get("corners_px"):
+    `Match.calibration`): unchanged when it is the one of the analysis and
+    the run's foot points are already corrected."""
+    calibration = artifacts.calibration
+    if calibration_data and calibration_data.get("corners_px"):
+        stored = np.asarray(artifacts.calibration.corners_px, dtype=np.float64)
+        current = np.asarray(calibration_data["corners_px"], dtype=np.float64)
+        same_lens = abs(float(calibration_data.get("k1") or 0.0) - artifacts.calibration.k1) < 1e-9
+        if not (stored.shape == current.shape and np.allclose(stored, current, atol=1e-3) and same_lens):
+            calibration = calibration_from_dict(calibration_data)
+    feet_current = artifacts.meta.get("foot_model") == FOOT_MODEL_VERSION
+    if calibration is artifacts.calibration and feet_current:
         return artifacts
-    stored = np.asarray(artifacts.calibration.corners_px, dtype=np.float64)
-    current = np.asarray(calibration_data["corners_px"], dtype=np.float64)
-    same_lens = abs(float(calibration_data.get("k1") or 0.0) - artifacts.calibration.k1) < 1e-9
-    if stored.shape == current.shape and np.allclose(stored, current, atol=1e-3) and same_lens:
-        return artifacts
-    calibration = calibration_from_dict(calibration_data)
+    # The whole match teaches the foot model at once: every box is placed
+    # with what the match says about the camera, the first ones included.
+    feet = FootModel(calibration).fit(o.bbox for t in artifacts.tracklets for o in t.observations)
     return replace(
         artifacts,
         calibration=calibration,
-        tracklets=[reproject(t, calibration) for t in artifacts.tracklets],
+        tracklets=[reproject(t, calibration, feet) for t in artifacts.tracklets],
     )
 
 
-def reproject(tracklet: Tracklet, calibration: CourtCalibration) -> Tracklet:
+def reproject(tracklet: Tracklet, calibration: CourtCalibration, feet: FootModel | None = None) -> Tracklet:
+    """The tracklet's positions through `calibration`; with `feet`, the foot
+    points taken again from the boxes first."""
     if not tracklet.observations:
         return tracklet
-    feet = np.array([o.foot_px for o in tracklet.observations], dtype=np.float32)
-    court = calibration.floor_points_to_court(feet)
+    if feet is not None:
+        pixels = [feet.foot(o.bbox) for o in tracklet.observations]
+    else:
+        pixels = [o.foot_px for o in tracklet.observations]
+    court = calibration.floor_points_to_court(np.array(pixels, dtype=np.float32))
     return Tracklet(id=tracklet.id, observations=[
-        replace(o, foot_court=(float(c[0]), float(c[1]))) for o, c in zip(tracklet.observations, court)
+        replace(o, foot_px=(float(p[0]), float(p[1])), foot_court=(float(c[0]), float(c[1])))
+        for o, p, c in zip(tracklet.observations, pixels, court)
     ])
 
 

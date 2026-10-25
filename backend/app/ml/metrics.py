@@ -225,9 +225,12 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
             + ". Distanza e copertura sono sottostimate per questi giocatori."
         )
 
-    camera_m = estimate_camera_height(
-        calib, [o.bbox for player in data.players for o in player.observations]
-    )
+    # A box cut by the net is measured down to its estimated feet: its own
+    # bottom, on the tape, would make the camera look higher than it is.
+    camera_m = estimate_camera_height(calib, [
+        (o.bbox[0], o.bbox[1], o.bbox[2], max(o.bbox[3], o.foot_px[1]))
+        for player in data.players for o in player.observations
+    ])
     if camera_m is not None and camera_m < LOW_CAMERA_M:
         # Contested detections then come from the far pair, split into
         # several tracks by feet hidden behind the net: not from a stranger.
@@ -238,8 +241,8 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
         ]
         warnings.append(
             f"Camera a circa {camera_m:.1f} m d'altezza: la rete nasconde i piedi della coppia "
-            "lontana e le sue posizioni sono poco affidabili (giocatori collocati più indietro "
-            "del vero, rilevazioni scartate). Monta la camera a 3-4 m, dietro il fondo campo."
+            "lontana, le cui posizioni sono stimate dal resto del corpo e sono meno precise "
+            "(errore di 1-2 m o più). Monta la camera a 3-4 m, dietro il fondo campo."
         )
 
     if data.sample_hz < 4.0:

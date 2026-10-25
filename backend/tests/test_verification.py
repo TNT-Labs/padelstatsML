@@ -161,7 +161,10 @@ def test_stored_detections_are_placed_again_with_a_corrected_calibration(tmp_pat
     project, wrong = _camera(shift_near_px=60.0)
     _, right = _camera()
     player = _player(wrong, project, 0, 0, [(3.0, 4.0)] * 5)
-    artifacts = LoadedArtifacts(tmp_path, {}, [Tracklet(0, player.observations)], wrong, None)
+    from app.ml.footpoint import FOOT_MODEL_VERSION
+
+    meta = {"foot_model": FOOT_MODEL_VERSION}
+    artifacts = LoadedArtifacts(tmp_path, meta, [Tracklet(0, player.observations)], wrong, None)
     assert abs(player.observations[0].foot_court[1] - 4.0) > 0.3     # placed wrong
 
     same = with_calibration(artifacts, {"corners_px": wrong.corners_px.tolist(), "frame_size": list(FRAME)})

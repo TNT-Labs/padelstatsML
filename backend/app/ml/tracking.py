@@ -27,7 +27,7 @@ robust than forcing one tracker to survive every occlusion.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import cv2
 import numpy as np
@@ -35,6 +35,7 @@ from scipy.optimize import linear_sum_assignment
 
 from app.ml.court import COURT_LENGTH_M, COURT_WIDTH_M, CourtCalibration
 from app.ml.detect import Detection
+from app.ml.footpoint import FootModel
 
 if TYPE_CHECKING:
     from app.ml.reid import ReidEmbedder
@@ -43,6 +44,20 @@ if TYPE_CHECKING:
 # player. The glass walls are on the lines, so 1.5 m of slack covers players
 # leaning into the wall plus homography error, without admitting spectators.
 COURT_MARGIN_M = 1.5
+
+# A detection below the track-starting confidence only extends a track that
+# lost its player this frame, and only this close to where the track expects
+# them: the detector is least sure exactly where players are hardest to see
+# (far, small, half hidden), and a weak box next to a live track is that
+# player far more often than anything else.
+WEAK_MAX_DISTANCE_M = 1.5
+# …and not on top of a player already placed this frame: a second box of
+# the same person.
+WEAK_MIN_SEPARATION_M = 0.6
+# Kit colours and re-ID vectors are computed for at most this many people per
+# frame, the most confident first: a crowd at the edge of the court costs a
+# bounded time.
+_MAX_CANDIDATES = 12
 
 # Kit descriptor: the shirt and the shorts, each a histogram of its
 # coloured pixels (8 hue x 4 saturation bins) plus its white, grey and black
@@ -170,8 +185,14 @@ class CourtTracker:
         max_players_per_frame: int = 6,
         color_weight: float = 0.35,
         embedder: ReidEmbedder | None = None,
+        confirm_conf: float = 0.0,
     ) -> None:
         self.calibration = calibration
+        # Detections below this confidence never start a track (see
+        # WEAK_MAX_DISTANCE_M). 0: every detection is a full one.
+        self.confirm_conf = confirm_conf
+        # Foot points of boxes cut by the net (see app.ml.footpoint).
+        self.feet = FootModel(calibration)
         self.max_speed_ms = max_speed_ms
         self.max_age_s = max_age_s
         self.min_observations = min_observations
@@ -188,6 +209,7 @@ class CourtTracker:
         self.frames_seen = 0
         self.detections_kept = 0
         self.detections_rejected_off_court = 0
+        self.weak_kept = 0
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -200,12 +222,21 @@ class CourtTracker:
     ) -> list[tuple[int, Observation]]:
         """Feed one sampled frame. Returns [(track_id, observation), ...]."""
         observations = self._to_observations(frame_index, timestamp_s, detections, frame)
-        return self.update_observations(timestamp_s, observations)
+
+        def describe(kept: list[Observation]) -> list[Observation]:
+            # Re-ID only for who is kept: one batch per frame.
+            if self.embedder is None or not kept:
+                return kept
+            vectors = self.embedder.embed(frame, [o.bbox for o in kept])
+            return [replace(o, embedding=v) for o, v in zip(kept, vectors)]
+
+        return self.update_observations(timestamp_s, observations, describe)
 
     def update_observations(
         self,
         timestamp_s: float,
         observations: list[Observation],
+        describe: Callable[[list[Observation]], list[Observation]] | None = None,
     ) -> list[tuple[int, Observation]]:
         """Associate observations that are already projected and described.
 
@@ -215,6 +246,15 @@ class CourtTracker:
         match in seconds instead of repeating an hour of inference. Every
         sampled frame must be fed, empty ones included — the sampling period
         is taken from consecutive calls.
+
+        In three steps: the confident detections are assigned to the live
+        tracks; the weak ones (below `confirm_conf`) to the tracks still
+        without a player, if close to where they are expected; the confident
+        ones left start new tracks, as many as there is room for
+        (`max_players_per_frame`, counting the players already placed) — a
+        player who keeps being seen is never pushed out by a stranger the
+        detector happens to be surer of. `describe` completes the kept
+        observations (re-ID) before they are stored.
         """
         self.frames_seen += 1
         dt = timestamp_s - self._last_ts if self._last_ts is not None else 0.0
@@ -222,30 +262,46 @@ class CourtTracker:
 
         self._retire_stale(timestamp_s)
 
-        if not observations:
-            for track in self._active:
-                track.misses += 1
-            return []
-
-        if not self._active:
-            return [(self._spawn(obs), obs) for obs in observations]
-
+        strong = [o for o in observations if o.confidence >= self.confirm_conf]
+        weak = [o for o in observations if o.confidence < self.confirm_conf]
         sample_period = dt if dt > 1e-3 else 0.2
-        cost, feasible = self._build_cost(observations, timestamp_s, sample_period)
 
-        rows, cols = linear_sum_assignment(cost)
-        assigned_obs: set[int] = set()
+        decisions: list[tuple[_ActiveTrack | None, Observation]] = []
+        free_tracks = list(self._active)
+        if strong and free_tracks:
+            for r, c in self._assign(free_tracks, strong, timestamp_s, sample_period):
+                decisions.append((free_tracks[r], strong[c]))
+            taken = {id(t) for t, _ in decisions}
+            free_tracks = [t for t in free_tracks if id(t) not in taken]
+        placed = [np.array(o.foot_court) for _, o in decisions]
+
+        if weak and free_tracks:
+            weak = [o for o in weak if all(
+                np.linalg.norm(np.array(o.foot_court) - p) >= WEAK_MIN_SEPARATION_M for p in placed)]
+            pairs = self._assign(free_tracks, weak, timestamp_s, sample_period,
+                                 max_distance_m=WEAK_MAX_DISTANCE_M) if weak else []
+            for r, c in pairs:
+                decisions.append((free_tracks[r], weak[c]))
+            self.weak_kept += len(pairs)
+
+        assigned = {id(o) for _, o in decisions}
+        room = max(self.max_players_per_frame - len(decisions), 0)
+        newcomers = sorted((o for o in strong if id(o) not in assigned), key=lambda o: -o.confidence)
+        decisions.extend((None, o) for o in newcomers[:room])
+
+        kept = [o for _, o in decisions]
+        if describe is not None:
+            kept = describe(kept)
+        self.detections_kept += len(kept)
+
         result: list[tuple[int, Observation]] = []
-
-        for r, c in zip(rows, cols):
-            if not feasible[r, c]:
+        for (track, _), obs in zip(decisions, kept):
+            if track is None:
+                result.append((self._spawn(obs), obs))
                 continue
-            track = self._active[r]
-            obs = observations[c]
             track.observations.append(obs)
             track.last_seen_s = timestamp_s
             track.misses = 0
-            assigned_obs.add(c)
             result.append((track.id, obs))
 
         # Every track that took no detection this round ages by one sample.
@@ -254,11 +310,6 @@ class CourtTracker:
         for track in self._active:
             if track.last_seen_s != timestamp_s:
                 track.misses += 1
-
-        for idx, obs in enumerate(observations):
-            if idx not in assigned_obs:
-                result.append((self._spawn(obs), obs))
-
         return result
 
     def finish(self) -> list[Tracklet]:
@@ -283,13 +334,29 @@ class CourtTracker:
         step = max(elapsed_s, sample_period_s, 1e-3)
         return self.max_speed_ms * step + 0.6   # +0.6 m for homography noise
 
-    def _build_cost(
+    def _assign(
         self,
+        tracks: list[_ActiveTrack],
         observations: list[Observation],
         now_s: float,
         sample_period_s: float,
+        max_distance_m: float | None = None,
+    ) -> list[tuple[int, int]]:
+        """Optimal (track index, observation index) pairs among the feasible
+        ones; `max_distance_m` also bounds the distance from the prediction."""
+        cost, feasible = self._build_cost(tracks, observations, now_s, sample_period_s, max_distance_m)
+        rows, cols = linear_sum_assignment(cost)
+        return [(int(r), int(c)) for r, c in zip(rows, cols) if feasible[r, c]]
+
+    def _build_cost(
+        self,
+        tracks: list[_ActiveTrack],
+        observations: list[Observation],
+        now_s: float,
+        sample_period_s: float,
+        max_distance_m: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        n_tracks, n_obs = len(self._active), len(observations)
+        n_tracks, n_obs = len(tracks), len(observations)
         cost = np.full((n_tracks, n_obs), 1e6, dtype=np.float64)
         feasible = np.zeros((n_tracks, n_obs), dtype=bool)
 
@@ -302,7 +369,7 @@ class CourtTracker:
         # outbid a fresh track that is genuinely next to the detection.
         cost_scale = self._gate_distance(sample_period_s, sample_period_s)
 
-        for r, track in enumerate(self._active):
+        for r, track in enumerate(tracks):
             # Two different questions, two different reference points.
             # Feasibility is physical — how far can the player have got since
             # they were last *seen* — so it is measured from the last observed
@@ -325,6 +392,8 @@ class CourtTracker:
             )
             gate = self._gate_distance(now_s - track.last_seen_s, sample_period_s)
             ok = reach <= gate
+            if max_distance_m is not None:
+                ok &= dists <= max_distance_m
             spatial = np.clip(dists / cost_scale, 0.0, 1.0)
             blended = (1.0 - self.color_weight) * spatial + self.color_weight * color_d
             cost[r, ok] = blended[ok]
@@ -342,11 +411,18 @@ class CourtTracker:
         if not detections:
             return []
 
-        feet = np.array([d.foot_px for d in detections], dtype=np.float32)
+        detections = sorted(detections, key=lambda d: -d.confidence)
+        # The camera is learned from the confident boxes only.
+        for det in detections:
+            if det.confidence >= self.confirm_conf:
+                self.feet.learn(det.bbox)
+        feet = np.array([self.feet.foot(d.bbox) for d in detections], dtype=np.float32)
         court = self.calibration.floor_points_to_court(feet)
 
         candidates: list[Observation] = []
-        for det, pos in zip(detections, court):
+        for det, foot, pos in zip(detections, feet, court):
+            if len(candidates) >= _MAX_CANDIDATES:
+                break
             if not np.isfinite(pos).all() or not _inside_court(pos):
                 self.detections_rejected_off_court += 1
                 continue
@@ -355,22 +431,14 @@ class CourtTracker:
                     frame_index=frame_index,
                     timestamp_s=timestamp_s,
                     bbox=det.bbox,
-                    foot_px=det.foot_px,
+                    foot_px=(float(foot[0]), float(foot[1])),
                     foot_court=(float(pos[0]), float(pos[1])),
                     confidence=det.confidence,
                     color=_kit_histogram(frame, det.bbox),
                 )
             )
 
-        candidates.sort(key=lambda o: -o.confidence)
-        kept = candidates[: self.max_players_per_frame]
-        # Embedded after filtering: a spectator off court or a sixth box costs
-        # nothing. One batch per frame.
-        if self.embedder is not None and kept:
-            vectors = self.embedder.embed(frame, [o.bbox for o in kept])
-            kept = [replace(o, embedding=v) for o, v in zip(kept, vectors)]
-        self.detections_kept += len(kept)
-        return kept
+        return candidates
 
     def _spawn(self, obs: Observation) -> int:
         track = _ActiveTrack(id=self._next_id, observations=[obs], last_seen_s=obs.timestamp_s)

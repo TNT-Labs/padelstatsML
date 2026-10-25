@@ -29,6 +29,7 @@ import numpy as np
 from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
 from app.ml.detect import PersonDetector, merge_detections
+from app.ml.footpoint import FOOT_MODEL_VERSION
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
@@ -48,6 +49,9 @@ class PipelineConfig:
     detector_model: str
     detector_imgsz: int = 480
     detector_conf: float = 0.30
+    # Below detector_conf, down to this: only to extend a live track (see
+    # CourtTracker.confirm_conf).
+    detector_conf_weak: float = 0.12
     detector_iou: float = 0.55
     inference_threads: int = 0
     sample_hz: float = 5.0
@@ -115,7 +119,7 @@ class AnalysisPipeline:
         detector = PersonDetector(
             model_path=self.config.detector_model,
             imgsz=self.config.detector_imgsz,
-            conf_threshold=self.config.detector_conf,
+            conf_threshold=min(self.config.detector_conf, self.config.detector_conf_weak),
             iou_threshold=self.config.detector_iou,
             threads=self.config.inference_threads,
         )
@@ -137,6 +141,7 @@ class AnalysisPipeline:
             max_age_s=self.config.track_max_age_s,
             min_observations=self.config.track_min_observations,
             embedder=embedder,
+            confirm_conf=self.config.detector_conf,
         )
         roi = calibration.roi_px()
         far_roi = calibration.far_roi_px() if self.config.detector_far_pass else None
@@ -313,6 +318,9 @@ class AnalysisPipeline:
             "frames_sampled": frames_sampled,
             "analysed_s": round(analysed_s, 2) if analysed_s is not None else None,
             "min_observations": self.config.track_min_observations,
+            # Foot points of boxes cut by the net already corrected in
+            # tracks.jsonl (app.ml.footpoint); older runs are corrected on load.
+            "foot_model": FOOT_MODEL_VERSION,
             "inference_seconds": (
                 round(inference_seconds, 1) if inference_seconds is not None else None
             ),
@@ -320,6 +328,7 @@ class AnalysisPipeline:
                 "detector_model": Path(self.config.detector_model).name,
                 "detector_imgsz": self.config.detector_imgsz,
                 "detector_conf": self.config.detector_conf,
+                "detector_conf_weak": self.config.detector_conf_weak,
                 "detector_iou": self.config.detector_iou,
                 # Which appearance cue identity had: the re-ID model, or None
                 # for kit colour only.
@@ -396,6 +405,14 @@ def analyse_tracklets(
     )
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
     result["data_quality"]["rally_speed_threshold_ms"] = round(threshold, 2)
+    # Counted on the players' samples, so a recomputed run reports it too:
+    # weak detections that kept a track alive, and boxes cut by the net whose
+    # feet were placed from the rest of the box (below the box's bottom).
+    samples = [o for p in identity.players for o in p.observations]
+    result["data_quality"]["tracking"] = {
+        "weak_detections": sum(o.confidence < config.detector_conf for o in samples),
+        "feet_below_net": sum(o.foot_px[1] > o.bbox[3] + 0.5 for o in samples),
+    }
     return result, identity, rallies
 
 

@@ -281,10 +281,16 @@ L'accuratezza dipende quasi interamente dalla ripresa.
 
 - **Camera fissa** su treppiede. Se si muove, la calibrazione decade.
 - **In alto e dietro il fondo campo**, 3-4 m di altezza, tutto il campo nel
-  fotogramma compresi i quattro angoli. Più in basso (sotto i 2,3 m circa) la
-  rete nasconde i piedi della coppia lontana: le loro posizioni finiscono
-  metri più indietro del vero e molte rilevazioni vanno perse. L'analisi
-  stima l'altezza della camera dai giocatori e lo segnala fra gli avvisi.
+  fotogramma compresi i quattro angoli. Più in basso la rete copre i piedi
+  della coppia lontana: il riquadro del giocatore si chiude sul nastro e,
+  proiettato a terra, lo collocherebbe metri più indietro. L'analisi lo
+  riconosce e stima i piedi dal resto del corpo (altezza e larghezza del
+  riquadro, confrontate con quelle dei giocatori della metà vicina): con la
+  camera a 3-4 m l'errore resta sotto il mezzo metro, sotto i 2,5 m circa
+  sale a 1-2 m. L'altezza della camera stimata è fra gli avvisi.
+- **Rilevazioni incerte**: sotto `DETECTOR_CONF` e fino a
+  `DETECTOR_CONF_WEAK` (0,12) servono solo a non perdere un giocatore già
+  seguito, vicino a dove era atteso; non creano mai giocatori nuovi.
 - **Giocatori lontani piccoli** (camera lontana dal campo o risoluzione
   bassa): `DETECTOR_FAR_PASS=true` nel `.env` aggiunge un secondo passaggio
   del rilevatore sulla metà lontana. Costa il 50-80% di tempo in più.
