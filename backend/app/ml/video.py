@@ -115,6 +115,19 @@ class FrameSampler:
     """Iterate a video once, yielding roughly `target_hz` frames per second.
 
     The sampler never seeks and never buffers more than one frame.
+
+    Timestamps are the video's own (presentation time of each frame), not
+    the frame number over the frame rate. Phones record at a variable rate:
+    the frame rate in the header is an average, and a frame number divided
+    by it drifts from the real time — by most of a second in six seconds on
+    a test clip — which bends every speed and every rally boundary, and puts
+    the boxes out of step with the video in the browser, which plays by the
+    real times. A container that gives no timestamps falls back to the
+    frame number, as before.
+
+    Which frames are sampled stays a matter of frame numbers (every `step`
+    frames from the first one analysed), so that a stored run replays on
+    exactly the same frames.
     """
 
     def __init__(
@@ -132,17 +145,26 @@ class FrameSampler:
         self.step = max(1, int(round(self.info.fps / self.target_hz)))
         # Effective rate after integer rounding — report this, not the request.
         self.effective_hz = self.info.fps / self.step
-        # Measured from `start_s`, not from the beginning of the video.
+        # Measured from the start, not from the beginning of the video.
         self.max_duration_s = max_duration_s
-        # First frame to emit, on the sampling grid (a multiple of step), so
-        # that frame numbers — and a replay of the stored run — line up
-        # whatever the start.
-        self.start_frame = (int(max(0.0, start_s) * self.info.fps) // self.step) * self.step
+        self._requested_start_s = max(0.0, float(start_s))
+        # Known for certain only once the pass reaches it: until then, the
+        # estimate from the average frame rate.
+        self.start_frame = int(self._requested_start_s * self.info.fps)
+        self._start_ts: float | None = None
+        # Largest gap seen between the real time of a frame and the one its
+        # number implies, in frames: above ~1.5 the video has a variable rate.
+        self.max_drift_frames = 0.0
 
     @property
     def start_s(self) -> float:
-        """Video time of the first emitted frame."""
-        return self.start_frame / self.info.fps
+        """Video time of the first emitted frame (the requested start
+        until the pass has reached it)."""
+        return self._start_ts if self._start_ts is not None else self._requested_start_s
+
+    @property
+    def variable_frame_rate(self) -> bool:
+        return self.max_drift_frames > 1.5
 
     @property
     def expected_samples(self) -> int:
@@ -160,28 +182,45 @@ class FrameSampler:
         if not cap.isOpened():
             raise VideoError(f"Impossibile aprire il video: {self.video_path}")
 
-        limit_frames: int | None = None
-        if self.max_duration_s is not None:
-            limit_frames = self.start_frame + int(self.max_duration_s * self.info.fps)
-
+        fps = self.info.fps
+        half_frame = 0.5 / fps
         try:
             idx = 0
+            previous: float | None = None
+            start: int | None = None
             while True:
-                if limit_frames is not None and idx >= limit_frames:
-                    break
                 if not cap.grab():
                     break
+                timestamp = _frame_time(cap, idx, fps, previous)
+                previous = timestamp
+                self.max_drift_frames = max(self.max_drift_frames, abs(timestamp - idx / fps) * fps)
                 # Frames before the start are decoded in order, not sought:
                 # seeking lands a few frames off on some videos, and the
                 # frame numbers must be exact.
-                if idx >= self.start_frame and idx % self.step == 0:
-                    ok, image = cap.retrieve()
-                    if ok and image is not None:
-                        yield Frame(
-                            index=idx,
-                            timestamp_s=idx / self.info.fps,
-                            image=image,
-                        )
+                if start is None and timestamp >= self._requested_start_s - half_frame:
+                    start = idx
+                    self.start_frame, self._start_ts = idx, timestamp
+                if start is not None:
+                    if self.max_duration_s is not None and timestamp - self._start_ts >= self.max_duration_s:
+                        break
+                    if (idx - start) % self.step == 0:
+                        ok, image = cap.retrieve()
+                        if ok and image is not None:
+                            yield Frame(index=idx, timestamp_s=timestamp, image=image)
                 idx += 1
         finally:
             cap.release()
+
+
+def _frame_time(cap, index: int, fps: float, previous: float | None) -> float:
+    """The frame's presentation time in seconds; from its number when the
+    container gives none, or one that goes backwards."""
+    ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+    if ms is not None and np.isfinite(ms) and (ms > 0 or index == 0):
+        seconds = float(ms) / 1000.0
+        if previous is None or seconds > previous:
+            return seconds
+    estimate = index / fps
+    if previous is not None and estimate <= previous:
+        estimate = previous + 1.0 / fps
+    return estimate

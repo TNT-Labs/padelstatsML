@@ -188,6 +188,8 @@ class DataQuality(BaseModel):
     # Mean speed above which the players were taken to be in play, chosen on
     # the match; None for results from before it was.
     rally_speed_threshold_ms: float | None = None
+    # The video's frame rate varied (phones): times were read from the video.
+    variable_frame_rate: bool = False
     # Last accuracy check against points marked by hand (app.ml.verification).
     verification: dict | None = None
 

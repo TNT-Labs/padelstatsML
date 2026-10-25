@@ -226,6 +226,7 @@ class AnalysisPipeline:
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
+        result["data_quality"]["variable_frame_rate"] = sampler.variable_frame_rate
         if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s:
             result["data_quality"]["warnings"].append(
                 f"Analizzati {analysed_s / 60:.0f} minuti su "
@@ -293,6 +294,9 @@ class AnalysisPipeline:
             "sample_hz": sampler.effective_hz,
             "sample_step": sampler.step,
             "start_s": round(sampler.start_s, 3),
+            # Timestamps are the video's own; a variable rate is recorded so a
+            # drift seen in an older run can be explained.
+            "variable_frame_rate": sampler.variable_frame_rate,
             "frames_sampled": frames_sampled,
             "analysed_s": round(analysed_s, 2) if analysed_s is not None else None,
             "min_observations": self.config.track_min_observations,
