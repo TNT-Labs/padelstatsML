@@ -74,6 +74,7 @@ def main() -> int:
             detector_model=settings.detector_model,
             max_player_speed_ms=float(config.get("max_player_speed_ms") or settings.max_player_speed_ms),
             rally_speed_threshold_ms=settings.rally_speed_threshold_ms,
+            rally_speed_adaptive=settings.rally_speed_adaptive,
             rally_min_duration_s=settings.rally_min_duration_s,
             rally_merge_gap_s=settings.rally_merge_gap_s,
         ),
@@ -82,7 +83,9 @@ def main() -> int:
         analysed_s=artifacts.analysed_s,
         start_s=float(artifacts.meta.get("start_s") or 0.0),
     )
-    print(f"Partita {match_id[:8]}: {len(identity.players)} giocatori · {len(rallies)} scambi")
+    threshold = result["data_quality"].get("rally_speed_threshold_ms")
+    print(f"Partita {match_id[:8]}: {len(identity.players)} giocatori · {len(rallies)} scambi "
+          f"(in gioco sopra {threshold} m/s)")
     for warning in result["data_quality"]["warnings"]:
         print(f"  ! {warning}")
 

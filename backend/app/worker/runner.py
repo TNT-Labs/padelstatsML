@@ -199,6 +199,7 @@ def _run_job(job_id: str) -> None:
                 max_player_speed_ms=settings.max_player_speed_ms,
                 track_max_age_s=settings.track_max_age_s,
                 rally_speed_threshold_ms=settings.rally_speed_threshold_ms,
+                rally_speed_adaptive=settings.rally_speed_adaptive,
                 rally_min_duration_s=settings.rally_min_duration_s,
                 rally_merge_gap_s=settings.rally_merge_gap_s,
                 reid_model=settings.reid_model or None,

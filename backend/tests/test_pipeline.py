@@ -317,7 +317,7 @@ def test_retuning_a_threshold_changes_the_outcome(result, artifacts_dir):
     from app.ml.pipeline import analyse_tracklets
 
     artifacts = load_artifacts(artifacts_dir)
-    strict = replace(PIPELINE_CONFIG, rally_speed_threshold_ms=6.0)
+    strict = replace(PIPELINE_CONFIG, rally_speed_threshold_ms=6.0, rally_speed_adaptive=False)
     retuned, _, rallies = analyse_tracklets(
         tracklets=artifacts.tracklets,
         calibration=artifacts.calibration,

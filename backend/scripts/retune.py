@@ -111,6 +111,8 @@ def _base_config(settings, args) -> PipelineConfig:
         rally_speed_threshold_ms=(
             args.rally_speed if args.rally_speed is not None else settings.rally_speed_threshold_ms
         ),
+        # A threshold asked for is used as given; otherwise as in production.
+        rally_speed_adaptive=args.rally_speed is None and settings.rally_speed_adaptive,
         rally_min_duration_s=(
             args.rally_min if args.rally_min is not None else settings.rally_min_duration_s
         ),
@@ -138,7 +140,8 @@ def _sweep(artifacts, base: PipelineConfig, sweep: list[str]) -> int:
     print(f"{param:>14} │ {'scambi':>7} │ {'medio':>7} │ {'max':>7} │ {'gioco':>7} │ giocatori")
     print("─" * 66)
     for value in values:
-        config = PipelineConfig(**{**base.__dict__, field: value})
+        fixed = {"rally_speed_adaptive": False} if field == "rally_speed_threshold_ms" else {}
+        config = PipelineConfig(**{**base.__dict__, field: value, **fixed})
         try:
             result, identity, rallies = _run(artifacts, config)
         except RuntimeError as exc:
@@ -157,7 +160,8 @@ def _sweep(artifacts, base: PipelineConfig, sweep: list[str]) -> int:
 
 def _print_run(config: PipelineConfig, result: dict, identity, rallies, verbose: bool) -> None:
     summary = result["summary"]
-    print(f"rally_speed={config.rally_speed_threshold_ms}  "
+    print(f"rally_speed={config.rally_speed_threshold_ms}"
+          f"{' (tetto, soglia scelta: ' + str(result['data_quality'].get('rally_speed_threshold_ms')) + ')' if config.rally_speed_adaptive else ''}  "
           f"rally_min={config.rally_min_duration_s}  "
           f"rally_gap={config.rally_merge_gap_s}  "
           f"max_speed={config.max_player_speed_ms}")
