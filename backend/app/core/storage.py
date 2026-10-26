@@ -62,11 +62,6 @@ def crop_url(match_id: str, player_id: int) -> str:
     return f"/api/matches/{match_id}/crops/{player_id}?v={version}"
 
 
-def keyframe_url(match_id: str) -> str:
-    base = get_settings().api_base_url.rstrip("/")
-    return f"{base}/api/matches/{match_id}/keyframe"
-
-
 def delete_match_files(match_id: str) -> None:
     """Best-effort removal of every file belonging to a match."""
     video_path(match_id).unlink(missing_ok=True)

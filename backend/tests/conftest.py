@@ -16,7 +16,6 @@ import pytest
 _TMP = tempfile.mkdtemp(prefix="padel-tests-")
 os.environ.setdefault("DATA_DIR", _TMP)
 os.environ.setdefault("DETECTOR_MODEL", str(Path(_TMP) / "missing.onnx"))
-os.environ.setdefault("API_BASE_URL", "http://testserver")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

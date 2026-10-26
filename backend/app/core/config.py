@@ -31,8 +31,6 @@ class Settings(BaseSettings):
     )
 
     # ── API ──────────────────────────────────────────────────────────────────
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
     # Comma-separated origins; empty (the default) means same-origin only,
     # which is what you want when the API serves the web UI itself. Set it
     # only when the Vite dev server runs on another port.
@@ -44,8 +42,6 @@ class Settings(BaseSettings):
     # SettingsError at import time, and accepts only JSON array syntax.
     # Read it through `cors_origin_list`.
     cors_origins: str = ""
-    # External base URL, used to build upload/crop URLs handed to the browser.
-    api_base_url: str = "http://padelpi.local:8000"
 
     # Path prefix the whole app is served under, e.g. "/padel" when it shares
     # a domain with other applications behind one Cloudflare tunnel. Empty

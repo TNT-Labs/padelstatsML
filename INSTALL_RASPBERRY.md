@@ -725,7 +725,8 @@ sqlite3 /mnt/ssd/padelstats/padel.db ".backup '/tmp/padel-$(date +%F).db'"
 
 **`/api/health` risponde 503 con `detector: mancante`**
 Il file ONNX non è in `./weights/`. Rifai il [passo 6](#6-esportare-il-modello-onnx)
-e verifica che `DETECTOR_MODEL` nel `.env` corrisponda al percorso montato.
+e verifica che il file si chiami `weights/yolov8n.onnx`: con Docker il percorso
+lo fissa `docker-compose.yml` (`DETECTOR_MODEL` nel `.env` vale solo senza Docker).
 
 **"Impossibile aprire il video" subito dopo il caricamento**
 Il contenitore non è leggibile da OpenCV (spesso HEVC di iPhone). Converti:
