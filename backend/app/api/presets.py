@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_editor
 from app.core.database import get_db
+from app.core.storage import preset_image_path
 from app.ml.court import DERIVED_MAX_OFF_FRAME, CalibrationError, CalibrationSource, build_calibration
 from app.models import CameraPreset, User
 from app.schemas.match import PresetCreate, PresetRead
@@ -99,3 +100,4 @@ async def delete_preset(
     if preset is None or preset.owner_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Preset non trovato.")
     await db.delete(preset)
+    preset_image_path(preset_id).unlink(missing_ok=True)

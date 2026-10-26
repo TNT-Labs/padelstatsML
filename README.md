@@ -84,8 +84,13 @@ maniglie vanno invece sulla base dei due pali della rete e sulle due
 estremità della linea di servizio vicina, punti visibili o quasi; gli angoli
 li calcola l'app.
 
-La calibrazione si salva come **preset camera** e si riusa con un clic per
-ogni partita successiva ripresa dalla stessa posizione.
+La calibrazione si salva come **preset camera**, insieme al fotogramma su
+cui è stata fatta. Ogni video nuovo viene confrontato con i fotogrammi dei
+preset (pareti, recinzioni, tetto, pali: ciò che non si muove): se la camera
+è nella stessa posizione, o spostata di poco, la calibrazione del preset viene
+adattata di quei pochi pixel e applicata da sola, e la partita è subito pronta
+da analizzare. Se la camera si è mossa troppo non succede nulla: il preset
+resta a disposizione con un clic.
 
 Il rilevamento automatico esiste solo come *proposta* da correggere, mai
 come calibrazione. Su un campo da padel — vetri, rete metallica, poche linee

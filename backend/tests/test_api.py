@@ -605,3 +605,41 @@ async def test_the_handles_can_go_on_the_net_and_the_service_line(uploaded_match
     # The same corners placed by hand: refused, too far out.
     refused = await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": corners.tolist()})
     assert refused.status_code == 422
+
+
+async def test_a_video_from_a_camera_position_already_saved_calibrates_itself(client, tmp_path):
+    """Second match from the same tripod: recognised from the keyframe, the
+    preset's calibration applied, the match ready to analyse."""
+    import cv2
+
+    rng = np.random.default_rng(5)
+    scene = np.full((H, W, 3), 90, np.uint8)
+    for _ in range(300):
+        x, y = int(rng.integers(0, W)), int(rng.integers(0, H))
+        cv2.rectangle(scene, (x, y), (x + int(rng.integers(5, 40)), y + int(rng.integers(5, 40))),
+                      tuple(int(c) for c in rng.integers(0, 255, 3)), -1)
+    path = tmp_path / "campo.mp4"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30, (W, H))
+    if not writer.isOpened():
+        pytest.skip("Questa build di OpenCV non sa scrivere file MP4")
+    for _ in range(240):
+        writer.write(scene)
+    writer.release()
+
+    async def upload():
+        match_id = (await client.post("/api/matches", json={"title": "Campo"})).json()["match_id"]
+        response = await client.put(f"/api/matches/{match_id}/video", content=path.read_bytes())
+        assert response.status_code == 200, response.text
+        return match_id, response.json()
+
+    first, body = await upload()
+    assert body["status"] == "needs_calibration"
+    saved = await client.post(f"/api/matches/{first}/calibration",
+                              json={"corners_px": GOOD_CORNERS, "save_as_preset": "Campo 1"})
+    assert saved.status_code == 200, saved.text
+
+    second, body = await upload()
+    assert body["status"] == "ready"
+    suggestion = (await client.get(f"/api/matches/{second}/calibration/suggestion")).json()
+    assert suggestion["method"] == "saved" and "Campo 1" in suggestion["note"]
+    assert np.abs(np.array(suggestion["corners_px"]) - np.array(GOOD_CORNERS)).max() < 1.0

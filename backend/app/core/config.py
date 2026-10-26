@@ -188,6 +188,11 @@ class Settings(BaseSettings):
         return self.data_path / "artifacts"
 
     @property
+    def presets_path(self) -> Path:
+        """The keyframe each camera preset was calibrated on."""
+        return self.data_path / "presets"
+
+    @property
     def db_path(self) -> Path:
         return self.data_path / "padel.db"
 
@@ -206,6 +211,7 @@ class Settings(BaseSettings):
             self.crops_path,
             self.keyframes_path,
             self.artifacts_path,
+            self.presets_path,
         ):
             p.mkdir(parents=True, exist_ok=True)
 

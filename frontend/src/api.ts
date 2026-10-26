@@ -115,6 +115,8 @@ export interface CalibrationSuggestion {
   k1?: number
   /** What the handles were placed on when it was saved. */
   reference?: 'corners' | 'net_service'
+  /** Set when the calibration was applied by itself (camera recognised). */
+  note?: string | null
 }
 
 export interface CalibrationResult {

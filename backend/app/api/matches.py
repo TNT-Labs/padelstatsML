@@ -51,14 +51,19 @@ from app.core.storage import (
     delete_match_files,
     free_space_bytes,
     keyframe_path,
+    preset_image_path,
+    store_preset_image,
     upload_part_path,
     upload_url,
     video_path,
 )
+from app.ml.camera_match import match_camera, transfer
 from app.ml.court import (
     CORNER_LABELS,
     DERIVED_MAX_OFF_FRAME,
+    MAX_OFF_FRAME,
     CalibrationError,
+    CalibrationSource,
     build_calibration,
     build_from_reference,
     suggest_corners,
@@ -271,6 +276,7 @@ async def upload_complete(
         target = video_path(match_id)
         upload_part_path(match_id).replace(target)
     await _finalise_upload(match, target, received)
+    await _auto_calibrate(db, match)
     await db.flush()
     return await _read(db, match, user)
 
@@ -338,6 +344,7 @@ async def upload_video(
             ) from exc
 
     await _finalise_upload(match, target, written)
+    await _auto_calibrate(db, match)
     await db.flush()
     return await _read(db, match, user)
 
@@ -367,6 +374,75 @@ async def _finalise_upload(match: Match, target, size: int) -> None:
     match.progress = 0
     match.progress_message = "In attesa di calibrazione del campo"
     match.error_message = None
+
+
+async def _auto_calibrate(db: AsyncSession, match: Match) -> None:
+    """Calibrate the new video by itself when it is filmed from a camera
+    position already saved: the keyframe is compared with the picture of
+    each of the owner's presets (app.ml.camera_match), and the calibration
+    of the one it matches, moved by the few pixels the camera moved, is
+    applied. The match is then ready to analyse; the user may still open
+    the calibration and check it. Nothing happens on any doubt."""
+    presets = [
+        p for p in (await db.scalars(select(CameraPreset).where(CameraPreset.owner_id == match.owner_id))).all()
+        if preset_image_path(p.id).exists()
+    ]
+    if not presets or not match.width or not match.height:
+        return
+    frame_size = (match.width, match.height)
+
+    def run():
+        keyframe = cv2.imread(str(keyframe_path(match.id)))
+        if keyframe is None:
+            return None
+        best = None
+        for preset in presets:
+            # Another aspect ratio is another camera, or another crop.
+            if abs(preset.frame_width / preset.frame_height - frame_size[0] / frame_size[1]) > 0.01:
+                continue
+            reference = cv2.imread(str(preset_image_path(preset.id)))
+            if reference is None:
+                continue
+            corners = _rescale_points(preset.corners_px, preset, frame_size)
+            k1 = float(preset.k1 or 0.0)
+            found = match_camera(reference, keyframe, frame_size, corners, k1)
+            if found is not None and found.same_position and (best is None or found.inliers > best[1].inliers):
+                best = (preset, found, corners, k1)
+        return best
+
+    try:
+        best = await run_in_threadpool(run)
+    except cv2.error as exc:
+        logger.warning("Riconoscimento della camera non riuscito per %s: %s", match.id, exc)
+        return
+    if best is None:
+        return
+    preset, found, corners, k1 = best
+    moved = transfer(corners, found, k1, frame_size)
+    net = transfer(_rescale_points(preset.net_px, preset, frame_size), found, k1, frame_size) \
+        if preset.net_px else None
+    try:
+        calibration = build_calibration(moved, frame_size, CalibrationSource.PRESET, net_px=net, k1=k1,
+                                        max_off_frame=DERIVED_MAX_OFF_FRAME)
+    except CalibrationError:
+        return
+    far_out = any(x < -MAX_OFF_FRAME * frame_size[0] or x > (1 + MAX_OFF_FRAME) * frame_size[0]
+                  or y < -MAX_OFF_FRAME * frame_size[1] or y > (1 + MAX_OFF_FRAME) * frame_size[1]
+                  for x, y in calibration.corners_px)
+    match.calibration = {
+        "corners_px": calibration.corners_px.tolist(),
+        "frame_size": list(frame_size),
+        "source": CalibrationSource.PRESET.value,
+        "net_px": [list(p) for p in net.tolist()] if net is not None else None,
+        "preset_id": preset.id,
+        "k1": k1,
+        "reference": "net_service" if far_out else "corners",
+        # How the camera position was recognised, to tell the user.
+        "auto": {"preset": preset.name, **found.summary()},
+    }
+    preset.times_used += 1
+    match.status = MatchStatus.READY
+    match.progress_message = f"Calibrato in automatico: posizione della camera «{preset.name}» riconosciuta"
 
 
 @router.get("/{match_id}/keyframe")
@@ -406,6 +482,11 @@ async def calibration_suggestion(
             corner_labels=list(CORNER_LABELS),
             k1=float(match.calibration.get("k1") or 0.0),
             reference=match.calibration.get("reference") or "corners",
+            note=(
+                f"Calibrazione applicata in automatico: riconosciuta la posizione della camera "
+                f"«{match.calibration['auto']['preset']}». Controlla che le linee coincidano."
+                if match.calibration.get("auto") else None
+            ),
         )
 
     suggestion = suggest_corners(frame)
@@ -481,6 +562,10 @@ async def submit_calibration(
         saved_preset_id = await _save_preset(
             db, user, payload.save_as_preset, calibration.corners_px.tolist(), frame_size, net_px, k1
         )
+    if saved_preset_id and (payload.save_as_preset or not preset_image_path(saved_preset_id).exists()):
+        # The picture the next videos are compared with: this keyframe. A
+        # preset saved before pictures were kept gets one when next applied.
+        store_preset_image(saved_preset_id, match.id)
 
     await db.flush()
     return CalibrationResult(
@@ -501,8 +586,6 @@ async def _resolve_corners(
 ):
     """Corners come either from a saved preset (rescaled) or from the UI;
     the lens correction with them (from the UI when sent, else kept)."""
-    from app.ml.court import CalibrationSource
-
     if payload.preset_id:
         preset = await db.get(CameraPreset, payload.preset_id)
         if preset is None or preset.owner_id != user.id:
