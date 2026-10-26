@@ -116,7 +116,9 @@ def render_frame(frame: np.ndarray, frame_index: int, timestamp_s: float, ctx: O
         _draw_player(canvas, track_id, player_id, obs, color, ctx)
 
     _draw_minimap(canvas, entries, ctx)
-    _draw_banner(canvas, timestamp_s, len(entries), ctx)
+    # Players, not detections: the unassigned ones (grey) are drawn but not counted.
+    players = {ctx.owner.get(observation_key(obs)) for _, obs in entries} - {None}
+    _draw_banner(canvas, timestamp_s, len(players), ctx)
     _draw_timeline(canvas, timestamp_s, ctx)
     return canvas
 

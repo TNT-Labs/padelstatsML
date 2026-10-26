@@ -474,3 +474,41 @@ def test_a_tracklet_that_switched_between_look_alikes_is_cut_by_re_id(calibratio
     assert len(_split_identity_switches(first + second)) == 1
     pieces = _split_identity_switches(first + second, appearance)
     assert [len(p) for p in pieces] == [len(first), len(second)]
+
+
+def _obs(t: float, x: float, y: float):
+    from app.ml.tracking import COLOR_DIM, Observation
+
+    return Observation(int(round(t * 5)), t, (0.0, 0.0, 10.0, 30.0), (5.0, 30.0), (x, y), 0.8,
+                       np.full(COLOR_DIM, 1.0 / COLOR_DIM))
+
+
+def test_a_track_resumed_far_from_where_it_was_left_is_cut():
+    """On a real match the track of one far player, unseen for 1.2 s, took
+    the other far player 5.5 m away: the two halves are two people."""
+    from app.ml.identity import _split_jumps
+
+    left = [_obs(i * 0.2, 2.0, 19.0) for i in range(10)]
+    right = [_obs(3.0 + i * 0.2, 7.2, 19.2) for i in range(10)]
+    assert [len(p) for p in _split_jumps(left + right, 0.2)] == [10, 10]
+    # Running, sample after sample: never cut, however fast.
+    run = [_obs(i * 0.2, 1.0 + 1.2 * i, 5.0) for i in range(8)]
+    assert len(_split_jumps(run, 0.2)) == 1
+    # Back after a gap where it was left: one piece.
+    back = left + [_obs(3.0 + i * 0.2, 2.5, 18.5) for i in range(5)]
+    assert len(_split_jumps(back, 0.2)) == 1
+
+
+def test_a_contested_frame_keeps_the_detection_where_the_player_is():
+    """A net post seen as a person, given to the player standing near it:
+    the player's own frames say which detection is theirs."""
+    from app.ml.identity import one_per_frame
+
+    player = Tracklet(1, [_obs(i * 0.2, 3.0 + 0.1 * i, 7.0) for i in range(20)])
+    post = Tracklet(2, [_obs(i * 0.2, 10.0, 9.8) for i in range(5, 10)])
+    kept = one_per_frame([player, post])
+    assert len(kept) == 20
+    assert all(o.foot_court[0] < 6 for o in kept)
+    # Both as close to where the player is: nothing says which, both go.
+    twin = Tracklet(3, [_obs(i * 0.2, 3.0 + 0.1 * i, 7.3) for i in range(5, 10)])
+    assert len(one_per_frame([player, twin])) == 15

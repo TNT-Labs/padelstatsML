@@ -106,3 +106,15 @@ def test_a_run_recorded_before_the_correction_is_corrected_on_load(tmp_path):
         [o.foot_court for o in near.observations], abs=1e-4)
     current = LoadedArtifacts(tmp_path, {"foot_model": FOOT_MODEL_VERSION}, [near, far], calib, None)
     assert with_calibration(current, None) is current
+
+
+def test_a_box_closed_by_the_tape_never_keeps_its_feet_on_it():
+    """A far player side-on: narrow box, the width puts the feet higher than
+    the box's bottom. The tape hides them: they are below it."""
+    calib, box, rng = _scene(2.0, 3.0)
+    model = _trained(calib, box, rng)
+    bbox, cut = box(5.0, 19.5)
+    assert cut
+    narrow = (bbox[0] + 0.3 * (bbox[2] - bbox[0]), bbox[1], bbox[2] - 0.3 * (bbox[2] - bbox[0]), bbox[3])
+    foot = model.foot(narrow)
+    assert foot[1] > narrow[3]

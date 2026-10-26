@@ -28,7 +28,7 @@ import numpy as np
 
 from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
-from app.ml.detect import PersonDetector, merge_detections
+from app.ml.detect import PersonDetector, merge_detections, within_crop
 from app.ml.footpoint import FOOT_MODEL_VERSION
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
@@ -178,7 +178,8 @@ class AnalysisPipeline:
                 detections = detector.detect(frame.image, roi=roi)
                 if far_roi is not None:
                     seen = len(detections)
-                    detections = merge_detections(detections, detector.detect(frame.image, roi=far_roi))
+                    closer = within_crop(detector.detect(frame.image, roi=far_roi), far_roi, frame.image.shape)
+                    detections = merge_detections(detections, closer)
                     far_added += max(len(detections) - seen, 0)
                 tracked = tracker.update(
                     frame_index=frame.index,

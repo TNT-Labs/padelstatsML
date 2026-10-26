@@ -197,3 +197,18 @@ def test_two_looks_at_one_frame_count_each_person_once():
 
     assert len(merged) == 3
     assert {round(d.confidence, 2) for d in merged} == {0.9, 0.8, 0.7}
+
+
+def test_a_closer_look_drops_the_boxes_running_out_of_its_crop():
+    """A player by the net cut at the knees by the far-half crop: the box
+    closes on the crop's edge, and would put their feet there."""
+    from app.ml.detect import Detection, within_crop
+
+    crop = (100, 200, 800, 344)
+    cut = Detection((275, 228, 317, 342), 0.66)
+    inside = Detection((605, 247, 625, 320), 0.55)
+    at_left = Detection((101, 250, 130, 300), 0.5)
+    assert within_crop([cut, inside, at_left], crop, (576, 1024)) == [inside]
+    # The frame's own edges are not the crop's: a box there stays.
+    full = (0, 200, 1024, 576)
+    assert within_crop([Detection((0, 300, 40, 576), 0.9)], full, (576, 1024))
