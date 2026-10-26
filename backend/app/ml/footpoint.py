@@ -55,9 +55,12 @@ MIN_SAMPLES = 25
 MAX_SAMPLES = 3000
 # The medians are taken again after this many new boxes, not after each one.
 REFRESH_EVERY = 50
-# A box is cut by the net when its bottom lies within this share of the band
-# between tape and net foot (in rows) from the tape, at least TAPE_TOLERANCE_PX.
+# A box is cut by the net when its bottom lies on the tape: at most this
+# share of the band between tape and net foot (in rows) below it, and at most
+# TAPE_TOLERANCE_ABOVE above it, at least TAPE_TOLERANCE_PX either way. Above
+# the tape further than that, the feet are in sight: the box is whole.
 TAPE_TOLERANCE = 0.35
+TAPE_TOLERANCE_ABOVE = 0.1
 TAPE_TOLERANCE_PX = 3.0
 # Boxes that teach the ratios: bottom at least this many tape bands below the
 # net foot (the near half, feet in sight) and this many rows below the horizon.
@@ -67,6 +70,11 @@ LEARN_MIN_ROWS = 20.0
 # at nothing: a box ending on the tape is cut far more often than not, and a
 # whole one is only moved by the cues' noise.
 MIN_HIDDEN = 0.0
+# A box closed by the tape has the feet behind it: at least this much of the
+# player, in metres at the net, is hidden below the box — the tape's own
+# height. When the cues put the feet higher (a player side-on, narrow), this
+# is the estimate: still beyond the box, never on it.
+TAPE_HIDES_M = 0.1
 # Camera near a player's height: rho near 1, the head on the horizon wherever
 # the player stands, and the top says nothing about the distance.
 MAX_RHO = 0.95
@@ -128,7 +136,7 @@ class FootModel:
         if geometry is None:
             return raw
         top, bottom, width, horizon, base, band = geometry
-        if abs(bottom - (base - band)) > max(TAPE_TOLERANCE * band, TAPE_TOLERANCE_PX):
+        if not self._cut(bottom, base, band):
             return raw
 
         # Each cue's estimate of log D and its variance (relative errors).
@@ -139,12 +147,14 @@ class FootModel:
                 estimates.append((np.log(depth), (rho * rho_spread / (1.0 - rho)) ** 2))
         if omega > 0 and width > 0:
             estimates.append((np.log(width / omega), omega_spread ** 2))
-        if not estimates:
-            return raw
-        weights = np.array([1.0 / v for _, v in estimates])
-        depth = float(np.exp(np.dot(weights, [e for e, _ in estimates]) / weights.sum()))
-
-        row = min(horizon + depth, base)
+        lowest = bottom + band * TAPE_HIDES_M / TAPE_HEIGHT_M
+        row = lowest
+        if estimates:
+            weights = np.array([1.0 / v for _, v in estimates])
+            depth = float(np.exp(np.dot(weights, [e for e, _ in estimates]) / weights.sum()))
+            if np.isfinite(depth):
+                row = max(horizon + depth, lowest)
+        row = min(row, base)
         if not np.isfinite(row) or row - bottom <= MIN_HIDDEN * (bottom - top):
             return raw
         column = float(undistort_points(np.array([raw]), self.calibration.k1, self.calibration.frame_size)[0, 0])
@@ -153,6 +163,13 @@ class FootModel:
         return float(x), float(y)
 
     # ── Internals ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _cut(bottom: float, base: float, band: float) -> bool:
+        """Whether a box ending at row `bottom` ends on the net's tape."""
+        offset = bottom - (base - band)          # below the tape: positive
+        return (offset <= max(TAPE_TOLERANCE * band, TAPE_TOLERANCE_PX)
+                and -offset <= max(TAPE_TOLERANCE_ABOVE * band, TAPE_TOLERANCE_PX))
 
     def _current(self) -> tuple[float, float, float, float] | None:
         if len(self._heights) >= MIN_SAMPLES and (self._ratios is None or self._new >= REFRESH_EVERY):

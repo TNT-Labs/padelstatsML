@@ -133,6 +133,17 @@ STATIC_MIN_SEEN_S = 60.0
 # this much is the object again.
 STATIC_MATCH_IOU = 0.6
 STATIC_MIN_SPAN_S = 120.0
+# Two detections given to one player in one frame (see `one_per_frame`): the
+# one where the player is — between their positions in the nearest frames
+# with a single detection, at most this far in time — is kept when it is
+# within CONTESTED_MAX_M of it and the other is clearly further.
+CONTESTED_WINDOW_S = 1.0
+# A tracklet resumed after a gap of at least JUMP_GAP_SAMPLES samples this
+# far from where it was left is cut there (see `_split_jumps`).
+JUMP_GAP_SAMPLES = 2
+JUMP_SPLIT_M = 2.0
+CONTESTED_MAX_M = 1.5
+CONTESTED_MIN_GAP_M = 1.0
 
 
 @dataclass
@@ -357,10 +368,12 @@ def resolve_players(
     # player "coexist" and blocks them from ever merging. Cut it where the
     # shirt changes.
     appearance, appearance_summary = calibrate_appearance(usable)
+    period = _sample_period(usable)
     pieces = [
         Tracklet(id=t.id, observations=part)
         for t in usable
-        for part in _split_identity_switches(t.observations, appearance)
+        for jump_free in _split_jumps(t.observations, period)
+        for part in _split_identity_switches(jump_free, appearance)
     ]
     # Counted from the input: frames dropped as shared while merging are
     # discarded observations too.
@@ -581,6 +594,27 @@ def _select_players(clusters: list[_Cluster], period_s: float) -> list[_Cluster]
 
 
 # ── Identity switches ────────────────────────────────────────────────────────
+
+def _split_jumps(observations: list[Observation], period_s: float) -> list[list[Observation]]:
+    """Cut a tracklet where the tracker resumed it, after a gap, somewhere
+    else. A track that lost its player for a second may take the next
+    person to appear within reach — a player covers metres in a second, so
+    reach is wide: on a real match the track of one far player took the
+    other, 5.5 m away, after 1.2 s unseen. The two look alike from far, and
+    nothing downstream could part them again. A cut where the player did
+    just move costs nothing: the pieces are joined again by role or link."""
+    if len(observations) < 2:
+        return [observations]
+    parts: list[list[Observation]] = [[observations[0]]]
+    for previous, current in zip(observations, observations[1:]):
+        gap = current.timestamp_s - previous.timestamp_s
+        moved = float(np.hypot(current.foot_court[0] - previous.foot_court[0],
+                               current.foot_court[1] - previous.foot_court[1]))
+        if gap >= JUMP_GAP_SAMPLES * period_s * 0.99 and moved > JUMP_SPLIT_M:
+            parts.append([])
+        parts[-1].append(current)
+    return parts
+
 
 def _split_identity_switches(
     observations: list[Observation], appearance: Appearance | None = None,
@@ -987,13 +1021,53 @@ def _resolve_by_role(
 
 def one_per_frame(pieces: list[Tracklet]) -> list[Observation]:
     """The observations of the pieces given to one player, one per frame.
+
     Where two pieces share a frame, one of the two detections is somebody
-    else and nothing says which: both are dropped, as when linking merges."""
+    or something else — a net post, a person at the edge of the court. The
+    player's own frames around it say where they are: the detection there is
+    kept when the other is clearly elsewhere. When nothing says which — no
+    single detection nearby in time, or both as close — both are dropped,
+    as when linking merges. Dropping them all lost a player for whole
+    stretches next to a net post seen as a person."""
     by_frame: dict[int, list[Observation]] = defaultdict(list)
     for piece in pieces:
         for obs in piece.observations:
             by_frame[obs.frame_index].append(obs)
-    return [found[0] for _, found in sorted(by_frame.items()) if len(found) == 1]
+    single = sorted((found[0] for found in by_frame.values() if len(found) == 1), key=lambda o: o.timestamp_s)
+    times = np.array([o.timestamp_s for o in single])
+    kept = []
+    for _, found in sorted(by_frame.items()):
+        if len(found) == 1:
+            kept.append(found[0])
+            continue
+        chosen = _where_the_player_is(found, single, times)
+        if chosen is not None:
+            kept.append(chosen)
+    return kept
+
+
+def _where_the_player_is(found: list[Observation], single: list[Observation], times: np.ndarray) -> Observation | None:
+    """Of the detections of one frame, the one at the player's position
+    interpolated from their nearest single detections; None if unclear."""
+    if not len(times):
+        return None
+    now = found[0].timestamp_s
+    after = int(np.searchsorted(times, now))
+    around = [single[i] for i in (after - 1, after) if 0 <= i < len(single)
+              and abs(single[i].timestamp_s - now) <= CONTESTED_WINDOW_S]
+    if not around:
+        return None
+    if len(around) == 2 and around[1].timestamp_s > around[0].timestamp_s:
+        share = (now - around[0].timestamp_s) / (around[1].timestamp_s - around[0].timestamp_s)
+        expected = (np.asarray(around[0].foot_court) * (1 - share) + np.asarray(around[1].foot_court) * share)
+    else:
+        expected = np.asarray(around[0].foot_court)
+    distances = np.array([np.linalg.norm(np.asarray(o.foot_court) - expected) for o in found])
+    order = np.argsort(distances)
+    best, second = distances[order[0]], distances[order[1]]
+    if best <= CONTESTED_MAX_M and second >= max(2.0 * best, best + CONTESTED_MIN_GAP_M):
+        return found[order[0]]
+    return None
 
 
 # ── Teams and stable ids ─────────────────────────────────────────────────────

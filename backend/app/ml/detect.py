@@ -207,6 +207,30 @@ class PersonDetector:
         return out
 
 
+# A box within this many pixels of a side of the crop runs out of it.
+CROP_EDGE_PX = 3.0
+
+
+def within_crop(detections: list[Detection], roi: tuple[int, int, int, int],
+                frame_shape: tuple[int, int]) -> list[Detection]:
+    """The boxes of a closer look at part of the frame that do not run out
+    of it at the bottom or the sides — where the crop is not the frame's own
+    edge. A player by the net is cut at the knees by a crop of the far half:
+    the box closes on the crop's edge, its foot point lands there, and its
+    confidence can beat the whole box of the look at the whole court. The
+    whole look has them; the closer look is for those it cannot see."""
+    x1, _, x2, y2 = roi
+    height, width = frame_shape[:2]
+
+    def cut(d: Detection) -> bool:
+        bx1, _, bx2, by2 = d.bbox
+        return ((y2 < height and by2 >= y2 - CROP_EDGE_PX)
+                or (x1 > 0 and bx1 <= x1 + CROP_EDGE_PX)
+                or (x2 < width and bx2 >= x2 - CROP_EDGE_PX))
+
+    return [d for d in detections if not cut(d)]
+
+
 def merge_detections(first: list[Detection], second: list[Detection], iou: float = 0.5) -> list[Detection]:
     """One list from two looks at the same frame (whole court, far half): a
     person found by both is kept once, by the more confident box, and a box
