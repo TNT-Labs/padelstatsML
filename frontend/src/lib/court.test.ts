@@ -4,11 +4,13 @@ import {
   NET_Y_M,
   applyHomography,
   checkQuad,
+  cornersFromReference,
   distortPoint,
   homographyFromQuad,
   isOffFrame,
   netErrorMetres,
   projectCourtLines,
+  referenceFromCorners,
   signedArea,
   undistortPoint,
   type Pt,
@@ -184,5 +186,37 @@ describe('wide-angle lens', () => {
     expect(Math.hypot(mid[0] - chord[0], mid[1] - chord[1])).toBeGreaterThan(3)
     // No correction: the lines are exactly as before.
     expect(projectCourtLines(GOOD, { ...lens, k1: 0 })).toEqual(projectCourtLines(GOOD))
+  })
+})
+
+describe('reference handles', () => {
+  // The low camera close to the back glass of videocrop.mp4 (1024x576):
+  // net posts and near service line in the picture, near corners far out.
+  const HANDLES: Pt[] = [
+    [215, 322],
+    [720, 335],
+    [1059, 462],
+    [-181, 442],
+  ]
+
+  it('computes the corners, far out of the picture, and back', () => {
+    const corners = cornersFromReference(HANDLES, 'net_service')!
+    expect(corners[3][0]).toBeLessThan(-1024)
+    const back = referenceFromCorners(corners, 'net_service')!
+    back.forEach((p, i) => {
+      expect(p[0]).toBeCloseTo(HANDLES[i][0], 6)
+      expect(p[1]).toBeCloseTo(HANDLES[i][1], 6)
+    })
+    expect(cornersFromReference(GOOD, 'corners')).toBe(GOOD)
+  })
+
+  it('round-trips through a wide-angle lens', () => {
+    const lens = { k1: 0.2, frameW: 1024, frameH: 576 }
+    const back = referenceFromCorners(cornersFromReference(HANDLES, 'net_service', lens)!, 'net_service', lens)!
+    back.forEach((p, i) => expect(Math.hypot(p[0] - HANDLES[i][0], p[1] - HANDLES[i][1])).toBeLessThan(1e-3))
+  })
+
+  it('accepts a smaller quadrilateral than the corners need', () => {
+    expect(checkQuad(HANDLES, 1024, 576, 0, 0.005).valid).toBe(true)
   })
 })

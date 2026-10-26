@@ -58,8 +58,10 @@ from app.core.storage import (
 )
 from app.ml.court import (
     CORNER_LABELS,
+    DERIVED_MAX_OFF_FRAME,
     CalibrationError,
     build_calibration,
+    build_from_reference,
     suggest_corners,
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
@@ -407,6 +409,7 @@ async def calibration_suggestion(
             frame_size=(frame.shape[1], frame.shape[0]),
             corner_labels=list(CORNER_LABELS),
             k1=float(match.calibration.get("k1") or 0.0),
+            reference=match.calibration.get("reference") or "corners",
         )
 
     suggestion = suggest_corners(frame)
@@ -444,8 +447,10 @@ async def snap_calibration(
         frame = cv2.imread(str(path))
         if frame is None:
             raise CalibrationError("Keyframe illeggibile.")
+        # The corners on screen may be computed from other handles.
         calibration = build_calibration(
-            corners_px=[tuple(p) for p in payload.corners_px], frame_size=frame_size, k1=payload.k1)
+            corners_px=[tuple(p) for p in payload.corners_px], frame_size=frame_size, k1=payload.k1,
+            max_off_frame=DERIVED_MAX_OFF_FRAME)
         return snap_to_lines(calibration, frame)
 
     async with _SNAP_LOCK:
@@ -484,9 +489,16 @@ async def submit_calibration(
         db, payload, frame_size, user, float((match.calibration or {}).get("k1") or 0.0))
 
     try:
-        calibration = build_calibration(
-            corners_px=corners, frame_size=frame_size, source=source, net_px=net_px, k1=k1
-        )
+        if preset_id:
+            # A preset holds corners, possibly computed from other handles.
+            calibration = build_calibration(
+                corners_px=corners, frame_size=frame_size, source=source, net_px=net_px, k1=k1,
+                max_off_frame=DERIVED_MAX_OFF_FRAME,
+            )
+        else:
+            calibration = build_from_reference(
+                corners, payload.reference, frame_size, source=source, net_px=net_px, k1=k1
+            )
     except CalibrationError as exc:
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc
 
@@ -497,6 +509,8 @@ async def submit_calibration(
         "net_px": [list(p) for p in net_px] if net_px is not None else None,
         "preset_id": preset_id,
         "k1": k1,
+        # What the handles were placed on: the page opens on the same ones.
+        "reference": "corners" if preset_id else payload.reference,
     }
     if payload.analysis_start_s is not None:
         match.analysis_start_s = round(payload.analysis_start_s, 2) or None

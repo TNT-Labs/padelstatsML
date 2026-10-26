@@ -37,6 +37,7 @@ from app.ml.court import (
     COURT_CORNERS_M,
     COURT_LENGTH_M,
     COURT_WIDTH_M,
+    DERIVED_MAX_OFF_FRAME,
     MAX_K1,
     NET_Y_M,
     SERVICE_LINE_OFFSET_M,
@@ -286,7 +287,8 @@ def snap_to_lines(calib: CourtCalibration, image: np.ndarray) -> dict:
         return round(float(np.median(_residual_m(c, found, line))) * 100, 1)
 
     try:
-        start = build_calibration(_coarse(calib, evidence, samples), calib.frame_size, calib.source, k1=calib.k1)
+        start = build_calibration(_coarse(calib, evidence, samples), calib.frame_size, calib.source, k1=calib.k1,
+                                  max_off_frame=DERIVED_MAX_OFF_FRAME)
     except CalibrationError:
         start = calib
 
@@ -307,7 +309,8 @@ def snap_to_lines(calib: CourtCalibration, image: np.ndarray) -> dict:
                     np.r_[weight, np.full(4, ANCHOR_SHARE * weight.sum() / 4.0)],
                 )
                 current = build_calibration(distort_points(corners, k1, calib.frame_size),
-                                            calib.frame_size, calib.source, k1=float(k1))
+                                            calib.frame_size, calib.source, k1=float(k1),
+                                            max_off_frame=DERIVED_MAX_OFF_FRAME)
         except CalibrationError:
             continue
         score = aligned(current)

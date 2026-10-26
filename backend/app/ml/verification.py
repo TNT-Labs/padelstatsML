@@ -28,6 +28,7 @@ from scipy.optimize import linear_sum_assignment
 
 from app.ml.court import (
     COURT_CORNERS_M,
+    DERIVED_MAX_OFF_FRAME,
     NET_Y_M,
     SERVICE_LINE_OFFSET_M,
     CalibrationError,
@@ -273,7 +274,8 @@ def refine_calibration(calib: CourtCalibration, marks: dict[str, tuple[float, fl
             np.vstack([COURT_CORNERS_M, lm_m[keep]]),
             np.r_[np.full(4, CORNER_WEIGHT), np.ones(len(keep))],
         )
-        return build_calibration(distort_points(corners, k1, frame), frame, calib.source, k1=k1)
+        return build_calibration(distort_points(corners, k1, frame), frame, calib.source, k1=k1,
+                                 max_off_frame=DERIVED_MAX_OFF_FRAME)
 
     def error_at(c: CourtCalibration, i: int) -> float:
         court = c.floor_points_to_court(lm_px[i:i + 1].astype(np.float32))[0]

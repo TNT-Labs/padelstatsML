@@ -227,10 +227,11 @@ def _draw_banner(canvas: np.ndarray, timestamp_s: float, tracked: int, ctx: Over
     rally = next((r for r in ctx.rallies if r.contains(timestamp_s)), None)
     minutes, seconds = divmod(int(timestamp_s), 60)
 
-    text = f"{minutes:02d}:{seconds:02d}  ·  {tracked} giocatori tracciati  ·  {ctx.sample_hz:.1f} Hz"
+    # OpenCV's fonts are ASCII only: a "·" would come out as "??".
+    text = f"{minutes:02d}:{seconds:02d}  |  {tracked} giocatori tracciati  |  {ctx.sample_hz:.1f} Hz"
     if rally is not None:
         elapsed = timestamp_s - rally.start_s
-        text += f"  ·  SCAMBIO #{rally.index + 1} ({elapsed:.1f}s / {rally.duration_s:.1f}s)"
+        text += f"  |  SCAMBIO #{rally.index + 1} ({elapsed:.1f}s / {rally.duration_s:.1f}s)"
 
     cv2.rectangle(canvas, (0, 0), (canvas.shape[1], 34), (25, 25, 25), -1)
     color = (120, 255, 120) if rally is not None else (220, 220, 220)

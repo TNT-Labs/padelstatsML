@@ -77,6 +77,13 @@ Se la camera è vicina e un angolo resta fuori dall'inquadratura,
 l'angolo si posiziona lì, dove si incontrerebbero le linee visibili, e
 l'omografia estrapola il campo intero.
 
+Con la camera bassa e vicina al vetro di fondo gli angoli vicini cadono
+anche a più di un'inquadratura di distanza, dove metterli a mano è solo una
+stima. Con **Punti di riferimento → Rete e linea di servizio** le quattro
+maniglie vanno invece sulla base dei due pali della rete e sulle due
+estremità della linea di servizio vicina, punti visibili o quasi; gli angoli
+li calcola l'app.
+
 **Aggancia alle linee** rifinisce da solo gli angoli messi a stima: cerca
 nel fotogramma le linee dipinte (fondo, laterali, servizio, centrale) e
 riadatta angoli e correzione del grandangolo finché il modello ci si

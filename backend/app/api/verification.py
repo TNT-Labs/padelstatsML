@@ -28,9 +28,14 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.storage import artifacts_dir, keyframe_path
 from app.ml.artifacts import load_artifacts
-from app.ml.court import CourtCalibration, calibration_from_dict
+from app.ml.court import (
+    DERIVED_MAX_OFF_FRAME,
+    CalibrationError,
+    CourtCalibration,
+    build_calibration,
+    calibration_from_dict,
+)
 from app.ml.identity import PlayerTrack, resolve_players
-from app.ml.court import CalibrationError, build_calibration
 from app.ml.player_boxes import matches_stats, save_player_boxes
 from app.ml.reprocess import pipeline_config, recompute, same_slots, with_calibration
 from app.ml.rallies import Rally
@@ -177,7 +182,8 @@ async def propose_refinement(
             raise CalibrationError("Fotogramma della calibrazione non disponibile.")
         async with _SNAP_LOCK:
             snap = await run_in_threadpool(snap_to_lines, current, frame)
-        snapped = build_calibration(snap["corners_px"], current.frame_size, current.source, k1=snap["k1"])
+        snapped = build_calibration(snap["corners_px"], current.frame_size, current.source, k1=snap["k1"],
+                                    max_off_frame=DERIVED_MAX_OFF_FRAME)
     except CalibrationError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {
@@ -201,8 +207,10 @@ async def apply_refinement(
     statistics from the stored detections — projected again through it."""
     match, stats = await _completed(db, match_id, user)
     try:
+        # Corners of a proposal (refine, snap): computed, possibly far out.
         calibration = build_calibration(
-            [tuple(p) for p in payload.corners_px], (match.width, match.height), k1=payload.k1)
+            [tuple(p) for p in payload.corners_px], (match.width, match.height), k1=payload.k1,
+            max_off_frame=DERIVED_MAX_OFF_FRAME)
     except CalibrationError as exc:
         raise HTTPException(422, str(exc)) from exc
     calibration_data = {

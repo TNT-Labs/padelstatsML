@@ -63,6 +63,33 @@ CORNER_LABELS = ("Fondo sinistra", "Fondo destra", "Vicino destra", "Vicino sini
 # homography handles exactly. Beyond this the corner is a guess, not an
 # extrapolation of lines that can be seen.
 MAX_OFF_FRAME = 1.0
+# Corners the system computes — from other reference points, a refinement,
+# a stored calibration — may lie further out: with the camera low and close
+# behind the back glass the near corners are a frame width or more outside,
+# and only their placement by hand would be a guess. This only catches
+# nonsense.
+DERIVED_MAX_OFF_FRAME = 6.0
+
+# What the user places the four handles on. "corners": the court's corners.
+# "net_service": the foot of the two net posts and the two ends of the near
+# service line — points in, or close to, the picture when the corners are
+# far out of it. Same clockwise order on screen as the corners.
+REFERENCE_POINTS_M = {
+    "corners": COURT_CORNERS_M,
+    "net_service": np.array(
+        [
+            [0.0,           NET_Y_M],                          # left net post
+            [COURT_WIDTH_M, NET_Y_M],                          # right net post
+            [COURT_WIDTH_M, NET_Y_M - SERVICE_LINE_OFFSET_M],  # near service line, right end
+            [0.0,           NET_Y_M - SERVICE_LINE_OFFSET_M],  # near service line, left end
+        ],
+        dtype=np.float32,
+    ),
+}
+REFERENCE_LABELS = {
+    "corners": CORNER_LABELS,
+    "net_service": ("Palo rete sinistro", "Palo rete destro", "Servizio vicino destra", "Servizio vicino sinistra"),
+}
 
 
 # ── Lens distortion ──────────────────────────────────────────────────────────
@@ -307,9 +334,11 @@ def build_calibration(
     source: CalibrationSource = CalibrationSource.MANUAL,
     net_px: np.ndarray | list | None = None,
     k1: float = 0.0,
+    max_off_frame: float = MAX_OFF_FRAME,
 ) -> CourtCalibration:
     """Build and validate a calibration from four user-placed court corners,
-    seen through a lens of distortion `k1` (0: none).
+    seen through a lens of distortion `k1` (0: none). Corners computed by
+    the system rather than placed by hand pass DERIVED_MAX_OFF_FRAME.
 
     `corners_px` must be in COURT_CORNERS_M order (far-left, far-right,
     near-right, near-left). The UI labels each handle, so no automatic
@@ -331,7 +360,7 @@ def build_calibration(
     k1 = float(k1 or 0.0)
     if not 0.0 <= k1 <= MAX_K1:
         raise CalibrationError("Correzione dell'obiettivo fuori dai limiti.")
-    _validate_bounds(pts, w, h)
+    _validate_bounds(pts, w, h, max_off_frame)
     # Shape and perspective are judged on the straightened picture, where the
     # court is a true quadrilateral.
     straight = undistort_points(pts, k1, (w, h)).astype(np.float32)
@@ -372,6 +401,44 @@ def build_calibration(
             k1=k1,
         )
     return calib
+
+
+def build_from_reference(
+    points_px: np.ndarray | list,
+    reference: str,
+    frame_size: tuple[int, int],
+    source: CalibrationSource = CalibrationSource.MANUAL,
+    net_px: np.ndarray | list | None = None,
+    k1: float = 0.0,
+) -> CourtCalibration:
+    """A calibration from four handles placed on `reference` points
+    (REFERENCE_POINTS_M, in their order): the handles are validated as the
+    corners would be, and the corners are computed through them."""
+    if reference not in REFERENCE_POINTS_M:
+        raise CalibrationError("Riferimento della calibrazione sconosciuto.")
+    if reference == "corners":
+        return build_calibration(points_px, frame_size, source, net_px, k1)
+    pts = np.asarray(points_px, dtype=np.float32).reshape(-1, 2)
+    if pts.shape != (4, 2) or not np.isfinite(pts).all():
+        raise CalibrationError("Servono esattamente 4 punti di riferimento.")
+    w, h = int(frame_size[0]), int(frame_size[1])
+    k1 = float(k1 or 0.0)
+    if w <= 0 or h <= 0 or not 0.0 <= k1 <= MAX_K1:
+        raise CalibrationError("Dimensioni del frame o correzione dell'obiettivo non valide.")
+    _validate_bounds(pts, w, h, MAX_OFF_FRAME)
+    straight = undistort_points(pts, k1, (w, h)).astype(np.float32)
+    _validate_quad(straight, w, h, min_area=0.005)
+    to_picture = cv2.getPerspectiveTransform(REFERENCE_POINTS_M[reference], straight)
+    corners = cv2.perspectiveTransform(COURT_CORNERS_M.reshape(-1, 1, 2), to_picture).reshape(-1, 2)
+    if not np.isfinite(corners).all():
+        raise CalibrationError("I punti indicati non definiscono una prospettiva valida.")
+    return build_calibration(distort_points(corners, k1, (w, h)), (w, h), source, net_px, k1,
+                             max_off_frame=DERIVED_MAX_OFF_FRAME)
+
+
+def reference_points(calib: CourtCalibration, reference: str) -> np.ndarray:
+    """Where the handles of `reference` lie in the picture."""
+    return calib.court_to_pixels(REFERENCE_POINTS_M[reference]).astype(np.float64)
 
 
 def fit_corners(
@@ -418,27 +485,29 @@ def calibration_from_dict(data: dict) -> CourtCalibration:
     """Rebuild a calibration from the JSON stored on the match row."""
     source = CalibrationSource(data.get("source", CalibrationSource.MANUAL.value))
     fw, fh = data["frame_size"]
+    # Validated when it was made; corners computed then may lie far out.
     return build_calibration(
         corners_px=data["corners_px"],
         frame_size=(int(fw), int(fh)),
         source=source,
         net_px=data.get("net_px"),
         k1=float(data.get("k1") or 0.0),
+        max_off_frame=DERIVED_MAX_OFF_FRAME,
     )
 
 
-def _validate_bounds(pts: np.ndarray, w: int, h: int) -> None:
+def _validate_bounds(pts: np.ndarray, w: int, h: int, limit: float = MAX_OFF_FRAME) -> None:
     # Off-frame corners are allowed (partly framed court), within reason.
     if (
-        (pts[:, 0] < -MAX_OFF_FRAME * w).any() or (pts[:, 0] > (1 + MAX_OFF_FRAME) * w).any()
-        or (pts[:, 1] < -MAX_OFF_FRAME * h).any() or (pts[:, 1] > (1 + MAX_OFF_FRAME) * h).any()
+        (pts[:, 0] < -limit * w).any() or (pts[:, 0] > (1 + limit) * w).any()
+        or (pts[:, 1] < -limit * h).any() or (pts[:, 1] > (1 + limit) * h).any()
     ):
         raise CalibrationError(
             "Un angolo è troppo lontano dall'inquadratura: avvicinalo al bordo del fotogramma."
         )
 
 
-def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
+def _validate_quad(pts: np.ndarray, w: int, h: int, min_area: float = 0.02) -> None:
     # Distinct points
     for i in range(4):
         for j in range(i + 1, 4):
@@ -475,7 +544,7 @@ def _validate_quad(pts: np.ndarray, w: int, h: int) -> None:
 
     # Meaningful size: a court smaller than 2% of the frame cannot yield
     # position accuracy better than a metre or two.
-    if abs(signed_area) < 0.02 * w * h:
+    if abs(signed_area) < min_area * w * h:
         raise CalibrationError(
             "Il campo selezionato è troppo piccolo nel frame: "
             "avvicina la camera o inquadra meglio il campo."

@@ -28,14 +28,18 @@ import { api, ApiError, type CameraPreset, type Match, type Point } from '../api
 import { parseClock } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import {
-  CORNER_LABELS,
   MAX_K1,
   MAX_OFF_FRAME,
+  MIN_HANDLES_AREA,
+  REFERENCE_LABELS,
   checkQuad,
+  cornersFromReference,
   isOffFrame,
   netErrorMetres,
   projectCourtLines,
+  referenceFromCorners,
   type Pt,
+  type Reference,
 } from '../lib/court'
 
 interface Props {
@@ -65,6 +69,14 @@ function offFrameExtent(points: Pt[], frameW: number, frameH: number): number {
   return extent
 }
 
+/** Where the handles start when switching to a reference from nothing usable. */
+function defaultHandles(reference: Reference, frameW: number, frameH: number): Pt[] {
+  const at = (fx: number, fy: number): Pt => [fx * frameW, fy * frameH]
+  return reference === 'net_service'
+    ? [at(0.25, 0.5), at(0.75, 0.5), at(0.9, 0.78), at(0.1, 0.78)]
+    : [at(0.3, 0.3), at(0.7, 0.3), at(0.95, 0.92), at(0.05, 0.92)]
+}
+
 /** Smallest margin that shows every point with room to spare. */
 function marginFor(points: Pt[], frameW: number, frameH: number): number {
   const extent = offFrameExtent(points, frameW, frameH)
@@ -86,7 +98,10 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const frameW = match.width ?? 1920
   const frameH = match.height ?? 1080
 
-  const [corners, setCorners] = useState<Pt[] | null>(null)
+  // The four handles, placed on the points of `reference`; the court's
+  // corners are computed from them.
+  const [handles, setHandles] = useState<Pt[] | null>(null)
+  const [reference, setReference] = useState<Reference>('corners')
   const [netPoints, setNetPoints] = useState<Pt[] | null>(null)
   const [presets, setPresets] = useState<CameraPreset[]>([])
   const [presetName, setPresetName] = useState('')
@@ -107,12 +122,12 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const [startText, setStartText] = useState(clock(match.analysis_start_s ?? 0))
   const [videoBroken, setVideoBroken] = useState(false)
   const [snapping, setSnapping] = useState(false)
-  // The corners and lens before the last snap, to undo it.
-  const [beforeSnap, setBeforeSnap] = useState<{ corners: Pt[]; k1: number } | null>(null)
+  // The handles and lens before the last snap, to undo it.
+  const [beforeSnap, setBeforeSnap] = useState<{ handles: Pt[]; k1: number } | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const svgRef = useRef<SVGSVGElement>(null)
-  const loaded = corners !== null
+  const loaded = handles !== null
 
   useEffect(() => {
     const svg = svgRef.current
@@ -127,10 +142,17 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     Promise.all([api.getSuggestion(match.id), api.listPresets().catch(() => [])])
       .then(([suggestion, presetList]) => {
         if (cancelled) return
-        const initial = suggestion.corners_px.map(p => [p[0], p[1]] as Pt)
-        setK1(suggestion.k1 ?? 0)
-        setCorners(initial)
-        // A saved calibration may already have corners out of the picture.
+        const corners = suggestion.corners_px.map(p => [p[0], p[1]] as Pt)
+        const lens = { k1: suggestion.k1 ?? 0, frameW, frameH }
+        // Corners too far out to be placed by hand: the net and the service
+        // line are, whatever the calibration was saved with.
+        const tooFar = corners.some(p => offFrameExtent([p], frameW, frameH) > MAX_OFF_FRAME)
+        const kind: Reference = tooFar ? 'net_service' : suggestion.reference ?? 'corners'
+        const initial = referenceFromCorners(corners, kind, lens) ?? corners
+        setK1(lens.k1)
+        setReference(initial === corners ? 'corners' : kind)
+        setHandles(initial)
+        // A saved calibration may already have handles out of the picture.
         if (initial.some(p => isOffFrame(p, frameW, frameH))) {
           setMargin(marginFor(initial, frameW, frameH))
         }
@@ -149,9 +171,18 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     }
   }, [match.id, frameW, frameH])
 
+  const corners = useMemo(
+    () => (handles ? cornersFromReference(handles, reference, { k1, frameW, frameH }) : null),
+    [handles, reference, k1, frameW, frameH],
+  )
   const check = useMemo(
-    () => (corners ? checkQuad(corners, frameW, frameH, k1) : { valid: false }),
-    [corners, frameW, frameH, k1],
+    () =>
+      handles
+        ? corners
+          ? checkQuad(handles, frameW, frameH, k1, MIN_HANDLES_AREA[reference])
+          : { valid: false, reason: 'I punti non definiscono una prospettiva valida.' }
+        : { valid: false },
+    [handles, corners, reference, frameW, frameH, k1],
   )
   const courtLines = useMemo(
     () => (corners && check.valid ? projectCourtLines(corners, { k1, frameW, frameH }) : []),
@@ -197,7 +228,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     const point = toImagePoint(event)
     if (!point) return
     if (dragging.kind === 'corner') {
-      setCorners(prev => prev && prev.map((p, i) => (i === dragging.index ? point : p)))
+      setHandles(prev => prev && prev.map((p, i) => (i === dragging.index ? point : p)))
     } else {
       setNetPoints(prev => prev && prev.map((p, i) => (i === dragging.index ? point : p)))
     }
@@ -225,7 +256,8 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         preset_id: preset.id,
         analysis_start_s: start,
       })
-      setCorners(result.corners_px.map(p => [p[0], p[1]] as Pt))
+      const presetCorners = result.corners_px.map(p => [p[0], p[1]] as Pt)
+      setHandles(referenceFromCorners(presetCorners, reference, { k1, frameW, frameH }) ?? presetCorners)
       setBeforeSnap(null)
       setHint(result.message ?? `Preset "${preset.name}" applicato.`)
       onCalibrated()
@@ -237,7 +269,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   }
 
   const snap = async () => {
-    if (!corners || !check.valid) return
+    if (!handles || !corners || !check.valid) return
     setError(null)
     setSnapping(true)
     try {
@@ -246,9 +278,11 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         setHint('Gli angoli sono già sulle linee del campo: nessuna correzione utile.')
         return
       }
-      const snapped = result.corners_px.map(p => [p[0], p[1]] as Pt)
-      setBeforeSnap({ corners, k1 })
-      setCorners(snapped)
+      const snappedCorners = result.corners_px.map(p => [p[0], p[1]] as Pt)
+      const snapped = referenceFromCorners(snappedCorners, reference, { k1: result.k1, frameW, frameH })
+      if (!snapped) throw new ApiError(422, 'Aggancio non applicabile a questi punti di riferimento.')
+      setBeforeSnap({ handles, k1 })
+      setHandles(snapped)
       setK1(result.k1)
       if (snapped.some(p => isOffFrame(p, frameW, frameH))) {
         setMargin(m => Math.max(m, marginFor(snapped, frameW, frameH)))
@@ -268,19 +302,20 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
 
   const undoSnap = () => {
     if (!beforeSnap) return
-    setCorners(beforeSnap.corners)
+    setHandles(beforeSnap.handles)
     setK1(beforeSnap.k1)
     setBeforeSnap(null)
     setHint('Aggancio annullato.')
   }
 
   const save = async () => {
-    if (!corners || !check.valid || startProblem) return
+    if (!handles || !check.valid || startProblem) return
     setError(null)
     setSaving(true)
     try {
       await api.submitCalibration(match.id, {
-        corners_px: corners.map(p => [p[0], p[1]] as Point),
+        corners_px: handles.map(p => [p[0], p[1]] as Point),
+        reference,
         net_px: netPoints ? netPoints.map(p => [p[0], p[1]] as Point) : null,
         save_as_preset: presetName.trim() || undefined,
         analysis_start_s: start,
@@ -318,11 +353,26 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         Math.max(0, Math.min(frameW, p[0])),
         Math.max(0, Math.min(frameH, p[1])),
       ]
-      setCorners(prev => prev && prev.map(clamp))
+      setHandles(prev => prev && prev.map(clamp))
       setNetPoints(prev => prev && prev.map(clamp))
       setMargin(0)
     } else {
       setMargin(DEFAULT_MARGIN)
+    }
+  }
+
+  /** The same calibration on the other handles when it can be placed by hand
+   *  on them; otherwise the handles start over. */
+  const switchReference = (next: Reference) => {
+    if (next === reference || !handles) return
+    const moved = corners && check.valid ? referenceFromCorners(corners, next, { k1, frameW, frameH }) : null
+    const usable = moved && moved.every(p => offFrameExtent([p], frameW, frameH) <= MAX_OFF_FRAME)
+    const nextHandles = usable ? moved : defaultHandles(next, frameW, frameH)
+    setReference(next)
+    setHandles(nextHandles)
+    setBeforeSnap(null)
+    if (nextHandles.some(p => isOffFrame(p, frameW, frameH))) {
+      setMargin(m => Math.max(m, marginFor(nextHandles, frameW, frameH)))
     }
   }
 
@@ -337,7 +387,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     )
   }
 
-  if (!corners) {
+  if (!handles) {
     return (
       <div className="layout">
         <div className="header">
@@ -358,7 +408,8 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const handleRadius = Math.max(scale * 0.012, MIN_HANDLE_PX * unitsPerPx)
   const grabRadius = Math.max(handleRadius * 1.8, MIN_GRAB_PX * unitsPerPx)
   const fullLabels = renderWidth === 0 || renderWidth >= LABELS_MIN_WIDTH_PX
-  const offFrame = corners.map(p => isOffFrame(p, frameW, frameH))
+  const offFrame = handles.map(p => isOffFrame(p, frameW, frameH))
+  const labels = REFERENCE_LABELS[reference]
   const anyOffFrame = offFrame.some(Boolean)
 
   return (
@@ -368,27 +419,58 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← Indietro</button>
       </div>
 
+      <div className="card card-sm" style={{ marginBottom: '1rem' }}>
+        <div className="preset-row">
+          <span style={{ fontWeight: 600 }}>Punti di riferimento:</span>
+          <button
+            className={`btn btn-sm ${reference === 'corners' ? 'btn-primary' : 'btn-ghost'}`}
+            aria-pressed={reference === 'corners'}
+            onClick={() => switchReference('corners')}
+          >
+            Angoli del campo
+          </button>
+          <button
+            className={`btn btn-sm ${reference === 'net_service' ? 'btn-primary' : 'btn-ghost'}`}
+            aria-pressed={reference === 'net_service'}
+            onClick={() => switchReference('net_service')}
+          >
+            Rete e linea di servizio
+          </button>
+        </div>
+      </div>
+
       <div className="callout callout-info" style={{ marginBottom: '1rem' }}>
-        <strong>Trascina i 4 angoli sugli spigoli del campo</strong>, partendo dal fondo a
-        sinistra e procedendo in senso orario. Le linee bianche sovrapposte mostrano dove
-        il sistema calcola rete e linee di servizio: se coincidono con quelle reali, la
-        calibrazione è corretta. Avvicinati a mano, poi <strong>Aggancia alle linee</strong>{' '}
-        rifinisce angoli e grandangolo da solo.
+        {reference === 'corners' ? (
+          <>
+            <strong>Trascina i 4 angoli sugli spigoli del campo</strong>, partendo dal fondo a
+            sinistra e procedendo in senso orario.
+          </>
+        ) : (
+          <>
+            <strong>Trascina i 4 punti</strong>: la base del palo sinistro e del palo destro della
+            rete, poi l'estremità destra e sinistra della linea di servizio vicina, dove tocca la
+            parete. Adatto alla camera bassa o vicina al vetro, quando gli angoli vicini del campo
+            sono lontani dall'inquadratura.
+          </>
+        )}{' '}
+        Le linee bianche sovrapposte mostrano dove il sistema calcola rete e linee di servizio: se
+        coincidono con quelle reali, la calibrazione è corretta. Avvicinati a mano, poi{' '}
+        <strong>Aggancia alle linee</strong> rifinisce i punti e il grandangolo da solo.
         {margin === 0 && (
           <>
             {' '}
-            Se un angolo non è inquadrato, usa <strong>Estendi oltre l'inquadratura</strong>.
+            Se un punto non è inquadrato, usa <strong>Estendi oltre l'inquadratura</strong>.
           </>
         )}
       </div>
 
       {margin > 0 && (
         <div className="callout callout-warn" style={{ marginBottom: '1rem' }}>
-          <strong>Angoli fuori inquadratura:</strong> porta l'angolo nella zona scura dove si
-          incontrerebbero le linee del campo. Allinea i lati del perimetro alle linee laterali e
-          di fondo visibili, poi controlla che rete e linee di servizio proiettate coincidano con
-          quelle reali. Serve più spazio? Lascia l'angolo sul bordo della zona scura: si
-          allarga. Con angoli fuori campo la <strong>verifica con la rete</strong> è consigliata.
+          <strong>Punti fuori inquadratura:</strong> porta il punto nella zona scura dove si
+          incontrerebbero le linee e le pareti visibili, poi controlla che rete e linee di servizio
+          proiettate coincidano con quelle reali. Serve più spazio? Lascia il punto sul bordo della
+          zona scura: si allarga. Con punti fuori campo la <strong>verifica con la rete</strong> è
+          consigliata.
         </div>
       )}
 
@@ -460,7 +542,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
           )}
 
           <polygon
-            points={(courtLines[0] ?? corners).map(p => p.join(',')).join(' ')}
+            points={(courtLines[0] ?? handles).map(p => p.join(',')).join(' ')}
             fill={check.valid ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.15)'}
             stroke={check.valid ? '#22c55e' : '#ef4444'}
             strokeWidth={scale * 0.0025}
@@ -487,11 +569,11 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
             />
           )}
 
-          {corners.map((point, index) => {
+          {handles.map((point, index) => {
             // Label below the handle when there is no room above it.
             const labelBelow = point[1] - handleRadius * 3.2 < view.y
             // Anchored inwards when it would overflow a side (≈0.55 em per character).
-            const label = `${index + 1}. ${CORNER_LABELS[index]}${offFrame[index] ? ' (fuori)' : ''}`
+            const label = `${index + 1}. ${labels[index]}${offFrame[index] ? ' (fuori)' : ''}`
             const halfWidth = label.length * handleRadius * 1.5 * 0.28
             const anchor =
               point[0] - halfWidth < view.x
@@ -588,7 +670,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         </svg>
         {!fullLabels && (
           <div className="calib-legend">
-            {CORNER_LABELS.map((label, index) => (
+            {labels.map((label, index) => (
               <span key={label}>
                 <span className="player-dot" style={{ background: HANDLE_COLORS[index] }} />
                 {index + 1}. {label}
@@ -643,7 +725,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
 
       {anyOffFrame && !netPoints && (
         <p className="muted-note">
-          {offFrame.filter(Boolean).length === 1 ? 'Un angolo è' : 'Alcuni angoli sono'} fuori
+          {offFrame.filter(Boolean).length === 1 ? 'Un punto è' : 'Alcuni punti sono'} fuori
           dall'inquadratura: usa «Verifica con la rete» per confermare la precisione.
         </p>
       )}

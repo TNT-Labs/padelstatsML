@@ -102,6 +102,7 @@ def payload_from(identity: IdentityResult, sample_hz: float, frame: dict, stats_
 
 
 def _store(directory: Path, payload: dict, stats_per_player: dict | None) -> bytes:
+    directory = Path(directory)
     data = gzip.compress(json.dumps(payload, separators=(",", ":")).encode("utf-8"), compresslevel=6)
     cache = _cache_path(directory, stats_per_player)
     for stale in directory.glob(_CACHE_GLOB):

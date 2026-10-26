@@ -621,3 +621,21 @@ async def test_the_corners_are_snapped_onto_the_lines_of_the_keyframe(uploaded_m
     refused = await client.post(f"/api/matches/{match_id}/calibration/snap",
                                 json={"corners_px": rough, "k1": 0})
     assert refused.status_code == 422 and "linee" in refused.json()["detail"]
+
+
+async def test_the_handles_can_go_on_the_net_and_the_service_line(uploaded_match, client):
+    match_id, _ = uploaded_match
+    # Net posts and near service line ends of a low camera close to the back
+    # glass: the near corners land far outside the 640x360 frame.
+    handles = [[134, 201], [450, 209], [662, 289], [-113, 276]]
+    response = await client.post(f"/api/matches/{match_id}/calibration",
+                                 json={"corners_px": handles, "reference": "net_service"})
+    assert response.status_code == 200, response.text
+    corners = np.array(response.json()["corners_px"])
+    assert corners[:, 0].min() < -W or corners[:, 0].max() > 2 * W
+    suggestion = (await client.get(f"/api/matches/{match_id}/calibration/suggestion")).json()
+    assert suggestion["reference"] == "net_service"
+    assert np.allclose(suggestion["corners_px"], corners)
+    # The same corners placed by hand: refused, too far out.
+    refused = await client.post(f"/api/matches/{match_id}/calibration", json={"corners_px": corners.tolist()})
+    assert refused.status_code == 422

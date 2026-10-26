@@ -113,6 +113,8 @@ export interface CalibrationSuggestion {
   corner_labels: string[]
   /** Lens correction of the saved calibration (0: none). */
   k1?: number
+  /** What the handles were placed on when it was saved. */
+  reference?: 'corners' | 'net_service'
 }
 
 /** The corners snapped onto the painted lines: a proposal, nothing saved. */
@@ -445,6 +447,8 @@ export const api = {
       save_as_preset?: string
       analysis_start_s?: number
       k1?: number
+      /** What `corners_px` are placed on (default: the court's corners). */
+      reference?: 'corners' | 'net_service'
     },
   ) =>
     req<CalibrationResult>(`/api/matches/${id}/calibration`, {
