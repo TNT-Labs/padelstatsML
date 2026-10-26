@@ -30,7 +30,7 @@ help: ## Mostra questo elenco
 install: deps web ## Installa tutto e compila la UI
 	@echo
 	@echo "Fatto. Prima di avviare:"
-	@echo "  1. cp .env.example .env   e imposta DATA_DIR e PADEL_ADMIN_PASSWORD"
+	@echo "  1. cp .env.example .env   e imposta DATA_VOLUME e PADEL_ADMIN_PASSWORD"
 	@echo "  2. esporta il modello:    make -s model-help"
 	@echo "  3. make run   (e in un altro terminale: make worker)"
 

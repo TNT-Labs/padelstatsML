@@ -109,6 +109,8 @@ class CalibrationSuggestion(BaseModel):
     k1: float = 0.0
     # What the handles were placed on (see CalibrationSubmit.reference).
     reference: str = "corners"
+    # Set when the calibration was applied by itself (camera recognised).
+    note: str | None = None
 
 
 class CalibrationSubmit(BaseModel):

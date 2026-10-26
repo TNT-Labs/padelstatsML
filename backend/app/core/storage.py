@@ -24,6 +24,21 @@ def keyframe_path(match_id: str) -> Path:
     return get_settings().keyframes_path / f"{match_id}.jpg"
 
 
+def preset_image_path(preset_id: str) -> Path:
+    """The frame a camera preset was calibrated on: new videos are compared
+    with it to recognise the camera position (app.ml.camera_match)."""
+    return get_settings().presets_path / f"{preset_id}.jpg"
+
+
+def store_preset_image(preset_id: str, match_id: str) -> None:
+    """Keep the match's keyframe as the preset's picture."""
+    source = keyframe_path(match_id)
+    if source.exists():
+        target = preset_image_path(preset_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def artifacts_dir(match_id: str) -> Path:
     """Per-match directory holding the raw observations of the analysis."""
     return get_settings().artifacts_path / match_id
@@ -60,11 +75,6 @@ def crop_url(match_id: str, player_id: int) -> str:
     path = get_settings().crops_path / match_id / f"player_{player_id}.jpg"
     version = int(path.stat().st_mtime) if path.exists() else 0
     return f"/api/matches/{match_id}/crops/{player_id}?v={version}"
-
-
-def keyframe_url(match_id: str) -> str:
-    base = get_settings().api_base_url.rstrip("/")
-    return f"{base}/api/matches/{match_id}/keyframe"
 
 
 def delete_match_files(match_id: str) -> None:
