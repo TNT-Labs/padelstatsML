@@ -488,11 +488,11 @@ const RefineCard: FC<{
   }
   if (count < 4) return null
 
-  const propose = async (method: RefineProposal['method']) => {
+  const propose = async () => {
     setBusy(true)
     setError(null)
     try {
-      setProposal(await api.refineCalibration(matchId, marks, method))
+      setProposal(await api.refineCalibration(matchId, marks))
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e))
     } finally {
@@ -505,7 +505,7 @@ const RefineCard: FC<{
     setBusy(true)
     setError(null)
     try {
-      const outcome = await api.applyRefinement(matchId, marks, proposal)
+      const outcome = await api.applyRefinement(matchId, marks, proposal.corners_px, proposal.k1)
       const plan = await api.getVerification(matchId)
       if (plan.last) onApplied(plan.last, !outcome.names_cleared)
       setProposal(null)
@@ -517,31 +517,18 @@ const RefineCard: FC<{
   }
 
   const better = proposal && (proposal.after.mean_m ?? Infinity) < (proposal.before.mean_m ?? 0) - 0.05
-  const lines = proposal?.method === 'lines'
   return (
     <div className="card" style={{ marginBottom: '1rem' }}>
       <h2 style={{ marginBottom: '.5rem' }}>Correggi la calibrazione</h2>
       <p className="muted-note" style={{ marginBottom: '.6rem' }}>
-        La calibrazione usa solo i 4 angoli, spesso fuori inquadratura e messi a stima. Si può ricalcolare
-        con i {count} punti che hai segnato, oppure agganciandola alle linee dipinte del fotogramma (i tuoi
-        punti servono allora a misurarla): le statistiche si aggiornano in pochi secondi, senza rifare
+        La calibrazione usa solo i 4 angoli, spesso fuori inquadratura e messi a stima. Con i {count} punti
+        che hai segnato si può ricalcolare: le statistiche si aggiornano in pochi secondi, senza rifare
         l'analisi.
       </p>
-      {result.snapped && !proposal && (
-        <p className="muted-note" style={{ marginBottom: '.6rem' }}>
-          La calibrazione attuale è agganciata alle linee: gli errori qui sopra sono misurati sui tuoi punti,
-          che l'aggancio non usa.
-        </p>
-      )}
       {!proposal && (
-        <div className="action-row">
-          <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => propose('landmarks')}>
-            {busy ? 'Calcolo…' : 'Correggi con i punti segnati'}
-          </button>
-          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => propose('lines')}>
-            Aggancia alle linee
-          </button>
-        </div>
+        <button className="btn btn-primary btn-sm" disabled={busy} onClick={propose}>
+          {busy ? 'Calcolo…' : 'Calcola la correzione'}
+        </button>
       )}
       {proposal && (
         <>
@@ -552,18 +539,9 @@ const RefineCard: FC<{
                 <td>{proposal.before.mean_m?.toFixed(2)} m</td>
               </tr>
               <tr>
-                <td>{lines ? "Errore con l'aggancio" : 'Errore atteso con la correzione'}</td>
+                <td>Errore atteso con la correzione</td>
                 <td>{proposal.after.mean_m?.toFixed(2)} m</td>
               </tr>
-              {lines && proposal.lines && (
-                <tr>
-                  <td>Campo sulle linee</td>
-                  <td>
-                    {Math.round(proposal.lines.aligned_before * 100)}% →{' '}
-                    {Math.round(proposal.lines.aligned_after * 100)}%
-                  </td>
-                </tr>
-              )}
               <tr>
                 <td>Correzione grandangolo</td>
                 <td>{proposal.k1 > 0 ? proposal.k1.toFixed(2) : 'non necessaria'}</td>
@@ -571,23 +549,15 @@ const RefineCard: FC<{
             </tbody>
           </table>
           <p className="muted-note" style={{ marginBottom: '.6rem' }}>
-            {lines
-              ? "L'aggancio non usa i punti che hai segnato: l'errore misurato su di essi è indipendente."
-              : "L'errore atteso è misurato su ogni punto escluso a turno dal calcolo: non è ottimistico."}
+            L'errore atteso è misurato su ogni punto escluso a turno dal calcolo: non è ottimistico.
           </p>
-          {!better && (
-            <p style={{ marginBottom: '.6rem' }}>La correzione non migliora la calibrazione: lasciala com'è.</p>
-          )}
-          <div className="action-row">
-            {better && (
-              <button className="btn btn-primary btn-sm" disabled={busy} onClick={apply}>
-                {busy ? 'Ricalcolo delle statistiche…' : 'Applica e ricalcola le statistiche'}
-              </button>
-            )}
-            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setProposal(null)}>
-              Prova l'altro metodo
+          {better ? (
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={apply}>
+              {busy ? 'Ricalcolo delle statistiche…' : 'Applica e ricalcola le statistiche'}
             </button>
-          </div>
+          ) : (
+            <p>La correzione non migliora la calibrazione: lasciala com'è.</p>
+          )}
         </>
       )}
       {error && <p className="error-msg">{error}</p>}

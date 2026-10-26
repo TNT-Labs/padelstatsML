@@ -42,6 +42,32 @@ export const CORNER_LABELS = [
   'Vicino sinistra',
 ]
 
+/**
+ * What the four handles are placed on, as on the server
+ * (REFERENCE_POINTS_M in app/ml/court.py). With the camera low and close
+ * behind the back glass the near corners are far out of the picture, while
+ * the net posts and the near service line are in it.
+ */
+export type Reference = 'corners' | 'net_service'
+
+export const REFERENCE_POINTS_M: Record<Reference, Pt[]> = {
+  corners: COURT_CORNERS_M,
+  net_service: [
+    [0, NET_Y_M], // left net post
+    [COURT_WIDTH_M, NET_Y_M], // right net post
+    [COURT_WIDTH_M, NET_Y_M - SERVICE_OFFSET_M], // near service line, right end
+    [0, NET_Y_M - SERVICE_OFFSET_M], // near service line, left end
+  ],
+}
+
+export const REFERENCE_LABELS: Record<Reference, string[]> = {
+  corners: CORNER_LABELS,
+  net_service: ['Palo rete sinistro', 'Palo rete destro', 'Servizio vicino destra', 'Servizio vicino sinistra'],
+}
+
+/** Smallest share of the frame the handles' quadrilateral may cover. */
+export const MIN_HANDLES_AREA: Record<Reference, number> = { corners: 0.02, net_service: 0.005 }
+
 export type Matrix3 = number[] // row-major, length 9
 
 /**
@@ -179,7 +205,7 @@ export interface QuadCheck {
  * Mirrors the server-side validation so the user is told what is wrong while
  * dragging, instead of after pressing save.
  */
-export function checkQuad(raw: Pt[], frameW: number, frameH: number, k1 = 0): QuadCheck {
+export function checkQuad(raw: Pt[], frameW: number, frameH: number, k1 = 0, minArea = 0.02): QuadCheck {
   if (raw.length !== 4) return { valid: false, reason: 'Servono 4 angoli.' }
 
   const mx = MAX_OFF_FRAME * frameW
@@ -204,10 +230,38 @@ export function checkQuad(raw: Pt[], frameW: number, frameH: number, k1 = 0): Qu
   if (area < 0) {
     return { valid: false, reason: 'Ordine invertito: il campo risulterebbe specchiato.' }
   }
-  if (Math.abs(area) < 0.02 * frameW * frameH) {
+  if (Math.abs(area) < minArea * frameW * frameH) {
     return { valid: false, reason: 'Il campo occupa una porzione troppo piccola del frame.' }
   }
   return { valid: true }
+}
+
+/** Map four points from one set of court positions to another, through
+ *  the homography they define (on the straightened picture). */
+function remap(points: Pt[], fromM: Pt[], toM: Pt[], lens?: Lens): Pt[] | null {
+  const bent = !!lens && lens.k1 > 0
+  const straight = bent ? points.map(p => undistortPoint(p, lens!)) : points
+  const h = homographyFromQuad(fromM, straight)
+  if (!h) return null
+  const out: Pt[] = []
+  for (const m of toM) {
+    const p = applyHomography(h, m)
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null
+    out.push(bent ? distortPoint(p, lens!) : p)
+  }
+  return out
+}
+
+/** The court's corners in the picture, from handles placed on `reference`. */
+export function cornersFromReference(handles: Pt[], reference: Reference, lens?: Lens): Pt[] | null {
+  if (reference === 'corners') return handles
+  return remap(handles, REFERENCE_POINTS_M[reference], COURT_CORNERS_M, lens)
+}
+
+/** Where the handles of `reference` lie, for a calibration given by its corners. */
+export function referenceFromCorners(corners: Pt[], reference: Reference, lens?: Lens): Pt[] | null {
+  if (reference === 'corners') return corners
+  return remap(corners, COURT_CORNERS_M, REFERENCE_POINTS_M[reference], lens)
 }
 
 /** Court-model polylines (in metres) drawn over the keyframe as a check. */

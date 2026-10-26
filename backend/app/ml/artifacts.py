@@ -40,7 +40,7 @@ from typing import IO, Iterable
 
 import numpy as np
 
-from app.ml.court import CalibrationSource, CourtCalibration, build_calibration
+from app.ml.court import DERIVED_MAX_OFF_FRAME, CalibrationSource, CourtCalibration, build_calibration
 from app.ml.tracking import Observation, Tracklet
 
 SCHEMA_VERSION = 1
@@ -236,6 +236,7 @@ def load_artifacts(directory: str | Path) -> LoadedArtifacts:
         source=CalibrationSource(calibration_data.get("source", "manual")),
         net_px=calibration_data.get("net_px"),
         k1=float(calibration_data.get("k1") or 0.0),
+        max_off_frame=DERIVED_MAX_OFF_FRAME,
     )
 
     # The pipeline drops tracks shorter than this; replaying must drop the

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -107,6 +107,8 @@ class CalibrationSuggestion(BaseModel):
     corner_labels: list[str]
     # Lens correction of the saved calibration (0: none).
     k1: float = 0.0
+    # What the handles were placed on (see CalibrationSubmit.reference).
+    reference: str = "corners"
 
 
 class CalibrationSubmit(BaseModel):
@@ -114,8 +116,12 @@ class CalibrationSubmit(BaseModel):
     camera position) must be supplied. When both are present the preset wins:
     it is the authoritative copy and the server rescales it to this video."""
 
-    # Order: far-left, far-right, near-right, near-left.
+    # The four handles, in the order of `reference`: the court's corners
+    # (far-left, far-right, near-right, near-left), or with "net_service"
+    # the foot of the left and right net posts, then the right and left ends
+    # of the near service line. The corners are computed from them.
     corners_px: list[Point] | None = Field(default=None, min_length=4, max_length=4)
+    reference: Literal["corners", "net_service"] = "corners"
     # Optional: the two ends of the net at floor level. Used as an independent
     # accuracy check, since the net is the one landmark not used in the fit.
     net_px: list[Point] | None = Field(default=None, min_length=2, max_length=2)
@@ -127,29 +133,6 @@ class CalibrationSubmit(BaseModel):
     # Lens correction for a wide-angle lens (app.ml.court); None keeps the
     # current one.
     k1: float | None = Field(default=None, ge=0, le=0.5)
-
-
-class CalibrationSnapRequest(BaseModel):
-    """The corners on screen, to be snapped onto the painted lines."""
-
-    corners_px: list[Point] = Field(min_length=4, max_length=4)
-    k1: float = Field(default=0.0, ge=0, le=0.5)
-
-
-class CalibrationSnapResult(BaseModel):
-    """A proposal: nothing is saved until the calibration is confirmed."""
-
-    corners_px: list[Point]
-    k1: float
-    # Share of the court model lying on a painted line, before and after.
-    aligned_before: float
-    aligned_after: float
-    # Median distance across the lines, on the court (None: too few seen).
-    before_cm: float | None = None
-    after_cm: float | None = None
-    improved: bool
-    # Mean displacement of the positions on the court, in metres.
-    shift_m: float
 
 
 class CalibrationResult(BaseModel):

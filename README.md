@@ -77,15 +77,12 @@ Se la camera è vicina e un angolo resta fuori dall'inquadratura,
 l'angolo si posiziona lì, dove si incontrerebbero le linee visibili, e
 l'omografia estrapola il campo intero.
 
-**Aggancia alle linee** rifinisce da solo gli angoli messi a stima: cerca
-nel fotogramma le linee dipinte (fondo, laterali, servizio, centrale) e
-riadatta angoli e correzione del grandangolo finché il modello ci si
-sovrappone. Il nastro della rete, la linea più evidente dell'immagine, è
-riconosciuto come tale e non scambiato per la linea di fondo. Un aggancio che
-sposterebbe il campo di oltre 1.5 m viene rifiutato; si può sempre annullare.
-Su una partita già analizzata lo stesso aggancio è in *Verifica accuratezza →
-Correggi la calibrazione*: lì è misurato sui punti segnati a mano (che non
-usa) e le statistiche si ricalcolano in pochi secondi, senza rifare l'analisi.
+Con la camera bassa e vicina al vetro di fondo gli angoli vicini cadono
+anche a più di un'inquadratura di distanza, dove metterli a mano è solo una
+stima. Con **Punti di riferimento → Rete e linea di servizio** le quattro
+maniglie vanno invece sulla base dei due pali della rete e sulle due
+estremità della linea di servizio vicina, punti visibili o quasi; gli angoli
+li calcola l'app.
 
 La calibrazione si salva come **preset camera** e si riusa con un clic per
 ogni partita successiva ripresa dalla stessa posizione.
@@ -292,16 +289,17 @@ L'accuratezza dipende quasi interamente dalla ripresa.
   `DETECTOR_CONF_WEAK` (0,12) servono solo a non perdere un giocatore già
   seguito, vicino a dove era atteso; non creano mai giocatori nuovi.
 - **Giocatori lontani piccoli** (camera lontana dal campo o risoluzione
-  bassa): `DETECTOR_FAR_PASS=true` nel `.env` aggiunge un secondo passaggio
-  del rilevatore sulla metà lontana. Costa il 50-80% di tempo in più.
+  bassa): il rilevatore guarda una seconda volta la sola metà lontana,
+  in automatico quando i giocatori in fondo gli arriverebbero troppo
+  piccoli (`DETECTOR_FAR_PASS=auto`, oppure `true`/`false` per forzarlo).
+  Costa il 50-80% di tempo in più.
 - **1080p a 30 fps** è sufficiente; il 4K non aggiunge nulla e rallenta il
   decode.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva
   fotogramma per fotogramma.
 - **Grandangolo (0.6x, action cam)**: si può usare. La curvatura delle linee
-  si corregge nella calibrazione (cursore *Obiettivo grandangolare*), oppure
-  in automatico con *Aggancia alle linee* o da *Verifica accuratezza →
-  Correggi la calibrazione*.
+  si corregge nella calibrazione (cursore *Obiettivo grandangolare*) oppure
+  in automatico da *Verifica accuratezza → Correggi la calibrazione*.
 - Maglie di colore diverso fra i due della stessa coppia aiutano molto la
   ricostruzione dell'identità dopo le occlusioni.
 

@@ -219,3 +219,45 @@ def test_no_far_crop_when_it_would_enlarge_nobody():
     overhead = build_calibration([[400, 100], [1500, 100], [1500, 1000], [400, 1000]], FRAME,
                                  CalibrationSource.MANUAL)
     assert overhead.far_roi_px() is None
+
+
+def test_a_calibration_from_the_net_and_the_service_line_reaches_corners_far_out():
+    """Camera low and close behind the back glass: the near corners lie
+    more than a frame width outside, the net posts and the near service line
+    are in the picture. The handles go on these; the corners follow."""
+    from app.ml.court import (
+        DERIVED_MAX_OFF_FRAME,
+        REFERENCE_POINTS_M,
+        build_from_reference,
+        calibration_from_dict,
+        reference_points,
+    )
+
+    project = _pinhole(2.0, 2.0, back_m=1.4, f=900.0)
+    handles = [project((x, y, 0.0)) for x, y in REFERENCE_POINTS_M["net_service"]]
+    corners = np.array([project((x, y, 0.0)) for x, y in COURT_CORNERS_M_LIST])
+    assert (corners[:, 0] < -FRAME[0]).any() and (corners[:, 0] > 2 * FRAME[0]).any()
+    with pytest.raises(CalibrationError, match="lontano"):
+        build_calibration(corners, FRAME, CalibrationSource.MANUAL)
+
+    calib = build_from_reference(handles, "net_service", FRAME, CalibrationSource.MANUAL)
+
+    assert np.allclose(calib.corners_px, corners, atol=0.5)
+    assert np.allclose(reference_points(calib, "net_service"), handles, atol=0.5)
+    probe = np.array([project((7.0, 15.0, 0.0))], np.float32)
+    assert np.allclose(calib.floor_points_to_court(probe), [[7.0, 15.0]], atol=0.02)
+    stored = calibration_from_dict({**calib.to_dict(), "frame_size": list(FRAME)})
+    assert np.allclose(stored.corners_px, calib.corners_px)
+    assert DERIVED_MAX_OFF_FRAME > 1.0
+
+
+def test_reference_handles_are_checked_like_corners():
+    from app.ml.court import REFERENCE_POINTS_M, build_from_reference
+
+    project = _pinhole(3.5, 12.0)
+    handles = [project((x, y, 0.0)) for x, y in REFERENCE_POINTS_M["net_service"]]
+    with pytest.raises(CalibrationError, match="invertito"):
+        build_from_reference(handles[::-1], "net_service", FRAME, CalibrationSource.MANUAL)
+    far = [[-3000.0, 300.0]] + handles[1:]
+    with pytest.raises(CalibrationError, match="lontano"):
+        build_from_reference(far, "net_service", FRAME, CalibrationSource.MANUAL)

@@ -2,8 +2,7 @@
 
     GET  /api/matches/{id}/verification          landmarks, frames to mark, last result
     POST /api/matches/{id}/verification          the marks: returns and stores the errors
-    POST /api/matches/{id}/verification/refine   a calibration fitted on the landmarks too,
-                                                 or snapped onto the painted lines
+    POST /api/matches/{id}/verification/refine   a calibration fitted on the landmarks too
     POST /api/matches/{id}/verification/apply    use it: statistics recomputed in seconds
 
 See app/ml/verification.py for what is measured.
@@ -12,9 +11,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Literal
-
-import cv2
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
@@ -23,19 +19,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_editor
-from app.api.matches import _SNAP_LOCK, _get_match
+from app.api.matches import _get_match
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.storage import artifacts_dir, keyframe_path
+from app.core.storage import artifacts_dir
 from app.ml.artifacts import load_artifacts
-from app.ml.court import CourtCalibration, calibration_from_dict
+from app.ml.court import (
+    DERIVED_MAX_OFF_FRAME,
+    CalibrationError,
+    CourtCalibration,
+    build_calibration,
+    calibration_from_dict,
+)
 from app.ml.identity import PlayerTrack, resolve_players
-from app.ml.court import CalibrationError, build_calibration
 from app.ml.player_boxes import matches_stats, save_player_boxes
 from app.ml.reprocess import pipeline_config, recompute, same_slots, with_calibration
 from app.ml.rallies import Rally
 from app.ml.smoothing import SmoothedPath, smooth_path
-from app.ml.snap import snap_to_lines
 from app.ml.verification import (
     calibration_errors,
     choose_frames,
@@ -148,10 +148,6 @@ async def submit_verification(
 
 class RefineSubmit(BaseModel):
     landmarks: dict[str, Point]
-    # "landmarks": fitted on the corners and the marked points; "lines":
-    # snapped onto the painted lines of the keyframe, the marked points left
-    # to measure it — an independent check, not a fit on them.
-    method: Literal["landmarks", "lines"] = "landmarks"
 
 
 class ApplySubmit(RefineSubmit):
@@ -164,32 +160,12 @@ async def propose_refinement(
     match_id: str, payload: RefineSubmit,
     db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
 ) -> dict:
-    """A corrected calibration and its error; nothing saved."""
+    """A calibration fitted on the corners and the landmarks; nothing saved."""
     match, _ = await _completed(db, match_id, user)
-    current = calibration_from_dict(match.calibration)
-    marks = dict(payload.landmarks)
     try:
-        if payload.method == "landmarks":
-            return {**refine_calibration(current, marks), "method": "landmarks"}
-        path = keyframe_path(match_id)
-        frame = cv2.imread(str(path)) if path.exists() else None
-        if frame is None:
-            raise CalibrationError("Fotogramma della calibrazione non disponibile.")
-        async with _SNAP_LOCK:
-            snap = await run_in_threadpool(snap_to_lines, current, frame)
-        snapped = build_calibration(snap["corners_px"], current.frame_size, current.source, k1=snap["k1"])
+        return refine_calibration(calibration_from_dict(match.calibration), dict(payload.landmarks))
     except CalibrationError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {
-        "corners_px": snap["corners_px"],
-        "k1": snap["k1"],
-        # Measured at the marked points, which the snap did not see.
-        "before": calibration_errors(current, marks)["all"],
-        "after": calibration_errors(snapped, marks)["all"],
-        "landmarks": len(marks),
-        "method": "lines",
-        "lines": {key: snap[key] for key in ("aligned_before", "aligned_after", "before_cm", "after_cm", "shift_m")},
-    }
 
 
 @router.post("/{match_id}/verification/apply")
@@ -201,8 +177,10 @@ async def apply_refinement(
     statistics from the stored detections — projected again through it."""
     match, stats = await _completed(db, match_id, user)
     try:
+        # Corners of a proposal (refine): computed, possibly far out.
         calibration = build_calibration(
-            [tuple(p) for p in payload.corners_px], (match.width, match.height), k1=payload.k1)
+            [tuple(p) for p in payload.corners_px], (match.width, match.height), k1=payload.k1,
+            max_off_frame=DERIVED_MAX_OFF_FRAME)
     except CalibrationError as exc:
         raise HTTPException(422, str(exc)) from exc
     calibration_data = {
@@ -212,8 +190,7 @@ async def apply_refinement(
         # The net check and the preset were for the corners placed by hand.
         "net_px": None,
         "preset_id": None,
-        "refined_from_landmarks": len(payload.landmarks) if payload.method == "landmarks" else None,
-        "snapped_to_lines": payload.method == "lines",
+        "refined_from_landmarks": len(payload.landmarks),
         "k1": payload.k1,
     }
     directory = artifacts_dir(match_id)
@@ -236,13 +213,12 @@ async def apply_refinement(
 
     result["data_quality"]["verification"] = {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        # Fitted on the landmarks: measured on them, an optimistic figure,
-        # said so on screen; the expected error is the one measured leaving
-        # each out (refine). Snapped onto the lines: an independent one.
+        # Measured on the landmarks the calibration was just fitted on: an
+        # optimistic figure, said so on screen; the expected error is the
+        # one measured leaving each out (refine).
         "calibration": calibration_errors(calibration, dict(payload.landmarks)),
         "players": None,
-        "refined": payload.method == "landmarks",
-        "snapped": payload.method == "lines",
+        "refined": True,
     }
     names_cleared = bool(match.player_names) and not same_slots(stats.per_player, result["per_player"])
     if names_cleared:

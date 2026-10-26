@@ -95,9 +95,10 @@ class Settings(BaseSettings):
     detector_iou: float = 0.55
     # A second detector look at the far half of the court, where players are
     # smallest. More far detections; the analysis takes ~50-80% longer on a
-    # Pi. Worth it with the camera high (3-4 m): lower, the net hides the
-    # far players' feet whatever the detector sees.
-    detector_far_pass: bool = False
+    # Pi. "auto": when the far players reach the network too small to be
+    # found reliably (see CourtCalibration.far_player_input_px); "true" or
+    # "false" to force it.
+    detector_far_pass: str = "auto"
     # onnxruntime intra-op threads. 0 = auto (physical cores, capped at 4).
     inference_threads: int = 0
 
@@ -147,6 +148,16 @@ class Settings(BaseSettings):
     job_max_attempts: int = 2
 
     # ── Derived values ───────────────────────────────────────────────────────
+    @property
+    def far_pass_mode(self) -> bool | None:
+        """detector_far_pass as the pipeline takes it: None for auto."""
+        value = str(self.detector_far_pass).strip().lower()
+        if value in ("1", "true", "yes", "on"):
+            return True
+        if value in ("0", "false", "no", "off"):
+            return False
+        return None
+
     @property
     def cors_origin_list(self) -> list[str]:
         """Origins as a list. Empty means: do not enable CORS at all."""

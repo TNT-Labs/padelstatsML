@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_editor
 from app.core.database import get_db
-from app.ml.court import CalibrationError, CalibrationSource, build_calibration
+from app.ml.court import DERIVED_MAX_OFF_FRAME, CalibrationError, CalibrationSource, build_calibration
 from app.models import CameraPreset, User
 from app.schemas.match import PresetCreate, PresetRead
 
@@ -51,6 +51,8 @@ async def create_preset(
             source=CalibrationSource.PRESET,
             net_px=[tuple(p) for p in payload.net_px] if payload.net_px else None,
             k1=payload.k1,
+            # The corners of a confirmed calibration, possibly computed.
+            max_off_frame=DERIVED_MAX_OFF_FRAME,
         )
     except CalibrationError as exc:
         raise HTTPException(HTTP_UNPROCESSABLE, str(exc)) from exc

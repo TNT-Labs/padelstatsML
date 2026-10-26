@@ -194,7 +194,7 @@ def _run_job(job_id: str) -> None:
                 detector_conf=settings.detector_conf,
                 detector_conf_weak=settings.detector_conf_weak,
                 detector_iou=settings.detector_iou,
-                detector_far_pass=settings.detector_far_pass,
+                detector_far_pass=settings.far_pass_mode,
                 inference_threads=settings.inference_threads,
                 sample_hz=settings.sample_hz,
                 max_analysis_minutes=settings.max_analysis_minutes,
