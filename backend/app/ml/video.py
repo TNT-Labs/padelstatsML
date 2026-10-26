@@ -111,6 +111,38 @@ def extract_keyframe(
         cap.release()
 
 
+def extract_background(
+    video_path: str | Path,
+    out_path: str | Path,
+    count: int = 15,
+    jpeg_quality: int = 90,
+) -> bool:
+    """The court without the players: the per-pixel median of `count`
+    frames spread over the video, written as JPEG. Players move, the court
+    does not: in most of the frames a pixel of the floor shows the floor.
+    Used to find the net and the lines (app.ml.court_detect). False when too
+    few frames could be read."""
+    from app.ml.court_detect import background
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return False
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        frames = []
+        for index in np.linspace(0, max(total - 1, 0), count).astype(int):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+            ok, frame = cap.read()
+            if ok and (not frames or frame.shape == frames[0].shape):
+                frames.append(frame)
+    finally:
+        cap.release()
+    if len(frames) < 5:
+        return False
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    return bool(cv2.imwrite(str(out_path), background(frames), [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]))
+
+
 class FrameSampler:
     """Iterate a video once, yielding roughly `target_hz` frames per second.
 

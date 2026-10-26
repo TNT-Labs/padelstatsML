@@ -116,7 +116,7 @@ def test_suggestion_always_returns_four_usable_corners():
     blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
     suggestion = suggest_corners(blank)
     assert suggestion.corners_px.shape == (4, 2)
-    assert suggestion.method in {"lines", "default"}
+    assert suggestion.method in {"net_service", "default"}
     # A blank frame has no lines, so the geometric default must take over and
     # must never masquerade as a confident detection.
     assert suggestion.method == "default"

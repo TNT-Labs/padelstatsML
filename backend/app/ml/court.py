@@ -14,7 +14,9 @@ The new contract:
   * A calibration is only usable if a human confirmed it (MANUAL, PRESET, or
     an AUTO suggestion the user explicitly accepted).
   * `suggest_corners` is exactly that — a suggestion to drag into place. It
-    never becomes a calibration on its own.
+    never becomes a calibration on its own. (A video from a camera position
+    already calibrated is calibrated by itself — app.ml.camera_match — from
+    a calibration a human confirmed.)
   * `build_calibration` validates the quadrilateral geometrically and refuses
     degenerate input instead of returning something unusable.
 
@@ -28,7 +30,6 @@ satisfy it; a flying ball does not.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -612,31 +613,40 @@ def _net_error_m(calib: CourtCalibration, net_px: np.ndarray | list | None) -> f
 @dataclass(frozen=True)
 class CornerSuggestion:
     corners_px: np.ndarray
-    method: str        # "lines" | "default"
+    method: str        # "net_service" | "default"
     confidence: float  # 0.0 for the geometric default
+    # What the handles go on (REFERENCE_POINTS_M) and where.
+    reference: str = "corners"
+    handles_px: np.ndarray | None = None
 
     def to_list(self) -> list[list[float]]:
         return [[float(x), float(y)] for x, y in self.corners_px]
 
 
 def suggest_corners(frame: np.ndarray) -> CornerSuggestion:
-    """Propose four corners for the calibration UI to pre-fill.
+    """Propose a calibration for the page to pre-fill: from the net and the
+    near service line found in `frame` (app.ml.court_detect) — best the
+    court without players, the median of frames over the video.
 
-    Strategy: find long straight segments, split them into the two pencils
-    that a projected rectangle produces, and intersect the extreme lines of
-    each pencil. This is far more robust on a padel court than thresholding
-    for white pixels, because it uses gradient direction rather than colour.
+    A padel court has no painted baseline or side line: it is bounded by its
+    walls. What a camera behind the back glass does show is the net, the
+    service line and the centre line; the side walls where the turf ends.
 
-    When it fails — which it is allowed to do — a generic trapezoid for the
-    usual "camera behind the baseline, elevated" setup is returned with
-    confidence 0. The user drags four handles either way, so a failed
+    When nothing is found — which it is allowed to be — a generic trapezoid
+    for the usual "camera behind the baseline, elevated" setup is returned
+    with confidence 0. The user drags four handles either way, so a failed
     suggestion costs seconds, not correctness.
     """
+    from app.ml.court_detect import detect_net_service
+
+    h, w = frame.shape[:2]
     try:
-        found = _suggest_from_lines(frame)
+        found = detect_net_service(frame)
         if found is not None:
-            return found
-    except cv2.error:
+            calib = build_from_reference(found.handles, "net_service", (w, h))
+            return CornerSuggestion(calib.corners_px.astype(np.float32), "net_service", found.confidence,
+                                    "net_service", found.handles)
+    except (cv2.error, CalibrationError, np.linalg.LinAlgError):
         pass
     return CornerSuggestion(_default_trapezoid(frame), method="default", confidence=0.0)
 
@@ -652,108 +662,3 @@ def _default_trapezoid(frame: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float32,
     )
-
-
-def _suggest_from_lines(frame: np.ndarray) -> CornerSuggestion | None:
-    h, w = frame.shape[:2]
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.bilateralFilter(gray, 5, 60, 60)
-    edges = cv2.Canny(gray, 45, 140, apertureSize=3)
-
-    min_len = int(min(w, h) * 0.22)
-    segments = cv2.HoughLinesP(
-        edges, 1, np.pi / 360, threshold=70, minLineLength=min_len, maxLineGap=18
-    )
-    if segments is None or len(segments) < 6:
-        return None
-
-    lines = [_segment_to_line(s[0]) for s in segments]
-    lines = [ln for ln in lines if ln is not None]
-    if len(lines) < 6:
-        return None
-
-    # Two families: roughly-horizontal (baselines/service lines) and
-    # roughly-vertical (sidelines) in image space. A camera behind the
-    # baseline keeps this split valid for any realistic tilt.
-    horiz = [ln for ln in lines if abs(math.sin(ln[2])) >= 0.55]
-    vert  = [ln for ln in lines if abs(math.sin(ln[2])) < 0.55]
-    if len(horiz) < 2 or len(vert) < 2:
-        return None
-
-    # Extremes: topmost/bottommost horizontals, leftmost/rightmost verticals,
-    # measured at the frame centre so perspective does not flip the ordering.
-    cx, cy = w / 2.0, h / 2.0
-    horiz.sort(key=lambda ln: _y_at_x(ln, cx))
-    vert.sort(key=lambda ln: _x_at_y(ln, cy))
-    top, bottom = horiz[0], horiz[-1]
-    left, right = vert[0], vert[-1]
-
-    if _y_at_x(bottom, cx) - _y_at_x(top, cx) < h * 0.25:
-        return None
-    if _x_at_y(right, cy) - _x_at_y(left, cy) < w * 0.25:
-        return None
-
-    corners = []
-    for a, b in ((top, left), (top, right), (bottom, right), (bottom, left)):
-        p = _intersect(a, b)
-        if p is None:
-            return None
-        corners.append(p)
-    pts = np.array(corners, dtype=np.float32)
-
-    # Accept only suggestions that are inside (a padded) frame and convex —
-    # otherwise the default trapezoid is a better starting point.
-    pad = 0.25
-    if (pts[:, 0] < -pad * w).any() or (pts[:, 0] > (1 + pad) * w).any():
-        return None
-    if (pts[:, 1] < -pad * h).any() or (pts[:, 1] > (1 + pad) * h).any():
-        return None
-    try:
-        _validate_quad(pts, w, h)
-    except CalibrationError:
-        return None
-
-    return CornerSuggestion(pts, method="lines", confidence=0.45)
-
-
-def _segment_to_line(seg: np.ndarray) -> tuple[float, float, float] | None:
-    """Segment -> (a, b, theta) for the line y = a*x + b, plus its angle.
-
-    Returns None for near-vertical segments, which are re-parameterised by
-    `_x_at_y` through the stored angle instead.
-    """
-    x1, y1, x2, y2 = (float(v) for v in seg)
-    dx, dy = x2 - x1, y2 - y1
-    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-        return None
-    theta = math.atan2(dy, dx)
-    # Store the line in general form via a point and its direction.
-    return (x1, y1, theta)
-
-
-def _y_at_x(line: tuple[float, float, float], x: float) -> float:
-    px, py, theta = line
-    dx, dy = math.cos(theta), math.sin(theta)
-    if abs(dx) < 1e-6:
-        return py
-    return py + (x - px) * dy / dx
-
-
-def _x_at_y(line: tuple[float, float, float], y: float) -> float:
-    px, py, theta = line
-    dx, dy = math.cos(theta), math.sin(theta)
-    if abs(dy) < 1e-6:
-        return px
-    return px + (y - py) * dx / dy
-
-
-def _intersect(l1: tuple[float, float, float], l2: tuple[float, float, float]) -> tuple[float, float] | None:
-    p1x, p1y, t1 = l1
-    p2x, p2y, t2 = l2
-    d1 = (math.cos(t1), math.sin(t1))
-    d2 = (math.cos(t2), math.sin(t2))
-    denom = d1[0] * d2[1] - d1[1] * d2[0]
-    if abs(denom) < 1e-9:
-        return None
-    t = ((p2x - p1x) * d2[1] - (p2y - p1y) * d2[0]) / denom
-    return (p1x + t * d1[0], p1y + t * d1[1])

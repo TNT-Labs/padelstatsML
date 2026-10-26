@@ -213,6 +213,10 @@ export const HomeView: FC<Props> = ({ me, onNew, onOpen }) => {
               {match.status === 'analyzing' && match.progress_message && (
                 <div className="muted-note">{match.progress_message}</div>
               )}
+              {/* Calibrated by itself: the camera position was recognised. */}
+              {match.status === 'ready' && match.progress_message?.startsWith('Calibrato in automatico') && (
+                <div className="muted-note">{match.progress_message}</div>
+              )}
               {match.status === 'failed' && match.error_message && (
                 <div className="error-msg" style={{ marginTop: '.2rem' }}>
                   {match.error_message}

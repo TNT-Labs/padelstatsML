@@ -50,6 +50,7 @@ from app.core.storage import (
     crop_url,
     delete_match_files,
     free_space_bytes,
+    background_path,
     keyframe_path,
     preset_image_path,
     store_preset_image,
@@ -69,7 +70,7 @@ from app.ml.court import (
     suggest_corners,
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
-from app.ml.video import VideoError, extract_keyframe, probe
+from app.ml.video import VideoError, extract_background, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
 from app.schemas.match import (
     CalibrationResult,
@@ -355,6 +356,11 @@ async def _finalise_upload(match: Match, target, size: int) -> None:
     def inspect():
         info = probe(target)
         extract_keyframe(target, keyframe_path(match.id), at_second=5.0)
+        # For the automatic calibration proposal: not worth failing the upload.
+        try:
+            extract_background(target, background_path(match.id))
+        except cv2.error as exc:
+            logger.warning("Sfondo del campo non estratto per %s: %s", match.id, exc)
         return info
 
     try:
@@ -489,13 +495,24 @@ async def calibration_suggestion(
             ),
         )
 
-    suggestion = suggest_corners(frame)
+    # The court without players, when the upload made one: nobody stands
+    # in front of the net or the lines there.
+    court = cv2.imread(str(background_path(match_id))) if background_path(match_id).exists() else None
+    if court is None or court.shape != frame.shape:
+        court = frame
+    suggestion = await run_in_threadpool(suggest_corners, court)
     return CalibrationSuggestion(
         corners_px=[tuple(p) for p in suggestion.to_list()],
         method=suggestion.method,
         confidence=suggestion.confidence,
         frame_size=(frame.shape[1], frame.shape[0]),
         corner_labels=list(CORNER_LABELS),
+        reference=suggestion.reference,
+        note=(
+            "Proposta automatica dalla rete, dalla linea di servizio e dalle pareti: controlla che le "
+            "linee bianche coincidano con quelle reali e correggi i punti se serve."
+            if suggestion.method == "net_service" else None
+        ),
     )
 
 
