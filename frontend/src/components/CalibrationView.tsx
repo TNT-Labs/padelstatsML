@@ -152,13 +152,10 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         }
         setPresets(presetList)
         setHint(
-          suggestion.note
-            ? suggestion.note
-            : suggestion.method === 'saved'
-            ? 'Calibrazione già salvata per questa partita: modificala se serve.'
-            : suggestion.method === 'lines'
-              ? 'Proposta automatica dalle linee rilevate — controllala e correggila.'
-              : 'Nessuna linea riconosciuta: trascina i 4 angoli sul campo.',
+          suggestion.note ??
+            (suggestion.method === 'saved'
+              ? 'Calibrazione già salvata per questa partita: modificala se serve.'
+              : 'Rete e linee non riconosciute in automatico: trascina i 4 punti sul campo.'),
         )
       })
       .catch((e: Error) => !cancelled && setError(e.message))

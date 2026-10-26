@@ -92,10 +92,15 @@ adattata di quei pochi pixel e applicata da sola, e la partita è subito pronta
 da analizzare. Se la camera si è mossa troppo non succede nulla: il preset
 resta a disposizione con un clic.
 
-Il rilevamento automatico esiste solo come *proposta* da correggere, mai
-come calibrazione. Su un campo da padel — vetri, rete metallica, poche linee
-dipinte, superfici riflettenti — non è affidabile, e senza conferma umana
-l'analisi non parte.
+Per una posizione della camera mai vista l'app propone da sola i quattro
+punti *Rete e linea di servizio*: su uno sfondo senza giocatori (mediana di
+fotogrammi presi lungo il video) trova il nastro della rete, la linea di
+servizio vicina, la linea centrale, la corda inferiore della rete e il bordo
+del pavimento contro le pareti, e controlla che tutto sia geometricamente
+coerente. Sul video reale di prova l'errore medio sul campo è 0,2 m. Resta una
+*proposta*: per una camera nuova si conferma con un clic (o si correggono i
+punti), perché una calibrazione sbagliata produce metri sbagliati senza alcun
+segnale. Quando non trova nulla di coerente non propone niente.
 
 ### 2. Analisi — una sola decodifica del video
 

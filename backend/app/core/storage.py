@@ -24,6 +24,11 @@ def keyframe_path(match_id: str) -> Path:
     return get_settings().keyframes_path / f"{match_id}.jpg"
 
 
+def background_path(match_id: str) -> Path:
+    """The court without the players (app.ml.video.extract_background)."""
+    return get_settings().keyframes_path / f"{match_id}_court.jpg"
+
+
 def preset_image_path(preset_id: str) -> Path:
     """The frame a camera preset was calibrated on: new videos are compared
     with it to recognise the camera position (app.ml.camera_match)."""
@@ -83,6 +88,7 @@ def delete_match_files(match_id: str) -> None:
     # An upload abandoned half way leaves its pieces here, up to gigabytes.
     upload_part_path(match_id).unlink(missing_ok=True)
     keyframe_path(match_id).unlink(missing_ok=True)
+    background_path(match_id).unlink(missing_ok=True)
     for directory in (get_settings().crops_path / match_id, artifacts_dir(match_id)):
         if directory.exists():
             shutil.rmtree(directory, ignore_errors=True)

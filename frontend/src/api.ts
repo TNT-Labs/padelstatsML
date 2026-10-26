@@ -107,7 +107,7 @@ export type Point = [number, number]
 
 export interface CalibrationSuggestion {
   corners_px: Point[]
-  method: 'lines' | 'default' | 'saved'
+  method: 'net_service' | 'default' | 'saved'
   confidence: number
   frame_size: [number, number]
   corner_labels: string[]
