@@ -289,8 +289,10 @@ L'accuratezza dipende quasi interamente dalla ripresa.
   `DETECTOR_CONF_WEAK` (0,12) servono solo a non perdere un giocatore già
   seguito, vicino a dove era atteso; non creano mai giocatori nuovi.
 - **Giocatori lontani piccoli** (camera lontana dal campo o risoluzione
-  bassa): `DETECTOR_FAR_PASS=true` nel `.env` aggiunge un secondo passaggio
-  del rilevatore sulla metà lontana. Costa il 50-80% di tempo in più.
+  bassa): il rilevatore guarda una seconda volta la sola metà lontana,
+  in automatico quando i giocatori in fondo gli arriverebbero troppo
+  piccoli (`DETECTOR_FAR_PASS=auto`, oppure `true`/`false` per forzarlo).
+  Costa il 50-80% di tempo in più.
 - **1080p a 30 fps** è sufficiente; il 4K non aggiunge nulla e rallenta il
   decode.
 - **Evita zoom e stabilizzazione elettronica**: deformano la prospettiva

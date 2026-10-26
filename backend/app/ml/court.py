@@ -279,6 +279,18 @@ class CourtCalibration:
             return None
         return x1, y1, x2, y2
 
+    def far_player_input_px(self, input_size: int, player_height_m: float = 1.75) -> float:
+        """How tall a player on the far baseline reaches the detector when
+        it looks at the whole court (roi_px) at `input_size`: the share of
+        their height the network has to find them with."""
+        baseline = self.court_to_pixels(np.array([[0.0, COURT_LENGTH_M], [COURT_WIDTH_M, COURT_LENGTH_M]], np.float32))
+        if not np.isfinite(baseline).all():
+            return float("inf")
+        per_metre = float(np.linalg.norm(baseline[1] - baseline[0])) / COURT_WIDTH_M
+        x1, y1, x2, y2 = self.roi_px()
+        scale = input_size / max(x2 - x1, y2 - y1, 1)
+        return player_height_m * per_metre * scale
+
     def to_dict(self) -> dict:
         return {
             "corners_px":  self.corners_px.tolist(),

@@ -42,6 +42,12 @@ from app.ml.video import FrameSampler, VideoInfo, probe
 
 logger = logging.getLogger("padel.pipeline")
 
+# Automatic second look at the far half: when a player on the far baseline
+# reaches the network shorter than this. Below it the nano model misses most
+# of them: on a real match, low camera, 22 px tall, they came out at
+# confidence 0.05; in the second look at 0.45.
+FAR_PASS_AUTO_PX = 32.0
+
 ProgressCallback = Callable[[int, str], None]
 
 @dataclass
@@ -68,7 +74,8 @@ class PipelineConfig:
     # A second look of the detector at the far half alone, where players are
     # smallest: more of them found, at the cost of a second inference per
     # sampled frame (see CourtCalibration.far_roi_px).
-    detector_far_pass: bool = False
+    # None: automatic, when the far players are too small for the network.
+    detector_far_pass: bool | None = False
     # Optional: without it identity falls back to kit colour.
     reid_model: str | None = None
 
@@ -144,7 +151,10 @@ class AnalysisPipeline:
             confirm_conf=self.config.detector_conf,
         )
         roi = calibration.roi_px()
-        far_roi = calibration.far_roi_px() if self.config.detector_far_pass else None
+        far_roi = calibration.far_roi_px() if self.config.detector_far_pass is not False else None
+        if (self.config.detector_far_pass is None and far_roi is not None
+                and calibration.far_player_input_px(max(getattr(detector, "imgsz", (480, 480)))) >= FAR_PASS_AUTO_PX):
+            far_roi = None
         far_added = 0
 
         # ── 2. Single decode pass ────────────────────────────────────────────
@@ -242,7 +252,7 @@ class AnalysisPipeline:
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         result["data_quality"]["variable_frame_rate"] = sampler.variable_frame_rate
-        if self.config.detector_far_pass:
+        if self.config.detector_far_pass is not False:
             # How much the second look added: tells whether it is worth its time.
             result["data_quality"]["far_pass"] = {"active": far_roi is not None, "added": far_added}
         if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s:

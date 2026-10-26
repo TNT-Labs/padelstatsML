@@ -642,6 +642,29 @@ def test_a_closer_look_at_the_far_half_finds_the_far_players(synthetic_match, ca
     assert len(runs[True]["per_player"]) == 4
 
 
+@pytest.mark.parametrize("input_px, active", [(20.0, True), (60.0, False)])
+def test_the_far_pass_switches_itself_on_when_the_far_players_are_small(
+        synthetic_match, calibration, tmp_path, monkeypatch, input_px, active):
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+    from app.ml.court import CourtCalibration
+
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _SmallBlindDetector)
+    monkeypatch.setattr(CourtCalibration, "far_player_input_px", lambda self, size, *a: input_px)
+    result = AnalysisPipeline(replace(PIPELINE_CONFIG, detector_far_pass=None)).run(
+        synthetic_match, calibration=calibration, artifacts_dir=tmp_path)
+    assert result["data_quality"]["far_pass"]["active"] is active
+
+
+def test_the_far_pass_setting_reads_auto_true_and_false():
+    from app.core.config import Settings
+
+    assert Settings(detector_far_pass="auto").far_pass_mode is None
+    assert Settings(detector_far_pass="true").far_pass_mode is True
+    assert Settings(detector_far_pass="false").far_pass_mode is False
+
+
 # ── Player thumbnails ────────────────────────────────────────────────────────
 
 
