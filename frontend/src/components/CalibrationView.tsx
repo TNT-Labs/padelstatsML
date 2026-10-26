@@ -12,9 +12,6 @@
  *      the current corners, so a bad corner is visible immediately.
  *   2. A confirmed calibration can be saved as a camera preset and reused in
  *      one click for every future match filmed from the same position.
- *   3. "Aggancia alle linee" moves corners placed roughly onto the painted
- *      lines of the keyframe (lens correction included): the user checks
- *      the result, and can undo it.
  *
  * A camera close to the court often leaves one or two corners out of the
  * picture. "Estendi oltre l'inquadratura" adds a margin around the keyframe
@@ -121,9 +118,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const [start, setStart] = useState(match.analysis_start_s ?? 0)
   const [startText, setStartText] = useState(clock(match.analysis_start_s ?? 0))
   const [videoBroken, setVideoBroken] = useState(false)
-  const [snapping, setSnapping] = useState(false)
-  // The handles and lens before the last snap, to undo it.
-  const [beforeSnap, setBeforeSnap] = useState<{ handles: Pt[]; k1: number } | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const svgRef = useRef<SVGSVGElement>(null)
@@ -219,8 +213,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     setDragging(handle)
-    // Corrected by hand after the snap: undoing it would lose the correction.
-    if (handle.kind === 'corner') setBeforeSnap(null)
   }
 
   const onPointerMove = (event: PointerEvent<SVGGElement>) => {
@@ -258,7 +250,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
       })
       const presetCorners = result.corners_px.map(p => [p[0], p[1]] as Pt)
       setHandles(referenceFromCorners(presetCorners, reference, { k1, frameW, frameH }) ?? presetCorners)
-      setBeforeSnap(null)
       setHint(result.message ?? `Preset "${preset.name}" applicato.`)
       onCalibrated()
     } catch (e) {
@@ -266,46 +257,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     } finally {
       setSaving(false)
     }
-  }
-
-  const snap = async () => {
-    if (!handles || !corners || !check.valid) return
-    setError(null)
-    setSnapping(true)
-    try {
-      const result = await api.snapCalibration(match.id, corners.map(p => [p[0], p[1]] as Point), k1)
-      if (!result.improved) {
-        setHint('Gli angoli sono già sulle linee del campo: nessuna correzione utile.')
-        return
-      }
-      const snappedCorners = result.corners_px.map(p => [p[0], p[1]] as Pt)
-      const snapped = referenceFromCorners(snappedCorners, reference, { k1: result.k1, frameW, frameH })
-      if (!snapped) throw new ApiError(422, 'Aggancio non applicabile a questi punti di riferimento.')
-      setBeforeSnap({ handles, k1 })
-      setHandles(snapped)
-      setK1(result.k1)
-      if (snapped.some(p => isOffFrame(p, frameW, frameH))) {
-        setMargin(m => Math.max(m, marginFor(snapped, frameW, frameH)))
-      }
-      const share = (v: number) => `${Math.round(v * 100)}%`
-      setHint(
-        `Agganciato alle linee: modello sulle linee ${share(result.aligned_before)} → ${share(result.aligned_after)}` +
-          (result.after_cm !== null ? `, scarto residuo ${result.after_cm.toFixed(1)} cm` : '') +
-          `. Spostamento medio ${result.shift_m.toFixed(2)} m: controlla che le linee bianche coincidano con quelle reali.`,
-      )
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e))
-    } finally {
-      setSnapping(false)
-    }
-  }
-
-  const undoSnap = () => {
-    if (!beforeSnap) return
-    setHandles(beforeSnap.handles)
-    setK1(beforeSnap.k1)
-    setBeforeSnap(null)
-    setHint('Aggancio annullato.')
   }
 
   const save = async () => {
@@ -370,7 +321,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     const nextHandles = usable ? moved : defaultHandles(next, frameW, frameH)
     setReference(next)
     setHandles(nextHandles)
-    setBeforeSnap(null)
     if (nextHandles.some(p => isOffFrame(p, frameW, frameH))) {
       setMargin(m => Math.max(m, marginFor(nextHandles, frameW, frameH)))
     }
@@ -454,8 +404,7 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
           </>
         )}{' '}
         Le linee bianche sovrapposte mostrano dove il sistema calcola rete e linee di servizio: se
-        coincidono con quelle reali, la calibrazione è corretta. Avvicinati a mano, poi{' '}
-        <strong>Aggancia alle linee</strong> rifinisce i punti e il grandangolo da solo.
+        coincidono con quelle reali, la calibrazione è corretta.
         {margin === 0 && (
           <>
             {' '}
@@ -698,21 +647,11 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
             max={MAX_K1}
             step={0.01}
             value={k1}
-            onChange={e => {
-              setK1(Number(e.target.value))
-              setBeforeSnap(null)
-            }}
+            onChange={e => setK1(Number(e.target.value))}
           />
           <span className="lens-value">{k1 > 0 ? k1.toFixed(2) : 'nessuna'}</span>
           {k1 > 0 && (
-            <button
-              className="btn btn-ghost btn-sm"
-              type="button"
-              onClick={() => {
-                setK1(0)
-                setBeforeSnap(null)
-              }}
-            >
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setK1(0)}>
               Azzera
             </button>
           )}
@@ -824,19 +763,6 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
           <button className="btn btn-ghost btn-sm" onClick={toggleNet}>
             {netPoints ? 'Rimuovi verifica rete' : 'Verifica con la rete'}
           </button>
-          <button
-            className="btn btn-ghost btn-sm"
-            disabled={!check.valid || snapping || saving}
-            onClick={snap}
-            title="Sposta gli angoli sulle linee dipinte del fotogramma"
-          >
-            {snapping ? 'Aggancio…' : 'Aggancia alle linee'}
-          </button>
-          {beforeSnap && (
-            <button className="btn btn-ghost btn-sm" disabled={snapping} onClick={undoSnap}>
-              Annulla aggancio
-            </button>
-          )}
           <button
             className="btn btn-primary"
             disabled={!check.valid || saving || startProblem !== null || parseClock(startText) === null}

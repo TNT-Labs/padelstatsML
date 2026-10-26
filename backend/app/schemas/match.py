@@ -135,29 +135,6 @@ class CalibrationSubmit(BaseModel):
     k1: float | None = Field(default=None, ge=0, le=0.5)
 
 
-class CalibrationSnapRequest(BaseModel):
-    """The corners on screen, to be snapped onto the painted lines."""
-
-    corners_px: list[Point] = Field(min_length=4, max_length=4)
-    k1: float = Field(default=0.0, ge=0, le=0.5)
-
-
-class CalibrationSnapResult(BaseModel):
-    """A proposal: nothing is saved until the calibration is confirmed."""
-
-    corners_px: list[Point]
-    k1: float
-    # Share of the court model lying on a painted line, before and after.
-    aligned_before: float
-    aligned_after: float
-    # Median distance across the lines, on the court (None: too few seen).
-    before_cm: float | None = None
-    after_cm: float | None = None
-    improved: bool
-    # Mean displacement of the positions on the court, in metres.
-    shift_m: float
-
-
 class CalibrationResult(BaseModel):
     ok: bool
     corners_px: list[Point]

@@ -589,40 +589,6 @@ async def test_the_lens_correction_is_stored_and_travels_with_the_preset(uploade
                               json={"corners_px": GOOD_CORNERS, "k1": 0.9})).status_code == 422
 
 
-async def test_the_corners_are_snapped_onto_the_lines_of_the_keyframe(uploaded_match, client):
-    import cv2
-
-    from app.core.storage import keyframe_path
-    from test_court import COURT_CORNERS_M_LIST
-    from test_snap import _court_picture, _pinhole
-
-    match_id, _ = uploaded_match
-    # A keyframe at full HD for a 640x360 video: the snap works at the
-    # video's size, as the corners are.
-    image, seen = _court_picture(_pinhole(3.5, 12.0), 0.0, np.random.default_rng(4))
-    cv2.imwrite(str(keyframe_path(match_id)), image)
-    true = np.array([seen(x, y) for x, y in COURT_CORNERS_M_LIST]) * (W / 1920)
-    rough = (true + [[6, -5], [-7, 4], [5, 6], [-6, -4]]).tolist()
-
-    response = await client.post(f"/api/matches/{match_id}/calibration/snap",
-                                 json={"corners_px": rough, "k1": 0})
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["improved"]
-    def error(corners):
-        return np.linalg.norm(np.array(corners) - true, axis=1).mean()
-
-    assert error(body["corners_px"]) < error(rough) / 2
-    # A proposal: nothing saved.
-    assert (await client.get(f"/api/matches/{match_id}")).json()["calibrated"] is False
-
-    # A picture with no lines: refused with a reason.
-    cv2.imwrite(str(keyframe_path(match_id)), np.full_like(image, (150, 90, 30)))
-    refused = await client.post(f"/api/matches/{match_id}/calibration/snap",
-                                json={"corners_px": rough, "k1": 0})
-    assert refused.status_code == 422 and "linee" in refused.json()["detail"]
-
-
 async def test_the_handles_can_go_on_the_net_and_the_service_line(uploaded_match, client):
     match_id, _ = uploaded_match
     # Net posts and near service line ends of a low camera close to the back
