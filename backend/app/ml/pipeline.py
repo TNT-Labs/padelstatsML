@@ -38,7 +38,7 @@ from app.ml.rallies import Rally, activity_threshold, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
 from app.ml.tracking import CourtTracker, Observation, Tracklet
-from app.ml.video import FrameSampler, VideoInfo, probe
+from app.ml.video import FrameSampler, VideoInfo, probe, video_background
 
 logger = logging.getLogger("padel.pipeline")
 
@@ -142,8 +142,12 @@ class AnalysisPipeline:
         )
         if sampler.start_frame:
             report(2, f"Salto al minuto {_clock(sampler.start_s)}, inizio dell'analisi…")
+        # The empty court: detections that are part of it (a banner with a
+        # figure, a post) are scenery, from the first frame on.
+        scenery = video_background(video_path, start_s=start_s)
         tracker = CourtTracker(
             calibration=calibration,
+            scenery=scenery,
             max_speed_ms=self.config.max_player_speed_ms,
             max_age_s=self.config.track_max_age_s,
             min_observations=self.config.track_min_observations,
@@ -253,6 +257,8 @@ class AnalysisPipeline:
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         result["data_quality"]["variable_frame_rate"] = sampler.variable_frame_rate
+        # Detections recognised as part of the empty court and left out.
+        result["data_quality"]["tracking"]["scenery"] = tracker.detections_rejected_scenery
         if self.config.detector_far_pass is not False:
             # How much the second look added: tells whether it is worth its time.
             result["data_quality"]["far_pass"] = {"active": far_roi is not None, "added": far_added}

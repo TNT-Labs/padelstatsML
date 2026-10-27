@@ -83,7 +83,8 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 </dd>
               </div>
             )}
-            {quality.tracking && (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0) && (
+            {quality.tracking &&
+              (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0 || !!quality.tracking.scenery) && (
               <div>
                 <dt>Tracciamento</dt>
                 <dd>
@@ -92,6 +93,11 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                   {quality.tracking.feet_below_net > 0 && quality.tracking.weak_detections > 0 && ' · '}
                   {quality.tracking.weak_detections > 0 &&
                     `${quality.tracking.weak_detections.toLocaleString('it-IT')} rilevazioni incerte usate per non perdere un giocatore`}
+                  {!!quality.tracking.scenery &&
+                    (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0) &&
+                    ' · '}
+                  {!!quality.tracking.scenery &&
+                    `${quality.tracking.scenery.toLocaleString('it-IT')} rilevazioni di oggetti fissi (cartelloni, pali) scartate`}
                 </dd>
               </div>
             )}

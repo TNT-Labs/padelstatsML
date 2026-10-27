@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from app.ml.detect import Detection
@@ -291,3 +292,26 @@ def test_players_being_followed_are_not_pushed_out_by_newcomers(calibration):
     assert len(tracked) == 6
     followed = sorted(len(t.observations) for t in tracker._active)
     assert followed.count(6) == 4
+
+
+def test_a_detection_that_is_part_of_the_empty_court_is_scenery(calibration):
+    """A banner with a figure printed on it, behind the glass: the detector
+    sees a person, the empty court (median over the video) shows the same
+    picture there. A player in front of the same wall does not."""
+    rng = np.random.default_rng(3)
+    empty = rng.integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
+    empty = cv2.GaussianBlur(empty, (0, 0), 3)
+    tracker = CourtTracker(calibration, scenery=empty)
+    frame, detections = render_frame(calibration, [SyntheticPlayer((3.0, 6.0), 0)])
+    # The player is painted on the empty court; the banner's box shows the
+    # empty court as it is.
+    picture = empty.copy()
+    player_box = [int(v) for v in detections[0].bbox]
+    x1, y1, x2, y2 = player_box
+    picture[y1:y2, x1:x2] = frame[y1:y2, x1:x2]
+    banner = Detection(bbox=(x1 + 400.0, y1, x2 + 400.0, y2), confidence=0.6)
+
+    tracked = tracker.update(0, 0.0, [detections[0], banner], picture)
+
+    assert len(tracked) == 1 and tracked[0][1].bbox == detections[0].bbox
+    assert tracker.detections_rejected_scenery == 1
