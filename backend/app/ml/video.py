@@ -111,36 +111,40 @@ def extract_keyframe(
         cap.release()
 
 
-def extract_background(
-    video_path: str | Path,
-    out_path: str | Path,
-    count: int = 15,
-    jpeg_quality: int = 90,
-) -> bool:
+def video_background(video_path: str | Path, count: int = 15, start_s: float = 0.0) -> np.ndarray | None:
     """The court without the players: the per-pixel median of `count`
-    frames spread over the video, written as JPEG. Players move, the court
-    does not: in most of the frames a pixel of the floor shows the floor.
-    Used to find the net and the lines (app.ml.court_detect). False when too
-    few frames could be read."""
+    frames spread over the video from `start_s`. Players move, the court
+    does not: in most of the frames a pixel of the floor shows the floor —
+    and a banner, a post, a bench show themselves. None when too few frames
+    could be read."""
     from app.ml.court_detect import background
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        return False
+        return None
     try:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        first = min(int(start_s * fps), max(total - 1, 0)) if fps > 0 else 0
         frames = []
-        for index in np.linspace(0, max(total - 1, 0), count).astype(int):
+        for index in np.linspace(first, max(total - 1, first), count).astype(int):
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
             ok, frame = cap.read()
             if ok and (not frames or frame.shape == frames[0].shape):
                 frames.append(frame)
     finally:
         cap.release()
-    if len(frames) < 5:
+    return background(frames) if len(frames) >= 5 else None
+
+
+def extract_background(video_path: str | Path, out_path: str | Path, jpeg_quality: int = 90) -> bool:
+    """video_background written as JPEG, for the calibration proposal
+    (app.ml.court_detect). False when it could not be made."""
+    image = video_background(video_path)
+    if image is None:
         return False
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    return bool(cv2.imwrite(str(out_path), background(frames), [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]))
+    return bool(cv2.imwrite(str(out_path), image, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]))
 
 
 class FrameSampler:

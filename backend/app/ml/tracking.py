@@ -54,6 +54,15 @@ WEAK_MAX_DISTANCE_M = 1.5
 # …and not on top of a player already placed this frame: a second box of
 # the same person.
 WEAK_MIN_SEPARATION_M = 0.6
+# A detection whose picture is the empty court's (the median of frames over
+# the video) at least this much — normalised correlation of the grey
+# levels — is the scenery: a banner with a figure on it, a net post, a coat
+# on the fence. On a real match no player came above 0.8, two thirds of the
+# rest above 0.9.
+SCENERY_CORRELATION = 0.9
+# Boxes smaller than this (pixels a side) say too little to compare.
+_SCENERY_MIN_PX = 8
+
 # Kit colours and re-ID vectors are computed for at most this many people per
 # frame, the most confident first: a crowd at the edge of the court costs a
 # bounded time.
@@ -186,6 +195,7 @@ class CourtTracker:
         color_weight: float = 0.35,
         embedder: ReidEmbedder | None = None,
         confirm_conf: float = 0.0,
+        scenery: np.ndarray | None = None,
     ) -> None:
         self.calibration = calibration
         # Detections below this confidence never start a track (see
@@ -193,6 +203,9 @@ class CourtTracker:
         self.confirm_conf = confirm_conf
         # Foot points of boxes cut by the net (see app.ml.footpoint).
         self.feet = FootModel(calibration)
+        # The court without players, grey (see SCENERY_CORRELATION).
+        self.scenery = (cv2.cvtColor(scenery, cv2.COLOR_BGR2GRAY).astype(np.float32)
+                        if scenery is not None and scenery.ndim == 3 else scenery)
         self.max_speed_ms = max_speed_ms
         self.max_age_s = max_age_s
         self.min_observations = min_observations
@@ -209,6 +222,7 @@ class CourtTracker:
         self.frames_seen = 0
         self.detections_kept = 0
         self.detections_rejected_off_court = 0
+        self.detections_rejected_scenery = 0
         self.weak_kept = 0
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -412,6 +426,11 @@ class CourtTracker:
             return []
 
         detections = sorted(detections, key=lambda d: -d.confidence)
+        if self.scenery is not None and self.scenery.shape[:2] == frame.shape[:2]:
+            grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) if frame.ndim == 3 else frame
+            people = [d for d in detections if not _is_scenery(grey, self.scenery, d.bbox)]
+            self.detections_rejected_scenery += len(detections) - len(people)
+            detections = people
         # The camera is learned from the confident boxes only.
         for det in detections:
             if det.confidence >= self.confirm_conf:
@@ -460,6 +479,20 @@ class CourtTracker:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _is_scenery(grey: np.ndarray, scenery: np.ndarray, bbox) -> bool:
+    """Whether the box shows what the empty court shows there."""
+    h, w = grey.shape[:2]
+    x1, y1 = max(int(round(bbox[0])), 0), max(int(round(bbox[1])), 0)
+    x2, y2 = min(int(round(bbox[2])), w), min(int(round(bbox[3])), h)
+    if x2 - x1 < _SCENERY_MIN_PX or y2 - y1 < _SCENERY_MIN_PX:
+        return False
+    a = grey[y1:y2, x1:x2] - grey[y1:y2, x1:x2].mean()
+    b = scenery[y1:y2, x1:x2] - scenery[y1:y2, x1:x2].mean()
+    norm = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    # A flat patch (empty wall) correlates with nothing: not judged.
+    return norm > 1e-6 and float((a * b).sum()) / norm >= SCENERY_CORRELATION
+
 
 def _inside_court(position_m: np.ndarray) -> bool:
     x, y = float(position_m[0]), float(position_m[1])

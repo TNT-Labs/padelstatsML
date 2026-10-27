@@ -482,13 +482,17 @@ def _is_still(tracklet: Tracklet) -> bool:
     centres = np.stack([(boxes[:, 0] + boxes[:, 2]) / 2.0, (boxes[:, 1] + boxes[:, 3]) / 2.0], axis=1)
     shift = np.linalg.norm(centres - np.median(centres, axis=0), axis=1) / height
     resize = np.abs(heights - height) / height
-    floor = np.array([o.foot_court for o in tracklet.observations], dtype=np.float64)
+    still = np.percentile(shift, 90) <= STILL_MAX_SHIFT and np.percentile(resize, 90) <= STILL_MAX_RESIZE
+    # On the floor too — where the floor position is the box's own. A box
+    # ending on the net's tape has its feet estimated from its size
+    # (app.ml.footpoint), and a few pixels of size are metres beyond the
+    # net: a banner standing still there would look like it moved.
+    own = [o.foot_court for o in tracklet.observations if o.foot_px[1] <= o.bbox[3] + 0.5]
+    if len(own) < 0.5 * len(tracklet.observations):
+        return bool(still)
+    floor = np.array(own, dtype=np.float64)
     shift_m = np.linalg.norm(floor - np.median(floor, axis=0), axis=1)
-    return bool(
-        np.percentile(shift, 90) <= STILL_MAX_SHIFT
-        and np.percentile(resize, 90) <= STILL_MAX_RESIZE
-        and np.percentile(shift_m, 90) <= STILL_MAX_SHIFT_M
-    )
+    return bool(still and np.percentile(shift_m, 90) <= STILL_MAX_SHIFT_M)
 
 
 def _median_box(tracklet: Tracklet) -> np.ndarray:

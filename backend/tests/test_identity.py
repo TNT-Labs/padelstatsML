@@ -169,7 +169,7 @@ def test_linking_stays_fast_when_tracking_fragments(calibration):
                     frame_index=int(timestamp * 5),
                     timestamp_s=timestamp,
                     bbox=(0.0, 0.0, 10.0, 30.0),
-                    foot_px=(100.0, 900.0),
+                    foot_px=(5.0, 30.0),
                     foot_court=(float(rng.uniform(0, 10)), float(rng.uniform(0, 20))),
                     confidence=0.8,
                     color=colour,
@@ -512,3 +512,19 @@ def test_a_contested_frame_keeps_the_detection_where_the_player_is():
     # Both as close to where the player is: nothing says which, both go.
     twin = Tracklet(3, [_obs(i * 0.2, 3.0 + 0.1 * i, 7.3) for i in range(5, 10)])
     assert len(one_per_frame([player, twin])) == 15
+
+
+def test_a_still_object_on_the_net_tape_is_still_although_its_feet_are_estimated():
+    """A banner whose box ends on the tape: its feet are estimated from the
+    box's size (app.ml.footpoint), and a pixel of size is metres beyond the
+    net. The box does not move: it is still."""
+    from app.ml.identity import _is_still
+    from app.ml.tracking import COLOR_DIM, Observation
+
+    rng = np.random.default_rng(1)
+    observations = [
+        Observation(i, i * 0.2, (303.0, 202.0, 333.0 + rng.normal(0, 0.8), 279.0), (318.0, 300.0 + rng.normal(0, 6)),
+                    (1.0, float(rng.uniform(11.5, 19.0))), 0.4, np.full(COLOR_DIM, 1.0 / COLOR_DIM))
+        for i in range(40)
+    ]
+    assert _is_still(Tracklet(1, observations))
