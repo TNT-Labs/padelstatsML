@@ -646,3 +646,24 @@ async def test_player_names_have_a_length_limit():
         match_id = await _match_of(c)
         response = await c.patch(f"/api/matches/{match_id}", json={"player_names": ["x" * 61]})
         assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_owner_deletes_a_preset_and_its_picture():
+    from test_api import GOOD_CORNERS, W, H
+
+    from app.core.storage import preset_image_path
+
+    owner = await signed_in(_name("owner"))
+    viewer = await signed_in(_name("vis"), "visualizzatore")
+    body = {"name": "Da togliere", "corners_px": GOOD_CORNERS, "frame_width": W, "frame_height": H}
+    async with owner, viewer:
+        preset_id = (await owner.post("/api/presets", json=body)).json()["id"]
+        picture = preset_image_path(preset_id)
+        picture.parent.mkdir(parents=True, exist_ok=True)
+        picture.write_bytes(b"\xff\xd8\xff\xe0 jpeg")
+
+        assert (await viewer.delete(f"/api/presets/{preset_id}")).status_code == 403
+        assert (await owner.delete(f"/api/presets/{preset_id}")).status_code == 204
+        assert preset_id not in [p["id"] for p in (await owner.get("/api/presets")).json()]
+        assert not picture.exists()
