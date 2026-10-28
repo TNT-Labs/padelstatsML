@@ -100,6 +100,9 @@ class PersonDetector:
         self.model_path = str(path)
         self.threads = n
 
+    def close(self) -> None:
+        """Nothing to release; the same call as the accelerator's detector."""
+
     def detect(
         self,
         frame: np.ndarray,
@@ -157,54 +160,65 @@ class PersonDetector:
         y1 = (cy - bh / 2.0 - pad[1]) / ratio
         x2 = (cx + bw / 2.0 - pad[0]) / ratio
         y2 = (cy + bh / 2.0 - pad[1]) / ratio
+        return finish_boxes(x1, y1, x2, y2, scores, offset, work_shape, frame_shape,
+                            self.conf_threshold, self.iou_threshold)
 
-        wh, ww = work_shape
-        x1 = np.clip(x1, 0, ww)
-        x2 = np.clip(x2, 0, ww)
-        y1 = np.clip(y1, 0, wh)
-        y2 = np.clip(y2, 0, wh)
 
-        widths, heights = x2 - x1, y2 - y1
-        valid = (widths > 2) & (heights > 2)
-        if not np.any(valid):
-            return []
-        x1, y1, x2, y2 = x1[valid], y1[valid], x2[valid], y2[valid]
-        widths, heights, scores = widths[valid], heights[valid], scores[valid]
+def finish_boxes(
+    x1: np.ndarray, y1: np.ndarray, x2: np.ndarray, y2: np.ndarray, scores: np.ndarray,
+    offset: tuple[float, float], work_shape: tuple[int, int], frame_shape: tuple[int, int],
+    conf_threshold: float, iou_threshold: float,
+) -> list[Detection]:
+    """Person boxes in crop pixels to the frame's detections: clipped,
+    suppressed (NMS, parts of a person), most confident first. Shared by
+    every detector, whatever runs the network."""
+    wh, ww = work_shape
+    x1 = np.clip(x1, 0, ww)
+    x2 = np.clip(x2, 0, ww)
+    y1 = np.clip(y1, 0, wh)
+    y2 = np.clip(y2, 0, wh)
 
-        idxs = cv2.dnn.NMSBoxes(
-            np.stack([x1, y1, widths, heights], axis=1).tolist(),
-            scores.astype(np.float32).tolist(),
-            self.conf_threshold,
-            self.iou_threshold,
-        )
-        if len(idxs) == 0:
-            return []
-        idxs = np.asarray(idxs).reshape(-1)
+    widths, heights = x2 - x1, y2 - y1
+    valid = (widths > 2) & (heights > 2)
+    if not np.any(valid):
+        return []
+    x1, y1, x2, y2 = x1[valid], y1[valid], x2[valid], y2[valid]
+    widths, heights, scores = widths[valid], heights[valid], scores[valid]
 
-        # NMS keeps a box of part of a person — the upper body, the legs —
-        # next to the whole one: it overlaps too little to be suppressed. It
-        # is a phantom player, and its foot point, at the waist, lands metres
-        # further up the court.
-        drop = part_of_another([(x1[i], y1[i], x2[i], y2[i]) for i in idxs])
-        idxs = idxs[~drop]
+    idxs = cv2.dnn.NMSBoxes(
+        np.stack([x1, y1, widths, heights], axis=1).tolist(),
+        scores.astype(np.float32).tolist(),
+        conf_threshold,
+        iou_threshold,
+    )
+    if len(idxs) == 0:
+        return []
+    idxs = np.asarray(idxs).reshape(-1)
 
-        fh, fw = frame_shape
-        ox, oy = offset
-        out: list[Detection] = []
-        for i in idxs:
-            out.append(
-                Detection(
-                    bbox=(
-                        float(np.clip(x1[i] + ox, 0, fw)),
-                        float(np.clip(y1[i] + oy, 0, fh)),
-                        float(np.clip(x2[i] + ox, 0, fw)),
-                        float(np.clip(y2[i] + oy, 0, fh)),
-                    ),
-                    confidence=float(scores[i]),
-                )
+    # NMS keeps a box of part of a person — the upper body, the legs —
+    # next to the whole one: it overlaps too little to be suppressed. It
+    # is a phantom player, and its foot point, at the waist, lands metres
+    # further up the court.
+    drop = part_of_another([(x1[i], y1[i], x2[i], y2[i]) for i in idxs])
+    idxs = idxs[~drop]
+
+    fh, fw = frame_shape
+    ox, oy = offset
+    out: list[Detection] = []
+    for i in idxs:
+        out.append(
+            Detection(
+                bbox=(
+                    float(np.clip(x1[i] + ox, 0, fw)),
+                    float(np.clip(y1[i] + oy, 0, fh)),
+                    float(np.clip(x2[i] + ox, 0, fw)),
+                    float(np.clip(y2[i] + oy, 0, fh)),
+                ),
+                confidence=float(scores[i]),
             )
-        out.sort(key=lambda d: -d.confidence)
-        return out
+        )
+    out.sort(key=lambda d: -d.confidence)
+    return out
 
 
 # A box within this many pixels of a side of the crop runs out of it.

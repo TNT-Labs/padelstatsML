@@ -50,6 +50,10 @@ def run_forever() -> None:
     init_schema()
     _requeue_stale_jobs()
 
+    from app.ml.accel import probe_and_record
+
+    probe_and_record(settings.accelerator, settings.hailo_model or None, settings.data_path)
+
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
@@ -196,6 +200,8 @@ def _run_job(job_id: str) -> None:
                 detector_iou=settings.detector_iou,
                 detector_far_pass=settings.far_pass_mode,
                 inference_threads=settings.inference_threads,
+                accelerator=settings.accelerator,
+                hailo_model=settings.hailo_model or None,
                 sample_hz=settings.sample_hz,
                 max_analysis_minutes=settings.max_analysis_minutes,
                 max_player_speed_ms=settings.max_player_speed_ms,
