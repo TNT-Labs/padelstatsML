@@ -215,6 +215,8 @@ class RallyRead(BaseModel):
     end_s: float
     duration_s: float
     players_tracked: int
+    # Opened by a recognised serve; None for analyses older than the check.
+    serve: bool | None = None
 
 
 class MatchStatsRead(BaseModel):

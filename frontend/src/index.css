@@ -243,7 +243,9 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
 .toggle { display: flex; align-items: center; gap: .4rem; font-size: .85rem; cursor: pointer; }
 .toggle input { accent-color: var(--green); }
 .seek-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin-top: .75rem; }
-.rally-num { font-size: .68rem; color: var(--muted); }
+.rally-num { font-size: .68rem; color: var(--muted); display: inline-flex; align-items: center; gap: .25rem; }
+.rally-serve { display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; background: var(--green); }
+.rally-legend { font-size: .78rem; margin: -.4rem 0 .6rem; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
 .rally-dur { font-size: .82rem; font-weight: 700; color: var(--green-dk); }
 
 @media (max-width: 520px) {

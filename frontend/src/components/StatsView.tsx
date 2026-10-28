@@ -20,6 +20,8 @@ interface Props {
   onVerify: () => void
   /** `recalibrate`: place the court corners again before analysing. */
   onReanalyse: (recalibrate: boolean) => void | Promise<void>
+  /** Recompute from the stored detections; rejects with the reason. */
+  onRefresh: () => Promise<void>
 }
 
 function formatDuration(seconds: number): string {
@@ -29,15 +31,34 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
-export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename, onVerify, onReanalyse }) => {
+export const StatsView: FC<Props> = ({
+  stats, readOnly = false, onBack, onRename, onVerify, onReanalyse, onRefresh,
+}) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
+  // Analyses older than the serve check carry no flag: no legend for them.
+  const serveChecked = stats.rallies.some(r => r.serve != null)
+  const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
   // Opening the calibration first reads the match from the Pi: seconds when
   // it is busy analysing. The dialog stays, saying so, until the page opens.
   const [opening, setOpening] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+
+  const refresh = async () => {
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      await onRefresh()
+    } catch (e) {
+      setRefreshError((e as Error).message)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   useEffect(() => {
     if (!asking) return
@@ -58,9 +79,17 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
     <div className="layout">
       <div className="header">
         <h1>{stats.title}</h1>
-        <div style={{ display: 'flex', gap: '.5rem' }}>
+        <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
           {!readOnly && (
             <>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={refresh}
+                disabled={refreshing}
+                title="Ricalcola statistiche e scambi dalle rilevazioni già fatte, senza rianalizzare il video"
+              >
+                {refreshing ? 'Aggiornamento…' : 'Aggiorna statistiche'}
+              </button>
               <button className="btn btn-ghost btn-sm" onClick={onRename}>
                 Rinomina giocatori
               </button>
@@ -77,6 +106,12 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
           </button>
         </div>
       </div>
+
+      {refreshError && (
+        <div className="callout callout-error" role="alert" style={{ marginBottom: '1rem' }}>
+          {refreshError}
+        </div>
+      )}
 
       {asking && (
         <div className="modal-backdrop" onClick={() => !opening && setAsking(false)}>
@@ -239,6 +274,12 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
       {stats.rallies.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>
           <h2 style={{ marginBottom: '.75rem' }}>Scambi</h2>
+          {serveChecked && (
+            <p className="muted-note rally-legend">
+              <span className="rally-serve" aria-hidden="true" /> {served} su {stats.rallies.length} aperti
+              da una battuta riconosciuta
+            </p>
+          )}
           <div className="rally-strip">
             {stats.rallies.map(rally => (
               <button
@@ -247,9 +288,13 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
                 className="rally-chip"
                 // A couple of seconds early, to see the serve.
                 onClick={() => seek(Math.max(0, rally.start_s - RALLY_LEAD_S))}
-                title={`Guarda lo scambio, dal minuto ${clock(rally.start_s)}`}
+                title={`Guarda lo scambio, dal minuto ${clock(rally.start_s)}${
+                  rally.serve ? ' · aperto da una battuta' : ''}`}
               >
-                <span className="rally-num">#{rally.index + 1}</span>
+                <span className="rally-num">
+                  #{rally.index + 1}
+                  {rally.serve && <span className="rally-serve" aria-label="aperto da una battuta" />}
+                </span>
                 <span className="rally-dur">{formatDuration(rally.duration_s)}</span>
               </button>
             ))}

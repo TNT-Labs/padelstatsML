@@ -83,6 +83,26 @@ def recompute(directory, calibration_data: dict | None, config, max_speed_ms: fl
     return result, identity, rallies, artifacts
 
 
+def refresh(directory, calibration_data: dict | None, config, previous_quality: dict | None = None):
+    """Recompute the statistics of a stored run (`recompute`) and store
+    what goes with them in the run's folder: the result and the players'
+    boxes for the video. The last accuracy check is carried over: the
+    calibration it measured is the same. (result, identity, rallies,
+    artifacts)."""
+    from app.ml.artifacts import ArtifactWriter
+    from app.ml.player_boxes import save_player_boxes
+
+    result, identity, rallies, artifacts = recompute(directory, calibration_data, config)
+    verification = (previous_quality or {}).get("verification")
+    if verification:
+        result["data_quality"]["verification"] = verification
+    ArtifactWriter(directory).write_result(result)
+    video = artifacts.meta.get("video") or {}
+    save_player_boxes(directory, identity, artifacts.sample_hz,
+                      {"width": video.get("width"), "height": video.get("height")}, result["per_player"])
+    return result, identity, rallies, artifacts
+
+
 def run_quality(artifacts) -> dict | None:
     """What only the decode pass measured: from meta.json; for runs
     recorded before it was kept there, from the result they produced."""

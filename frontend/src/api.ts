@@ -218,6 +218,8 @@ export interface Rally {
   end_s: number
   duration_s: number
   players_tracked: number
+  // Opened by a recognised serve; absent on analyses older than the check.
+  serve?: boolean | null
 }
 
 // ── Accuracy check ──────────────────────────────────────────────────────────
@@ -380,6 +382,10 @@ export const api = {
   deleteMatch: (id: string) => req<void>(`/api/matches/${id}`, { method: 'DELETE' }),
 
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
+
+  /** Statistics recomputed from the stored detections, in seconds. */
+  refreshStats: (id: string) =>
+    req<{ names_cleared: boolean }>(`/api/matches/${id}/refresh`, { method: 'POST' }),
 
   getVerification: (id: string) => req<VerificationPlan>(`/api/matches/${id}/verification`),
   refineCalibration: (id: string, landmarks: Record<string, Point>) =>

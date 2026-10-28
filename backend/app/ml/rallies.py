@@ -55,6 +55,8 @@ SERVE_ONSET_MAX_S = 3.0
 # Play that stops for a new formation sooner than this was not a point (a
 # fault, a ball hit across between points): no serve.
 SERVE_MIN_PLAY_S = 3.0
+# A rally starting this close to a serve was opened by it.
+SERVE_MATCH_S = 1.0
 # The two kinds of moment — playing, between points — are told apart on
 # this range of mean speeds; faster is play whatever the split.
 _ADAPTIVE_RANGE_MS = 3.0
@@ -66,6 +68,8 @@ class Rally:
     start_s: float
     end_s: float
     players_tracked: int
+    # Opened by a serve the players were seen lining up for.
+    serve: bool = False
 
     @property
     def duration_s(self) -> float:
@@ -81,6 +85,7 @@ class Rally:
             "end_s": round(self.end_s, 2),
             "duration_s": round(self.duration_s, 2),
             "players_tracked": self.players_tracked,
+            "serve": self.serve,
         }
 
 
@@ -107,7 +112,7 @@ def detect_rallies(
     segments = _segments(times, smoothed, counts, speed_threshold_ms, merge_gap_s, min_players, hysteresis)
     serves = serve_starts(players, sample_hz, times, smoothed, speed_threshold_ms, paths)
     segments = _split_at_serves(segments, serves, times, smoothed, speed_threshold_ms, min_duration_s)
-    return _numbered(segments, times, counts, min_duration_s)
+    return _numbered(segments, times, counts, min_duration_s, [served for _, served in serves])
 
 
 def activity_threshold(
@@ -224,13 +229,15 @@ def _segments(times, smoothed, counts, speed_threshold_ms, merge_gap_s, min_play
     return _merge_close(_segments_from_mask(times, active), merge_gap_s)
 
 
-def _numbered(segments, times, counts, min_duration_s) -> list[Rally]:
+def _numbered(segments, times, counts, min_duration_s, serves=()) -> list[Rally]:
     segments = [(a, b) for a, b in segments if (b - a) >= min_duration_s]
     rallies: list[Rally] = []
     for i, (start, end) in enumerate(segments):
         inside = (times >= start) & (times <= end)
         tracked = int(np.max(counts[inside])) if np.any(inside) else 0
-        rallies.append(Rally(index=i, start_s=float(start), end_s=float(end), players_tracked=tracked))
+        served = any(abs(t - start) <= SERVE_MATCH_S for t in serves)
+        rallies.append(Rally(index=i, start_s=float(start), end_s=float(end), players_tracked=tracked,
+                             serve=served))
     return rallies
 
 
