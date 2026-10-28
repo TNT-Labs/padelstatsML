@@ -26,9 +26,11 @@ from pathlib import Path
 
 import numpy as np
 
+from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status
 from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
-from app.ml.detect import PersonDetector, merge_detections, within_crop
+from app.ml.detect import DetectorError, PersonDetector, merge_detections, within_crop
+from app.ml.detect_hailo import HailoPersonDetector, HailoRuntimeError
 from app.ml.footpoint import FOOT_MODEL_VERSION
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
@@ -47,6 +49,11 @@ logger = logging.getLogger("padel.pipeline")
 # of them: on a real match, low camera, 22 px tall, they came out at
 # confidence 0.05; in the second look at 0.45.
 FAR_PASS_AUTO_PX = 32.0
+
+# Set when the accelerator failed in the middle of an analysis: the worker's
+# next analyses run on the CPU until it is restarted, instead of failing on
+# it again.
+_ACCELERATOR_FAILED: str | None = None
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -78,6 +85,10 @@ class PipelineConfig:
     detector_far_pass: bool | None = False
     # Optional: without it identity falls back to kit colour.
     reid_model: str | None = None
+    # Where the detector runs: "auto" (the Hailo accelerator when usable),
+    # "cpu" or "hailo" (see app/ml/accel.py), and the accelerator's network.
+    accelerator: str = "cpu"
+    hailo_model: str | None = None
 
 
 @dataclass
@@ -123,13 +134,7 @@ class AnalysisPipeline:
         info = probe(video_path)
 
         report(2, "Caricamento modello…")
-        detector = PersonDetector(
-            model_path=self.config.detector_model,
-            imgsz=self.config.detector_imgsz,
-            conf_threshold=min(self.config.detector_conf, self.config.detector_conf_weak),
-            iou_threshold=self.config.detector_iou,
-            threads=self.config.inference_threads,
-        )
+        detector, accelerator_note = self._detector()
         embedder = self._embedder()
 
         max_duration_s = self.config.max_analysis_minutes * 60.0
@@ -179,12 +184,20 @@ class AnalysisPipeline:
                 writer.write_meta(self._meta(video_path, info, calibration, sampler))
 
             for frame in sampler:
-                detections = detector.detect(frame.image, roi=roi)
-                if far_roi is not None:
-                    seen = len(detections)
-                    closer = within_crop(detector.detect(frame.image, roi=far_roi), far_roi, frame.image.shape)
-                    detections = merge_detections(detections, closer)
-                    far_added += max(len(detections) - seen, 0)
+                try:
+                    detections, added = _look(detector, frame.image, roi, far_roi)
+                except HailoRuntimeError as exc:
+                    # An hour of analysis is not thrown away for it: the rest
+                    # of the video on the CPU, and the note says from when.
+                    _accelerator_failed(str(exc))
+                    logger.error("%s · proseguo sul processore", exc)
+                    _close(detector)
+                    detector = self._cpu_detector()
+                    accelerator_note = (
+                        f"L'acceleratore si è bloccato al minuto {_clock(frame.timestamp_s)}: "
+                        "il resto del video è stato analizzato sul processore.")
+                    detections, added = _look(detector, frame.image, roi, far_roi)
+                far_added += added
                 tracked = tracker.update(
                     frame_index=frame.index,
                     timestamp_s=frame.timestamp_s,
@@ -208,6 +221,11 @@ class AnalysisPipeline:
             # How much of the video was analysed: from the start, not from 0.
             analysed_s = max(last_timestamp - sampler.start_s, 0.0)
             run_quality = {
+                # What ran the detector: the accelerator's board and network,
+                # or the CPU model; and why not the accelerator, if it should
+                # have been.
+                "detector": _detector_name(detector) or Path(self.config.detector_model).name,
+                "accelerator_note": accelerator_note,
                 "variable_frame_rate": sampler.variable_frame_rate,
                 # Detections recognised as part of the empty court and left out.
                 "scenery": tracker.detections_rejected_scenery,
@@ -239,6 +257,7 @@ class AnalysisPipeline:
         finally:
             if writer is not None:
                 writer.__exit__(None, None, None)
+            _close(detector)
 
         report(88, f"{len(tracklets)} tracce raccolte su {frames_sampled} frame")
 
@@ -288,6 +307,45 @@ class AnalysisPipeline:
 
         report(100, "Analisi completata")
         return result
+
+    def _detector(self):
+        """(detector, note): on the accelerator when usable, on the CPU
+        otherwise; the note says why the accelerator was not used when it is
+        there but could not be."""
+        mode = accelerator_mode(self.config.accelerator)
+        status = hailo_status(mode, self.config.hailo_model)
+        if mode == "hailo" and not status.usable:
+            raise AcceleratorError(f"ACCELERATOR=hailo ma l'acceleratore è {status.reason}.")
+        if mode == "auto" and _ACCELERATOR_FAILED:
+            return self._cpu_detector(), (
+                f"Acceleratore non usato: si era bloccato in un'analisi precedente ({_ACCELERATOR_FAILED}). "
+                "Riavvia il worker per riprovarlo.")
+        if not status.usable:
+            # Not fitted, or turned off: the CPU, as always, without a note.
+            quiet = status.device is None
+            return self._cpu_detector(), None if quiet else f"Acceleratore {status.reason}: analisi sul processore."
+        try:
+            detector = HailoPersonDetector(
+                status.model,
+                conf_threshold=min(self.config.detector_conf, self.config.detector_conf_weak),
+                iou_threshold=self.config.detector_iou,
+            )
+        except DetectorError as exc:
+            if mode == "hailo":
+                raise AcceleratorError(str(exc)) from exc
+            logger.warning("%s · analisi sul processore", exc)
+            return self._cpu_detector(), f"{exc}: analisi sul processore."
+        logger.info("Rilevatore sull'acceleratore: %s", detector.name)
+        return detector, None
+
+    def _cpu_detector(self) -> PersonDetector:
+        return PersonDetector(
+            model_path=self.config.detector_model,
+            imgsz=self.config.detector_imgsz,
+            conf_threshold=min(self.config.detector_conf, self.config.detector_conf_weak),
+            iou_threshold=self.config.detector_iou,
+            threads=self.config.inference_threads,
+        )
 
     def _embedder(self) -> ReidEmbedder | None:
         """The re-ID model if installed. Its absence is not an error — the
@@ -352,6 +410,7 @@ class AnalysisPipeline:
             "config": {
                 "detector_model": Path(self.config.detector_model).name,
                 "detector_imgsz": self.config.detector_imgsz,
+                "accelerator": accelerator_mode(self.config.accelerator),
                 "detector_conf": self.config.detector_conf,
                 "detector_conf_weak": self.config.detector_conf_weak,
                 "detector_iou": self.config.detector_iou,
@@ -385,6 +444,10 @@ def apply_run_quality(result: dict, run_quality: dict | None) -> None:
         quality["far_pass"] = run_quality["far_pass"]
     if run_quality.get("truncated"):
         quality["warnings"].append(run_quality["truncated"])
+    if run_quality.get("detector"):
+        quality["detector_model"] = run_quality["detector"]
+    if run_quality.get("accelerator_note"):
+        quality["warnings"].append(run_quality["accelerator_note"])
 
 
 def analyse_tracklets(
@@ -453,6 +516,37 @@ def analyse_tracklets(
         "feet_below_net": sum(o.foot_px[1] > o.bbox[3] + 0.5 for o in samples),
     }
     return result, identity, rallies
+
+
+def _look(detector, image, roi, far_roi) -> tuple[list, int]:
+    """The detections of one frame — the court, and the far half closer
+    when far_roi is set — and how many the closer look added."""
+    detections = detector.detect(image, roi=roi)
+    if far_roi is None:
+        return detections, 0
+    seen = len(detections)
+    closer = within_crop(detector.detect(image, roi=far_roi), far_roi, image.shape)
+    detections = merge_detections(detections, closer)
+    return detections, max(len(detections) - seen, 0)
+
+
+def _accelerator_failed(reason: str) -> None:
+    global _ACCELERATOR_FAILED
+    _ACCELERATOR_FAILED = reason
+
+
+def _detector_name(detector) -> str | None:
+    name = getattr(detector, "name", None)
+    if name:
+        return name
+    path = getattr(detector, "model_path", None)
+    return Path(path).name if path else None
+
+
+def _close(detector) -> None:
+    close = getattr(detector, "close", None)
+    if close is not None:
+        close()
 
 
 # ── Progress helpers ─────────────────────────────────────────────────────────

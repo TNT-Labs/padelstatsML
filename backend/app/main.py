@@ -136,6 +136,16 @@ def create_app(base_path: str | None = None) -> FastAPI:
         else:
             checks["reid"] = "assente · giocatori distinti dal solo colore della divisa"
 
+        # Optional too: without it the analysis runs on the CPU.
+        from app.ml.accel import recorded_status
+
+        accelerator = recorded_status(settings.data_path)
+        if accelerator is None:
+            checks["accelerator"] = "stato non ancora riportato dal worker"
+        else:
+            checks["accelerator"] = (("in uso · " if accelerator.get("usable") else "non in uso · ")
+                                     + str(accelerator.get("reason")))
+
         body: dict = {"status": "ok" if healthy else "degraded"}
         if request.client is not None and request.client.host in ("127.0.0.1", "::1"):
             body["checks"] = checks

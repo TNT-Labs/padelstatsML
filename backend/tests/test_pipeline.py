@@ -741,3 +741,101 @@ def test_the_players_boxes_for_the_video_are_ready_at_the_end(result, artifacts_
     payload = json.loads(gzip.decompress(data))
     assert payload["matches_stats"] is True
     assert {str(p["id"]) for p in payload["players"]} == set(result["per_player"])
+
+
+# ── The detector on the AI accelerator, and the fallbacks ───────────────────
+
+class _HailoBlobDetector(_BlobDetector):
+    """Stands in for the Hailo detector: the blob finder under its name."""
+
+    fail_after: int | None = None
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__()
+        self.imgsz = (640, 640)
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "Hailo-8 · yolov8s_h8.hef"
+
+    def detect(self, frame, roi=None):
+        from app.ml.detect_hailo import HailoRuntimeError
+
+        self.calls += 1
+        if self.fail_after is not None and self.calls > self.fail_after:
+            raise HailoRuntimeError("Errore dell'acceleratore Hailo: timeout")
+        return super().detect(frame, roi)
+
+    def close(self) -> None:
+        pass
+
+
+def _run_with(monkeypatch, synthetic_match, calibration, status, hailo=_HailoBlobDetector, mode="auto"):
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _BlobDetector)
+    monkeypatch.setattr(pipeline_module, "HailoPersonDetector", hailo)
+    monkeypatch.setattr(pipeline_module, "hailo_status", lambda *_a, **_k: status)
+    monkeypatch.setattr(pipeline_module, "_ACCELERATOR_FAILED", None)
+    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator=mode))
+    return pipeline.run(synthetic_match, calibration=calibration)
+
+
+def _usable():
+    from app.ml.accel import HailoStatus
+
+    return HailoStatus(True, "Hailo · yolov8s_h8.hef", device="/dev/hailo0", model="/x/yolov8s_h8.hef")
+
+
+def test_the_detector_runs_on_the_accelerator_when_it_is_there(monkeypatch, synthetic_match, calibration):
+    result = _run_with(monkeypatch, synthetic_match, calibration, _usable())
+    quality = result["data_quality"]
+    assert quality["detector_model"] == "Hailo-8 · yolov8s_h8.hef"
+    assert not any("ccelerator" in w for w in quality["warnings"])
+    assert len(result["per_player"]) == 4
+
+
+def test_without_the_accelerator_nothing_changes(monkeypatch, synthetic_match, calibration):
+    from app.ml.accel import HailoStatus
+
+    result = _run_with(monkeypatch, synthetic_match, calibration, HailoStatus(False, "non rilevato"))
+    assert result["data_quality"]["detector_model"] == "stub.onnx"
+    assert not any("ccelerator" in w for w in result["data_quality"]["warnings"])
+
+
+def test_an_accelerator_that_cannot_be_opened_falls_back_to_the_cpu(monkeypatch, synthetic_match, calibration):
+    from app.ml.detect import DetectorError
+
+    def broken(*_args, **_kwargs):
+        raise DetectorError("Acceleratore Hailo non utilizzabile: driver version mismatch")
+
+    result = _run_with(monkeypatch, synthetic_match, calibration, _usable(), hailo=broken)
+    quality = result["data_quality"]
+    assert quality["detector_model"] == "stub.onnx"
+    assert any("driver version mismatch" in w and "processore" in w for w in quality["warnings"])
+
+
+def test_an_accelerator_failing_mid_match_hands_the_rest_to_the_cpu(monkeypatch, synthetic_match, calibration):
+    import app.ml.pipeline as pipeline_module
+
+    class Failing(_HailoBlobDetector):
+        fail_after = 40
+
+    result = _run_with(monkeypatch, synthetic_match, calibration, _usable(), hailo=Failing)
+    quality = result["data_quality"]
+    # The whole match analysed, the rest on the CPU, and said so.
+    assert len(result["per_player"]) == 4
+    assert quality["detector_model"] == "stub.onnx"
+    assert any("si è bloccato al minuto" in w for w in quality["warnings"])
+    # The next analyses of this worker do not try it again.
+    assert pipeline_module._ACCELERATOR_FAILED
+
+
+def test_a_required_accelerator_that_is_missing_is_an_error(monkeypatch, synthetic_match, calibration):
+    from app.ml.accel import AcceleratorError, HailoStatus
+
+    with pytest.raises(AcceleratorError):
+        _run_with(monkeypatch, synthetic_match, calibration, HailoStatus(False, "non rilevato"), mode="hailo")

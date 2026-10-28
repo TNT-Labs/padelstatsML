@@ -1,7 +1,8 @@
 """Centralised configuration for the single-node Raspberry Pi 5 deployment.
 
 Design constraints (decided 2026-09, Pi-5-only target):
-  * No GPU, no external inference host, no NPU accelerator.
+  * No GPU, no external inference host. An AI HAT+ (Hailo) is used when
+    fitted, for the detector only; without it everything runs on the CPU.
   * A few users with their own login, one concurrent analysis job.
   * Everything on local disk: SQLite + filesystem. No Postgres/Redis/MinIO/S3.
   * Inference runs on onnxruntime (CPU). torch/ultralytics are NOT installed
@@ -97,6 +98,15 @@ class Settings(BaseSettings):
     detector_far_pass: str = "auto"
     # onnxruntime intra-op threads. 0 = auto (physical cores, capped at 4).
     inference_threads: int = 0
+
+    # ── AI accelerator (Raspberry Pi AI HAT+, Hailo) ─────────────────────────
+    # "auto": the detector runs on the accelerator when it is fitted and
+    # usable, on the CPU otherwise (app/ml/accel.py). "cpu": never. "hailo":
+    # its absence is an error instead of a fallback.
+    accelerator: str = "auto"
+    # Compiled network (.hef). Empty: the first found among weights/ and the
+    # hailo-models package (accel.DEFAULT_MODELS).
+    hailo_model: str = ""
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

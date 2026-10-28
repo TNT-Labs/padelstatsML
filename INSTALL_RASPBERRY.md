@@ -19,6 +19,7 @@ server, broker, object store o reverse proxy.
 5. [Configurazione](#5-configurazione)
 5b. [Pubblicazione su shopbeautylab.it](#5b-pubblicazione-su-shopbeautylabit)
 6. [Esportare il modello ONNX](#6-esportare-il-modello-onnx)
+6b. [Acceleratore AI HAT+ (Hailo)](#6b-acceleratore-ai-hat-hailo)
 7. [Build e avvio (Docker)](#7-build-e-avvio-docker)
 7b. [Installazione senza Docker](#7b-installazione-senza-docker)
 8. [Verifica](#8-verifica)
@@ -286,6 +287,41 @@ analizzate usa **Rianalizza**. Per tornare indietro basta rimettere il valore
 precedente.
 
 ---
+
+## 6b. Acceleratore AI HAT+ (Hailo)
+
+Facoltativo. Con il Raspberry Pi AI HAT+ (Hailo-8, 26 TOPS, o Hailo-8L) il
+rilevatore dei giocatori gira sulla scheda: una rete più grande (YOLOv8s
+invece della nano) a risoluzione più alta, quindi più giocatori lontani
+trovati, in una frazione del tempo del processore. Tutto il resto
+dell'analisi è identico. Senza la scheda l'app funziona come prima.
+
+- **Riconoscimento automatico.** All'avvio il worker controlla che la scheda
+  ci sia, che il runtime risponda e che la rete si carichi: se sì la usa, se
+  no analizza sul processore. Se la scheda si blocca durante un'analisi, il
+  resto del video prosegue sul processore. Nel pannello "Affidabilità dei
+  dati" la voce **Modello** dice con cosa è stata fatta l'analisi
+  (es. `Hailo-8 · yolov8s_h8.hef`), e una nota spiega perché la scheda non è
+  stata usata quando c'è ma non funziona.
+- **SSD su USB.** Il Pi 5 ha una sola porta PCIe, che usa la scheda.
+- **Installazione**, una volta montata la scheda, dalla cartella del repository:
+
+  ```bash
+  bash scripts/hailo_setup.sh      # installa driver e runtime (hailo-all)
+  sudo reboot
+  bash scripts/hailo_setup.sh      # di nuovo: collega la scheda al worker e riavvia
+  ```
+
+  Lo script aggiunge a `.env` la riga
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml`, che dà al
+  worker il dispositivo `/dev/hailo0`. **Se togli la scheda, togli anche
+  quella riga**: Docker non avvia un container il cui dispositivo manca.
+- **Rete usata:** `yolov8s_h8.hef` del pacchetto `hailo-models` (incluso
+  nell'immagine). Per un'altra, compilata per Hailo-8, mettila in `weights/`
+  e indicala con `HAILO_MODEL=/srv/weights/<file>.hef`.
+- **Disattivarla** senza toglierla: `ACCELERATOR=cpu` in `.env`.
+- **Stato:** `docker compose exec api curl -s localhost:8000/padel/api/health`
+  alla voce `accelerator`.
 
 ## 7. Build e avvio (Docker)
 

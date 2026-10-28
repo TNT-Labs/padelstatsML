@@ -1,0 +1,187 @@
+"""Person detector on a Hailo accelerator (Raspberry Pi AI HAT+).
+
+The same contract as app.ml.detect.PersonDetector — `detect(frame, roi)`
+returns the people in full-frame pixels, `imgsz` is the network's input — so
+everything after detection is unchanged. The network is a YOLOv8 compiled
+for the board (.hef) with its non-maximum suppression on the chip: it hands
+back, per class, the boxes as (y_min, x_min, y_max, x_max, score) in [0, 1]
+of its input picture. Only the person class is read; the boxes then go
+through the same clipping and suppression as on the CPU (finish_boxes), so a
+box of part of a person is dropped here too.
+
+The frame is letterboxed as for the CPU model — the network was trained on
+letterboxed pictures; stretching 16:9 into a square makes everyone thinner.
+
+hailo_platform is imported only here and only when the accelerator is in
+use: the image without HailoRT, or a machine without the board, never
+touches it.
+"""
+from __future__ import annotations
+
+import contextlib
+import logging
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from app.ml.detect import PERSON_CLASS_ID, Detection, DetectorError, finish_boxes
+
+logger = logging.getLogger("padel.hailo")
+
+# One inference takes a few milliseconds; this only catches a stuck device.
+TIMEOUT_MS = 10_000
+LETTERBOX_FILL = 114
+
+
+class HailoRuntimeError(DetectorError):
+    """The accelerator failed during the analysis."""
+
+
+class HailoPersonDetector:
+    """YOLOv8 person detector on a Hailo-8 / Hailo-8L."""
+
+    def __init__(self, model_path: str | Path, conf_threshold: float = 0.30,
+                 iou_threshold: float = 0.55) -> None:
+        path = Path(model_path)
+        if not path.is_file():
+            raise DetectorError(f"Modello Hailo non trovato: {path}")
+        self.model_path = str(path)
+        self.conf_threshold = float(conf_threshold)
+        self.iou_threshold = float(iou_threshold)
+        self._stack = contextlib.ExitStack()
+        try:
+            from hailo_platform import FormatType, VDevice
+
+            device = self._stack.enter_context(VDevice(VDevice.create_params()))
+            model = device.create_infer_model(str(path))
+            model.set_batch_size(1)
+            model.input().set_format_type(FormatType.UINT8)
+            output = model.output()
+            output.set_format_type(FormatType.FLOAT32)
+            # The network's own suppression was set when it was compiled
+            # (score 0.2 for the hailo-models networks): lower it to the
+            # weak detections the tracker uses to keep a far player.
+            _try(output, "set_nms_score_threshold", self.conf_threshold)
+            _try(output, "set_nms_iou_threshold", self.iou_threshold)
+            self._configured = self._stack.enter_context(model.configure())
+            height, width = (int(v) for v in model.input().shape[:2])
+            self.imgsz: tuple[int, int] = (height, width)
+            self._output_name = output.name
+            self._output_shape = tuple(output.shape)
+            self.device = _architecture(device)
+        except DetectorError:
+            self._stack.close()
+            raise
+        except Exception as exc:          # noqa: BLE001 - any HailoRT failure means: not usable
+            self._stack.close()
+            raise DetectorError(f"Acceleratore Hailo non utilizzabile: {exc}") from exc
+
+    @property
+    def name(self) -> str:
+        return f"{self.device} · {Path(self.model_path).name}"
+
+    def detect(self, frame: np.ndarray, roi: tuple[int, int, int, int] | None = None) -> list[Detection]:
+        if roi is not None:
+            x1, y1, x2, y2 = roi
+            work = frame[y1:y2, x1:x2]
+            offset = (float(x1), float(y1))
+            if work.size == 0:
+                work, offset = frame, (0.0, 0.0)
+        else:
+            work, offset = frame, (0.0, 0.0)
+
+        picture, ratio, pad = letterbox_rgb(work, self.imgsz)
+        try:
+            bindings = self._configured.create_bindings(
+                output_buffers={self._output_name: np.empty(self._output_shape, dtype=np.float32)})
+            bindings.input().set_buffer(picture)
+            self._configured.run([bindings], TIMEOUT_MS)
+            raw = bindings.output().get_buffer()
+        except Exception as exc:          # noqa: BLE001
+            raise HailoRuntimeError(f"Errore dell'acceleratore Hailo: {exc}") from exc
+        return self._detections(person_boxes(raw), ratio, pad, offset, work.shape[:2], frame.shape[:2])
+
+    def _detections(self, boxes, ratio, pad, offset, work_shape, frame_shape) -> list[Detection]:
+        boxes = boxes[boxes[:, 4] >= self.conf_threshold]
+        if not len(boxes):
+            return []
+        height, width = self.imgsz
+        # Picture of the network, [0, 1] -> crop pixels.
+        x1 = (boxes[:, 1] * width - pad[0]) / ratio
+        y1 = (boxes[:, 0] * height - pad[1]) / ratio
+        x2 = (boxes[:, 3] * width - pad[0]) / ratio
+        y2 = (boxes[:, 2] * height - pad[1]) / ratio
+        return finish_boxes(x1, y1, x2, y2, boxes[:, 4], offset, work_shape, frame_shape,
+                            self.conf_threshold, self.iou_threshold)
+
+    def close(self) -> None:
+        self._stack.close()
+
+
+def person_boxes(raw) -> np.ndarray:
+    """The person class's boxes, (n, 5): y_min, x_min, y_max, x_max, score.
+
+    HailoRT hands NMS results back either as a list per class of (n, 5)
+    arrays (possibly inside a list per picture of the batch), or as the raw
+    float buffer: per class, the number of boxes followed by their five
+    values. Person is the first class of COCO."""
+    if isinstance(raw, (list, tuple)):
+        classes = raw
+        if len(classes) == 1 and isinstance(classes[0], (list, tuple)):
+            classes = classes[0]                      # batch of one
+        if len(classes) <= PERSON_CLASS_ID:
+            return np.zeros((0, 5), dtype=np.float32)
+        return np.asarray(classes[PERSON_CLASS_ID], dtype=np.float32).reshape(-1, 5)
+    flat = np.asarray(raw, dtype=np.float32).reshape(-1)
+    index = 0
+    for _ in range(PERSON_CLASS_ID):
+        index += 1 + 5 * int(flat[index])
+    if index >= flat.size:
+        return np.zeros((0, 5), dtype=np.float32)
+    count = int(flat[index])
+    boxes = flat[index + 1: index + 1 + 5 * count]
+    return boxes[: 5 * (boxes.size // 5)].reshape(-1, 5)
+
+
+def letterbox_rgb(image: np.ndarray, imgsz: tuple[int, int]) -> tuple[np.ndarray, float, tuple[float, float]]:
+    """The picture the network takes: RGB, uint8, aspect kept, padded grey.
+    Returns it with the scale and the padding (left, top)."""
+    target_h, target_w = imgsz
+    h, w = image.shape[:2]
+    ratio = min(target_w / w, target_h / h)
+    new_w, new_h = int(round(w * ratio)), int(round(h * ratio))
+    interp = cv2.INTER_AREA if ratio < 1 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (new_w, new_h), interpolation=interp)
+    canvas = np.full((target_h, target_w, 3), LETTERBOX_FILL, dtype=np.uint8)
+    left, top = (target_w - new_w) // 2, (target_h - new_h) // 2
+    canvas[top: top + new_h, left: left + new_w] = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    return np.ascontiguousarray(canvas), ratio, (float(left), float(top))
+
+
+def _try(target, method: str, value: float) -> None:
+    """Setters that only some HailoRT versions have."""
+    setter = getattr(target, method, None)
+    if setter is None:
+        return
+    try:
+        setter(value)
+    except Exception as exc:              # noqa: BLE001
+        logger.info("HailoRT: %s(%s) non applicato: %s", method, value, exc)
+
+
+def _architecture(device) -> str:
+    """'Hailo-8' / 'Hailo-8L' from the board itself; 'Hailo' if it does not say."""
+    try:
+        physical = device.get_physical_devices()[0]
+        arch = str(physical.control.identify().device_architecture)
+    except Exception:                     # noqa: BLE001
+        return "Hailo"
+    arch = arch.upper()
+    if "8L" in arch:
+        return "Hailo-8L"
+    if "10" in arch:
+        return "Hailo-10"
+    if "8" in arch:
+        return "Hailo-8"
+    return "Hailo"

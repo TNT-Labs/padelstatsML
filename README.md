@@ -5,7 +5,9 @@ statistiche di **posizione e movimento** dei quattro giocatori: distanza
 percorsa, occupazione del campo, zone, scambi.
 
 Gira interamente su un Raspberry Pi 5. Nessun cloud, nessuna GPU, nessun
-acceleratore, nessun dato che esce di casa.
+dato che esce di casa. Con un AI HAT+ (Hailo) montato, il rilevatore dei
+giocatori gira sulla scheda, riconosciuta da sola; senza, sul processore
+(INSTALL_RASPBERRY.md §6b).
 
 ```
 ┌──────────────┐        ┌───────────────────────────────┐
@@ -56,10 +58,10 @@ decisionale a soglie fisse, "palla vicino al bordo = errore"). I numeri
 avevano l'aspetto di misure e non lo erano. Sono stati rimossi: **meglio
 sette metriche vere che venti plausibili.**
 
-Se in futuro si aggiunge un acceleratore (per esempio un Hailo-8L su HAT+),
-il tracciamento della palla torna alla portata e queste metriche possono
-rientrare — con un modello addestrato e delle metriche di validazione, non
-con delle soglie.
+Con l'acceleratore (AI HAT+, Hailo) il tracciamento della palla torna alla
+portata e queste metriche possono rientrare — con un modello addestrato sui
+video veri e delle metriche di validazione, non con delle soglie. Oggi la
+scheda serve al rilevatore dei giocatori; la palla è il passo successivo.
 
 ---
 
