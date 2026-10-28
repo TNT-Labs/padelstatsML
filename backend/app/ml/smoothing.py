@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.ml.court import CourtCalibration
+from app.ml.court import CourtCalibration, undistort_points
 from app.ml.tracking import Observation
 
 # Jitter of the box's bottom edge, in pixels, as a share of the box height
@@ -39,6 +39,11 @@ from app.ml.tracking import Observation
 JITTER_X = 0.015
 JITTER_Y = 0.02
 JITTER_MIN_PX = 1.5
+# A foot hidden by the net is estimated from the box's size (app.ml.footpoint):
+# its row is uncertain by this share of its distance below the floor's
+# horizon — the spread of the players' sizes. On a real match, trusted as a
+# measured foot, its noise doubled the far pair's distance in depth.
+ESTIMATED_FOOT_SPREAD = 0.12
 # Spectral density of the random acceleration, (m/s^2)^2 per Hz: how much
 # a player may change speed between two samples. Fitted on simulated rallies
 # (tests/test_smoothing.py): lower lags the turns, higher lets jitter through.
@@ -231,12 +236,18 @@ def _measurement_noise(observations: list[Observation], calibration: CourtCalibr
     step = 1.0
     dx = (calibration.floor_points_to_court(feet + [step, 0.0]) - base) / step
     dy = (calibration.floor_points_to_court(feet + [0.0, step]) - base) / step
+    straight = undistort_points(feet, calibration.k1, calibration.frame_size)
     out = np.zeros((len(observations), 2, 2))
     for i, obs in enumerate(observations):
         x1, y1, x2, y2 = obs.bbox
         height = max(y2 - y1, 1.0)
         sx = max(JITTER_X * height, JITTER_MIN_PX)
         sy = max(JITTER_Y * height, JITTER_MIN_PX)
+        if obs.foot_px[1] > y2 + 0.5:
+            # Below the box: estimated, not seen.
+            horizon = calibration.horizon_y(float(straight[i, 0]))
+            if horizon is not None and straight[i, 1] > horizon:
+                sy = max(sy, ESTIMATED_FOOT_SPREAD * float(straight[i, 1] - horizon))
         jac = np.column_stack([dx[i], dy[i]])
         out[i] = jac @ np.diag([sx * sx, sy * sy]) @ jac.T + np.eye(2) * 1e-4
     return out

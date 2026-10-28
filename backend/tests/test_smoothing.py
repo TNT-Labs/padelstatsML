@@ -129,3 +129,38 @@ def test_a_track_that_moves_to_someone_else_starts_a_new_path():
     assert len(np.unique(smoothed.segment)) == 2
     lengths, _ = smoothed.steps()
     assert lengths.sum() < 6.0          # the 9 m jump is not distance run
+
+
+def test_feet_estimated_under_the_net_are_trusted_as_much_as_they_deserve():
+    """A far player behind the net, camera at 1.9 m: the box ends on the tape
+    and the feet are estimated from its size, a few per cent off from one
+    frame to the next — metres in depth. Trusted like a seen foot, standing
+    still they ran tens of metres; a player shuttling across the court keeps
+    their distance."""
+    project, calib = _camera(1.9, 3.0)
+    rng = np.random.default_rng(2)
+
+    def estimated(path):
+        out = []
+        for t, x, y in path:
+            foot = np.array(project((x, y, 0.0)))
+            horizon = calib.horizon_y(float(foot[0]))
+            # Depth estimated within ~12%: the row's distance to the horizon.
+            row = horizon + (foot[1] - horizon) * (1 + rng.normal(0, 0.12))
+            seen = foot[1] - 0.5 * (foot[1] - horizon)          # the box ends on the tape
+            court = calib.floor_points_to_court(np.array([[foot[0], row]]))[0]
+            out.append(Observation(
+                int(round(t * 30)), float(t), (foot[0] - 8, seen - 40, foot[0] + 8, seen),
+                (float(foot[0]), float(row)), (float(court[0]), float(court[1])),
+                0.9, np.full(72, 1 / 72, np.float32),
+            ))
+        return out
+
+    still = estimated([(t, 5.0, 16.0) for t in np.arange(0, 60, 1 / HZ)])
+    assert _raw_distance(still) > 100.0
+    assert smooth_path(still, calib).steps()[0].sum() < 15.0
+
+    shuttle = _shuttle(0, 60, 16.0)
+    run = sum(np.hypot(b[1] - a[1], b[2] - a[2]) for a, b in zip(shuttle, shuttle[1:]))
+    measured = smooth_path(estimated(shuttle), calib).steps()[0].sum()
+    assert 0.75 * run < measured < 1.25 * run
