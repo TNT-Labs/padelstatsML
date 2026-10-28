@@ -3,6 +3,8 @@
 
     python scripts/refresh.py latest
 
+The same as Aggiorna statistiche in the app (POST /api/matches/{id}/refresh).
+
 A fix to identity, rallies or metrics (an object mistaken for a player, a
 new warning) reaches an analysed match only through Rianalizza, which runs
 the detector over the whole video again: about as long as the match. The
@@ -27,9 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core.config import get_settings                          # noqa: E402
 from app.core.database import sync_session                         # noqa: E402
 from app.core.storage import save_crop, video_path                 # noqa: E402
-from app.ml.artifacts import ArtifactWriter, load_artifacts, resolve_artifacts_dir  # noqa: E402
-from app.ml.player_boxes import save_player_boxes                 # noqa: E402
-from app.ml.reprocess import pipeline_config, recompute, same_slots  # noqa: E402
+from app.ml.artifacts import load_artifacts, resolve_artifacts_dir  # noqa: E402
+from app.ml.reprocess import pipeline_config, refresh, same_slots  # noqa: E402
 from app.ml.thumbnails import choose_pictures, pictures_from_video  # noqa: E402
 from app.models import Match, MatchStats, MatchStatus              # noqa: E402
 
@@ -66,12 +67,13 @@ def main() -> int:
             return 1
         old = session.get(MatchStats, match_id)
         old_players = dict(old.per_player) if old is not None else {}
+        old_quality = dict(old.data_quality or {}) if old is not None else {}
         calibration_data = match.calibration
 
     # Through the match's calibration, which may have been corrected after
     # the analysis (Verifica accuratezza).
-    result, identity, rallies, artifacts = recompute(
-        directory, calibration_data, pipeline_config(settings, artifacts.meta))
+    result, identity, rallies, artifacts = refresh(
+        directory, calibration_data, pipeline_config(settings, artifacts.meta), old_quality)
     threshold = result["data_quality"].get("rally_speed_threshold_ms")
     print(f"Partita {match_id[:8]}: {len(identity.players)} giocatori · {len(rallies)} scambi "
           f"(in gioco sopra {threshold} m/s)")
@@ -101,10 +103,6 @@ def main() -> int:
         match = session.get(Match, match_id)
         if not same_people and match.player_names:
             match.player_names = None
-    ArtifactWriter(directory).write_result(result)
-    video = artifacts.meta.get("video") or {}
-    save_player_boxes(directory, identity, artifacts.sample_hz,
-                      {"width": video.get("width"), "height": video.get("height")}, result["per_player"])
 
     for player_id, stats in sorted(result["per_player"].items(), key=lambda kv: int(kv[0])):
         print(f"  G{int(player_id) + 1}: tracciato {stats['tracked_ratio'] * 100:.0f}%"

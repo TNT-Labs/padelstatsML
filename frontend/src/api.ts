@@ -383,6 +383,10 @@ export const api = {
 
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
 
+  /** Statistics recomputed from the stored detections, in seconds. */
+  refreshStats: (id: string) =>
+    req<{ names_cleared: boolean }>(`/api/matches/${id}/refresh`, { method: 'POST' }),
+
   getVerification: (id: string) => req<VerificationPlan>(`/api/matches/${id}/verification`),
   refineCalibration: (id: string, landmarks: Record<string, Point>) =>
     req<RefineProposal>(`/api/matches/${id}/verification/refine`, {

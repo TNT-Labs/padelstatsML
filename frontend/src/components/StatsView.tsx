@@ -20,6 +20,8 @@ interface Props {
   onVerify: () => void
   /** `recalibrate`: place the court corners again before analysing. */
   onReanalyse: (recalibrate: boolean) => void | Promise<void>
+  /** Recompute from the stored detections; rejects with the reason. */
+  onRefresh: () => Promise<void>
 }
 
 function formatDuration(seconds: number): string {
@@ -29,7 +31,9 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
-export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename, onVerify, onReanalyse }) => {
+export const StatsView: FC<Props> = ({
+  stats, readOnly = false, onBack, onRename, onVerify, onReanalyse, onRefresh,
+}) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
@@ -41,6 +45,20 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
   // Opening the calibration first reads the match from the Pi: seconds when
   // it is busy analysing. The dialog stays, saying so, until the page opens.
   const [opening, setOpening] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+
+  const refresh = async () => {
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      await onRefresh()
+    } catch (e) {
+      setRefreshError((e as Error).message)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   useEffect(() => {
     if (!asking) return
@@ -61,9 +79,17 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
     <div className="layout">
       <div className="header">
         <h1>{stats.title}</h1>
-        <div style={{ display: 'flex', gap: '.5rem' }}>
+        <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
           {!readOnly && (
             <>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={refresh}
+                disabled={refreshing}
+                title="Ricalcola statistiche e scambi dalle rilevazioni già fatte, senza rianalizzare il video"
+              >
+                {refreshing ? 'Aggiornamento…' : 'Aggiorna statistiche'}
+              </button>
               <button className="btn btn-ghost btn-sm" onClick={onRename}>
                 Rinomina giocatori
               </button>
@@ -80,6 +106,12 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
           </button>
         </div>
       </div>
+
+      {refreshError && (
+        <div className="callout callout-error" role="alert" style={{ marginBottom: '1rem' }}>
+          {refreshError}
+        </div>
+      )}
 
       {asking && (
         <div className="modal-backdrop" onClick={() => !opening && setAsking(false)}>

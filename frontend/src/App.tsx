@@ -256,6 +256,13 @@ function Workspace({ me }: { me: Me }) {
           onBack={home}
           onRename={() => setView({ name: 'identify', stats: view.stats })}
           onVerify={() => setView({ name: 'verify', stats: view.stats })}
+          onRefresh={async () => {
+            const matchId = view.stats.match_id
+            const { names_cleared } = await api.refreshStats(matchId)
+            const fresh = await api.getStats(matchId)
+            // Other people under the same numbers: their names are asked again.
+            setView(names_cleared ? { name: 'identify', stats: fresh } : { name: 'stats', stats: fresh })
+          }}
           onReanalyse={async recalibrate => {
             const matchId = view.stats.match_id
             if (!recalibrate) {

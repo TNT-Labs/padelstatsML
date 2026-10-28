@@ -522,6 +522,13 @@ df -h /mnt/ssd             # spazio disco
 Un worker riavviato durante un'analisi rimette il job in coda da solo: il job
 viene recuperato dall'heartbeat scaduto e riprovato al successivo avvio.
 
+Dopo un aggiornamento che corregge giocatori, scambi o statistiche, le
+partite già analizzate si ricalcolano con **Aggiorna statistiche** nella
+pagina della partita (non per gli account in sola visualizzazione): pochi
+secondi, sulle rilevazioni conservate, senza rianalizzare il video. Le foto
+dei giocatori si aggiornano qualche minuto dopo. Da terminale:
+`docker exec padel-worker python scripts/refresh.py <id o latest>`.
+
 ---
 
 ## 11b. Utenti e accesso
