@@ -19,7 +19,7 @@ interface Props {
   onRename: () => void
   onVerify: () => void
   /** `recalibrate`: place the court corners again before analysing. */
-  onReanalyse: (recalibrate: boolean) => void
+  onReanalyse: (recalibrate: boolean) => void | Promise<void>
 }
 
 function formatDuration(seconds: number): string {
@@ -35,13 +35,16 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
   const summary = stats.summary
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
+  // Opening the calibration first reads the match from the Pi: seconds when
+  // it is busy analysing. The dialog stays, saying so, until the page opens.
+  const [opening, setOpening] = useState(false)
 
   useEffect(() => {
     if (!asking) return
-    const escape = (e: KeyboardEvent) => e.key === 'Escape' && setAsking(false)
+    const escape = (e: KeyboardEvent) => e.key === 'Escape' && !opening && setAsking(false)
     document.addEventListener('keydown', escape)
     return () => document.removeEventListener('keydown', escape)
-  }, [asking])
+  }, [asking, opening])
 
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
@@ -76,7 +79,7 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
       </div>
 
       {asking && (
-        <div className="modal-backdrop" onClick={() => setAsking(false)}>
+        <div className="modal-backdrop" onClick={() => !opening && setAsking(false)}>
           <div
             className="modal card"
             role="dialog"
@@ -95,11 +98,12 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
               correggere.
             </p>
             <div className="modal-actions">
-              <button className="btn btn-ghost btn-sm" autoFocus onClick={() => setAsking(false)}>
+              <button className="btn btn-ghost btn-sm" autoFocus disabled={opening} onClick={() => setAsking(false)}>
                 Annulla
               </button>
               <button
                 className="btn btn-ghost btn-sm"
+                disabled={opening}
                 onClick={() => {
                   setAsking(false)
                   onReanalyse(false)
@@ -109,12 +113,18 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
               </button>
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => {
-                  setAsking(false)
-                  onReanalyse(true)
+                disabled={opening}
+                onClick={async () => {
+                  setOpening(true)
+                  try {
+                    await onReanalyse(true)
+                  } finally {
+                    setOpening(false)
+                    setAsking(false)
+                  }
                 }}
               >
-                Ricalibra il campo
+                {opening ? 'Apertura della calibrazione…' : 'Ricalibra il campo'}
               </button>
             </div>
           </div>
