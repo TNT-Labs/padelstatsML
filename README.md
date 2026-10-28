@@ -35,7 +35,7 @@ Nulla viene stimato di nascosto.
 | Occupazione del campo (heatmap 0,5 m) | istogramma delle posizioni dei piedi |
 | Quota di tempo a rete / metà campo / fondo | distanza dalla linea di rete |
 | Area di campo coperta | celle occupate per almeno 1 s × 0,25 m² |
-| Numero, durata e distribuzione degli scambi | segmentazione dal movimento dei giocatori |
+| Numero, durata e distribuzione degli scambi | segmentazione dal movimento dei giocatori, ogni scambio aperto dalla battuta |
 | Tempo di gioco effettivo | rapporto scambi / durata |
 | Copertura del tracciamento per giocatore | quanto della partita ciascuno è stato seguito |
 
@@ -129,7 +129,11 @@ Punti chiave:
   al compagno, così uno scambio di lato viene seguito. L'aspetto da solo non
   distingueva i compagni su una partita reale; dove stanno sì.
 - **Scambi dal movimento dei giocatori,** non dalla palla: durante il punto
-  tutti e quattro si muovono, fra un punto e l'altro no.
+  tutti e quattro si muovono, fra un punto e l'altro no. Ogni punto inizia
+  con la battuta: i giocatori fermi ai loro posti (chi batte e chi riceve in
+  fondo, in diagonale) e poi il gioco che riparte. Lì inizia un nuovo
+  scambio, anche se la pausa dal punto precedente era troppo breve per
+  separarli.
 
 ### 3. Verifica e taratura
 
