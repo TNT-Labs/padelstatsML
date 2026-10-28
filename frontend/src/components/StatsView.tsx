@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FC } from 'react'
 import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
+import { InfoHeading } from './InfoHeading'
 import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
@@ -207,7 +208,43 @@ export const StatsView: FC<Props> = ({
         </div>
       </div>
 
-      <h2 style={{ marginBottom: '.75rem' }}>Giocatori</h2>
+      <InfoHeading title="Giocatori">
+        <dl className="info-list">
+          <dt>Distanza percorsa</dt>
+          <dd>
+            I metri fatti in campo in tutta la parte analizzata, pause fra i punti comprese. I
+            movimenti troppo piccoli per essere distinti dal tremolio dell'immagine non contano.
+          </dd>
+          <dt>Di cui negli scambi</dt>
+          <dd>
+            La parte della distanza fatta mentre si giocava un punto; il resto è il movimento fra
+            un punto e l'altro (palline, cambi di campo).
+          </dd>
+          <dt>Velocità media negli scambi</dt>
+          <dd>
+            Metri fatti negli scambi diviso il tempo degli scambi. È bassa perché il padel
+            alterna scatti brevi a momenti quasi fermi.
+          </dd>
+          <dt>Velocità di punta</dt>
+          <dd>
+            La velocità superata solo nel 5% del tempo: non il picco assoluto, che può essere un
+            errore di misura. Gli scatti più rapidi possono essere un po' più veloci.
+          </dd>
+          <dt>Area di campo coperta</dt>
+          <dd>
+            Il campo è diviso in quadrati di 50 × 50 cm: si contano quelli in cui il giocatore è
+            rimasto almeno 1 secondo in tutto. Una metà campo misura 100 m².
+          </dd>
+          <dt>Copertura del tracciamento</dt>
+          <dd>
+            Per quanta parte del tempo il giocatore è stato visto e seguito. Nel resto era
+            coperto, fuori inquadratura o non riconosciuto: le distanze sono sottostimate di
+            altrettanto. Sotto il 50% compare un avviso.
+          </dd>
+          <dt>Mappa del giocatore</dt>
+          <dd>Dove è stato in campo: più il colore è intenso, più tempo ci ha passato.</dd>
+        </dl>
+      </InfoHeading>
       <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
         {players.map(([pid, player]) => {
           const index = Number(pid)
@@ -273,7 +310,32 @@ export const StatsView: FC<Props> = ({
 
       {stats.rallies.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>
-          <h2 style={{ marginBottom: '.75rem' }}>Scambi</h2>
+          <InfoHeading title="Scambi">
+            <dl className="info-list">
+              <dt>Come si riconosce uno scambio</dt>
+              <dd>
+                Dal movimento dei giocatori, senza seguire la palla: durante un punto tutti si
+                muovono, fra un punto e l'altro no. Un nuovo scambio inizia anche dalla battuta,
+                riconosciuta dai giocatori fermi in posizione e dal gioco che riparte.
+              </dd>
+              <dt>Scambi</dt>
+              <dd>Quanti punti giocati sono stati rilevati.</dd>
+              <dt>Scambio medio e più lungo</dt>
+              <dd>La durata media degli scambi e quella del più lungo.</dd>
+              <dt>Tempo di gioco effettivo</dt>
+              <dd>
+                La somma della durata degli scambi sulla durata analizzata: il resto sono pause,
+                cambi di campo, palline da raccogliere.
+              </dd>
+              <dt>Punto verde</dt>
+              <dd>
+                Lo scambio è iniziato da una battuta riconosciuta. Uno scambio molto lungo senza
+                punto verde può contenere più punti uniti.
+              </dd>
+              <dt>Clic su uno scambio</dt>
+              <dd>Il video va all'inizio dello scambio, un paio di secondi prima della battuta.</dd>
+            </dl>
+          </InfoHeading>
           {serveChecked && (
             <p className="muted-note rally-legend">
               <span className="rally-serve" aria-hidden="true" /> {served} su {stats.rallies.length} aperti

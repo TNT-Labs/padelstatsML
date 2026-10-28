@@ -236,6 +236,28 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
 }
 
 /* ── Rally strip ────────────────────────────────────────────────────────── */
+/* A section title with an "i" that unfolds what its numbers mean. */
+.info-heading { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.info-heading h2 { margin: 0; }
+.info-btn {
+  width: 1.4rem; height: 1.4rem; flex-shrink: 0; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface); color: var(--green-dk);
+  font: italic 700 .82rem/1 Georgia, 'Times New Roman', serif; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.info-btn:hover, .info-btn-open { background: var(--green); border-color: var(--green); color: #fff; }
+.info-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.info-panel {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: .75rem 1rem; margin-bottom: 1rem; font-size: .85rem; line-height: 1.45;
+}
+.info-list { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1rem; }
+.info-list dt { font-weight: 600; }
+.info-list dd { margin: 0; color: var(--muted); }
+@media (max-width: 600px) {
+  .info-list { grid-template-columns: 1fr; gap: .1rem; }
+  .info-list dd { margin-bottom: .5rem; }
+}
 .rally-strip { display: flex; gap: .4rem; flex-wrap: wrap; }
 .rally-chip {
   display: flex; flex-direction: column; align-items: center;
