@@ -207,6 +207,19 @@ class AnalysisPipeline:
             tracklets = tracker.finish()
             # How much of the video was analysed: from the start, not from 0.
             analysed_s = max(last_timestamp - sampler.start_s, 0.0)
+            run_quality = {
+                "variable_frame_rate": sampler.variable_frame_rate,
+                # Detections recognised as part of the empty court and left out.
+                "scenery": tracker.detections_rejected_scenery,
+                # How much the second look added: tells whether it is worth its time.
+                "far_pass": ({"active": far_roi is not None, "added": far_added}
+                             if self.config.detector_far_pass is not False else None),
+                "truncated": (
+                    f"Analizzati {analysed_s / 60:.0f} minuti su "
+                    f"{(info.duration_s - sampler.start_s) / 60:.0f} (limite MAX_ANALYSIS_MINUTES)."
+                    if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s else None
+                ),
+            }
 
             if writer is not None:
                 # Written before the downstream stages run, so a crash in
@@ -220,6 +233,7 @@ class AnalysisPipeline:
                         frames_sampled=frames_sampled,
                         analysed_s=analysed_s,
                         inference_seconds=time.monotonic() - started,
+                        run_quality=run_quality,
                     )
                 )
         finally:
@@ -256,17 +270,7 @@ class AnalysisPipeline:
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
-        result["data_quality"]["variable_frame_rate"] = sampler.variable_frame_rate
-        # Detections recognised as part of the empty court and left out.
-        result["data_quality"]["tracking"]["scenery"] = tracker.detections_rejected_scenery
-        if self.config.detector_far_pass is not False:
-            # How much the second look added: tells whether it is worth its time.
-            result["data_quality"]["far_pass"] = {"active": far_roi is not None, "added": far_added}
-        if info.frame_count and sampler.start_s + analysed_s + 1.0 < info.duration_s:
-            result["data_quality"]["warnings"].append(
-                f"Analizzati {analysed_s / 60:.0f} minuti su "
-                f"{(info.duration_s - sampler.start_s) / 60:.0f} (limite MAX_ANALYSIS_MINUTES)."
-            )
+        apply_run_quality(result, run_quality)
 
         # ── 6. Thumbnails ────────────────────────────────────────────────────
         report(99, "Estrazione anteprime giocatori…")
@@ -310,10 +314,14 @@ class AnalysisPipeline:
         frames_sampled: int | None = None,
         analysed_s: float | None = None,
         inference_seconds: float | None = None,
+        run_quality: dict | None = None,
     ) -> dict:
         """Run metadata. Called twice: once when the decode pass starts, with
         only what is already known, and once when it ends with the totals."""
         return {
+            # What only the decode pass knows, for the reliability panel: kept
+            # here so a recomputation (refresh, verification) reports it too.
+            "run_quality": run_quality,
             # False until the decode pass finishes. A reader that ignores this
             # would pair a previous run's totals with a partial track file.
             "complete": frames_sampled is not None,
@@ -363,6 +371,20 @@ class AnalysisPipeline:
                 "rally_merge_gap_s": self.config.rally_merge_gap_s,
             },
         }
+
+
+def apply_run_quality(result: dict, run_quality: dict | None) -> None:
+    """Put into the result's data_quality what only the decode pass knows
+    (see AnalysisPipeline._meta): the stages after it cannot measure it."""
+    if not run_quality:
+        return
+    quality = result["data_quality"]
+    quality["variable_frame_rate"] = bool(run_quality.get("variable_frame_rate"))
+    quality.setdefault("tracking", {})["scenery"] = int(run_quality.get("scenery") or 0)
+    if run_quality.get("far_pass"):
+        quality["far_pass"] = run_quality["far_pass"]
+    if run_quality.get("truncated"):
+        quality["warnings"].append(run_quality["truncated"])
 
 
 def analyse_tracklets(

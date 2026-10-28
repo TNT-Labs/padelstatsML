@@ -641,6 +641,15 @@ def test_a_closer_look_at_the_far_half_finds_the_far_players(synthetic_match, ca
     assert runs[True]["data_quality"]["far_pass"]["added"] > 0
     assert len(runs[True]["per_player"]) == 4
 
+    # Recomputed from the stored run (refresh, verification): what only the
+    # decode pass measured is still reported.
+    from app.ml.reprocess import recompute
+
+    again, _, _, _ = recompute(tmp_path / "True", None, PIPELINE_CONFIG)
+    for key in ("far_pass", "variable_frame_rate"):
+        assert again["data_quality"][key] == runs[True]["data_quality"][key]
+    assert again["data_quality"]["tracking"]["scenery"] == runs[True]["data_quality"]["tracking"]["scenery"]
+
 
 @pytest.mark.parametrize("input_px, active", [(20.0, True), (60.0, False)])
 def test_the_far_pass_switches_itself_on_when_the_far_players_are_small(
