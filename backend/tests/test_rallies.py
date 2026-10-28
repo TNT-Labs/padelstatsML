@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.ml import rallies as rallies_module
 from app.ml.identity import PlayerTrack
 from app.ml.rallies import ADAPTIVE_FLOOR_MS, activity_threshold, detect_rallies
 from tests.synthetic import make_observation
@@ -139,3 +140,72 @@ def test_a_slow_moment_inside_a_rally_does_not_cut_it(calibration):
     assert len(single) == 2
     assert len(rallies) == 1
     assert rallies[0].end_s == pytest.approx(20.0, abs=1.5)
+
+
+def _scripted(calibration, script):
+    """script: [(t0, t1, speed, places)] with places the four players'
+    (x, y): standing there when speed is 0, else oscillating across it."""
+    tracks = []
+    for shirt in range(4):
+        observations = []
+        for t0, t1, speed, places in script:
+            x, y = places[shirt]
+            if speed:
+                observations += _moving(calibration, shirt, x, y, t0, t1, speed)
+            else:
+                observations += [make_observation(calibration, (x, y), t0 + i / HZ, shirt)
+                                 for i in range(int((t1 - t0) * HZ) + 1)]
+        observations.sort(key=lambda o: o.timestamp_s)
+        tracks.append(PlayerTrack(shirt, 0 if shirt < 2 else 1, observations, [shirt]))
+    return tracks
+
+
+PLAY = [(3.0, 4.0), (7.0, 6.0), (3.0, 14.0), (7.0, 16.0)]
+# Near server at the back on the left, partner at the net; far receiver at
+# the back on the right, diagonally opposite.
+SERVE = [(3.0, 1.5), (7.0, 7.0), (3.0, 17.5), (7.0, 18.5)]
+
+
+def test_the_next_serve_starts_a_new_rally(calibration, monkeypatch):
+    """A point ends, the players walk to their places and stand for the
+    serve: the walking as lively as play, the pause too short to cut, the
+    two points were one rally. The serve formation followed by
+    play starts the second."""
+    players = _scripted(
+        calibration,
+        [(0.0, 15.0, 2.0, PLAY), (15.2, 18.0, 1.2, PLAY), (18.2, 20.0, 0.0, SERVE), (20.2, 35.0, 2.0, PLAY)],
+    )
+    rallies = detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0)
+
+    assert len(rallies) == 2
+    assert rallies[0].end_s < 18.5
+    assert rallies[1].start_s == pytest.approx(20.2, abs=1.0)
+    # However long the pause bridged.
+    assert len(detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0, merge_gap_s=10.0)) == 2
+    # Without the serve, one rally.
+    monkeypatch.setattr(rallies_module, "serve_starts", lambda *args, **kwargs: [])
+    assert len(detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0)) == 1
+
+
+def test_standing_at_the_net_inside_a_rally_is_not_a_serve(calibration):
+    """Both near players volleying at the net, both far ones at the back,
+    for a couple of seconds nearly still: no server behind the service
+    line, so no new point."""
+    at_net = [(3.0, 7.0), (7.0, 7.5), (3.0, 17.5), (7.0, 18.5)]
+    players = _scripted(
+        calibration,
+        [(0.0, 10.0, 2.0, PLAY), (10.2, 12.0, 0.0, at_net), (12.2, 25.0, 2.0, PLAY)],
+    )
+    rallies = detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0, merge_gap_s=3.0)
+    assert len(rallies) == 1
+
+
+def test_a_serve_needs_the_receiver_diagonally_opposite(calibration):
+    """Server and receiver on the same side of the centre line: not the
+    places of a serve."""
+    same_side = [(3.0, 1.5), (7.0, 7.0), (3.0, 18.5), (4.0, 13.0)]
+    players = _scripted(
+        calibration,
+        [(0.0, 10.0, 2.0, PLAY), (10.2, 12.0, 0.0, same_side), (12.2, 25.0, 2.0, PLAY)],
+    )
+    assert len(detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0)) == 1
