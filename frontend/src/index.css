@@ -157,6 +157,16 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
 .modal-actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
 @media (max-width: 480px) { .modal-actions .btn { flex: 1 1 100%; } }
 .preset-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .88rem; }
+/* A saved camera position: its name applies it, the × beside it deletes it. */
+.preset-chip { display: inline-flex; }
+.preset-chip .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.preset-remove {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: none;
+  padding-left: .55rem; padding-right: .55rem; font-size: 1rem; line-height: 1; color: var(--muted);
+}
+.preset-remove:not(:disabled):hover { color: var(--danger); opacity: 1; }
+.preset-confirm { display: inline-flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.preset-confirm-actions { display: inline-flex; gap: .4rem; }
 
 /* ── Heatmap ────────────────────────────────────────────────────────────── */
 .heatmap-wrap { border-radius: 8px; overflow: hidden; }

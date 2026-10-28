@@ -102,6 +102,8 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
   const [netPoints, setNetPoints] = useState<Pt[] | null>(null)
   const [presets, setPresets] = useState<CameraPreset[]>([])
   const [presetName, setPresetName] = useState('')
+  // The preset whose deletion waits for a confirmation.
+  const [deleting, setDeleting] = useState<CameraPreset | null>(null)
   const [dragging, setDragging] = useState<Handle | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -254,6 +256,21 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e))
     } finally {
+      setSaving(false)
+    }
+  }
+
+  const deletePreset = async (preset: CameraPreset) => {
+    setError(null)
+    setSaving(true)
+    try {
+      await api.deletePreset(preset.id)
+      setPresets(prev => prev.filter(p => p.id !== preset.id))
+      setHint(`Posizione camera "${preset.name}" eliminata.`)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setDeleting(null)
       setSaving(false)
     }
   }
@@ -426,16 +443,36 @@ export const CalibrationView: FC<Props> = ({ match, onCalibrated, onBack }) => {
         <div className="card card-sm" style={{ marginBottom: '1rem' }}>
           <div className="preset-row">
             <span style={{ fontWeight: 600 }}>Posizione camera salvata:</span>
-            {presets.map(preset => (
-              <button
-                key={preset.id}
-                className="btn btn-ghost btn-sm"
-                disabled={saving}
-                onClick={() => applyPreset(preset)}
-              >
-                {preset.name}
-              </button>
-            ))}
+            {presets.map(preset =>
+              deleting?.id === preset.id ? (
+                <span key={preset.id} className="preset-confirm" role="group" aria-label={`Elimina ${preset.name}`}>
+                  Eliminare «{preset.name}»?
+                  <span className="preset-confirm-actions">
+                    <button className="btn btn-danger btn-sm" disabled={saving} onClick={() => deletePreset(preset)}>
+                      Elimina
+                    </button>
+                    <button className="btn btn-ghost btn-sm" disabled={saving} autoFocus onClick={() => setDeleting(null)}>
+                      Annulla
+                    </button>
+                  </span>
+                </span>
+              ) : (
+                <span key={preset.id} className="preset-chip">
+                  <button className="btn btn-ghost btn-sm" disabled={saving} onClick={() => applyPreset(preset)}>
+                    {preset.name}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm preset-remove"
+                    disabled={saving}
+                    onClick={() => setDeleting(preset)}
+                    aria-label={`Elimina la posizione camera ${preset.name}`}
+                    title="Elimina"
+                  >
+                    ×
+                  </button>
+                </span>
+              ),
+            )}
           </div>
         </div>
       )}
