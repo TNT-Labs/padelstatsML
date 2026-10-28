@@ -180,6 +180,7 @@ def test_the_next_serve_starts_a_new_rally(calibration, monkeypatch):
     assert len(rallies) == 2
     assert rallies[0].end_s < 18.5
     assert rallies[1].start_s == pytest.approx(20.2, abs=1.0)
+    assert [r.serve for r in rallies] == [False, True]
     # However long the pause bridged.
     assert len(detect_rallies(players, sample_hz=HZ, speed_threshold_ms=1.0, merge_gap_s=10.0)) == 2
     # Without the serve, one rally.

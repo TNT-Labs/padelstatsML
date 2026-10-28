@@ -150,7 +150,7 @@ class MatchStats(Base):
     # {player_id: [[x_m, y_m, weight], ...]} on a 0.5 m grid
     heatmaps: Mapped[dict] = mapped_column(JSON)
 
-    # [{index, start_s, end_s, duration_s, players_tracked}]
+    # [{index, start_s, end_s, duration_s, players_tracked, serve}]
     rallies: Mapped[list] = mapped_column(JSON)
 
     # {rallies_count, total_rally_s, avg_rally_s, median_rally_s,

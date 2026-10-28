@@ -218,6 +218,8 @@ export interface Rally {
   end_s: number
   duration_s: number
   players_tracked: number
+  // Opened by a recognised serve; absent on analyses older than the check.
+  serve?: boolean | null
 }
 
 // ── Accuracy check ──────────────────────────────────────────────────────────

@@ -33,6 +33,9 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
   const summary = stats.summary
+  // Analyses older than the serve check carry no flag: no legend for them.
+  const serveChecked = stats.rallies.some(r => r.serve != null)
+  const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
   // Opening the calibration first reads the match from the Pi: seconds when
@@ -239,6 +242,12 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
       {stats.rallies.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>
           <h2 style={{ marginBottom: '.75rem' }}>Scambi</h2>
+          {serveChecked && (
+            <p className="muted-note rally-legend">
+              <span className="rally-serve" aria-hidden="true" /> {served} su {stats.rallies.length} aperti
+              da una battuta riconosciuta
+            </p>
+          )}
           <div className="rally-strip">
             {stats.rallies.map(rally => (
               <button
@@ -247,9 +256,13 @@ export const StatsView: FC<Props> = ({ stats, readOnly = false, onBack, onRename
                 className="rally-chip"
                 // A couple of seconds early, to see the serve.
                 onClick={() => seek(Math.max(0, rally.start_s - RALLY_LEAD_S))}
-                title={`Guarda lo scambio, dal minuto ${clock(rally.start_s)}`}
+                title={`Guarda lo scambio, dal minuto ${clock(rally.start_s)}${
+                  rally.serve ? ' · aperto da una battuta' : ''}`}
               >
-                <span className="rally-num">#{rally.index + 1}</span>
+                <span className="rally-num">
+                  #{rally.index + 1}
+                  {rally.serve && <span className="rally-serve" aria-label="aperto da una battuta" />}
+                </span>
                 <span className="rally-dur">{formatDuration(rally.duration_s)}</span>
               </button>
             ))}
