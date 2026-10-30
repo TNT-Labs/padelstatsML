@@ -268,12 +268,14 @@ class HailoPoseEstimator:
     points of every person in the frame (app.ml.pose)."""
 
     def __init__(self, model_path: str | Path, alternatives: tuple[str, ...] | list[str] = (),
-                 score_threshold: float = 0.3) -> None:
+                 score_threshold: float | None = None) -> None:
         from app.ml.accel import pick_model
         from app.ml.pose import decode_yolov8_pose
 
         self._decode = decode_yolov8_pose
-        self.score_threshold = float(score_threshold)
+        from app.ml.pose import TILE_SCORE_THRESHOLD
+
+        self.score_threshold = float(TILE_SCORE_THRESHOLD if score_threshold is None else score_threshold)
         self.model_path = str(model_path)
         self._stack = contextlib.ExitStack()
         try:
@@ -302,16 +304,30 @@ class HailoPoseEstimator:
     def name(self) -> str:
         return Path(self.model_path).name
 
-    def estimate(self, frame: np.ndarray) -> list:
-        """The poses in `frame`, in frame pixels."""
-        from app.ml.pose import to_frame
+    def estimate_for(self, frame: np.ndarray, detections: list) -> list:
+        """`detections`, the most confident MAX_POSED of them with their
+        keypoints: each cropped around its box into a tile of a mosaic, up
+        to four per inference, so that a far player fills the network's
+        view as a near one does."""
+        from dataclasses import replace
 
-        picture, ratio, pad = letterbox_rgb(frame, self.imgsz)
-        try:
-            outputs = self._infer(picture)
-        except Exception as exc:          # noqa: BLE001
-            raise HailoRuntimeError(f"Errore della postura sull'acceleratore: {exc}") from exc
-        return to_frame(self._decode(outputs, self.imgsz, score_threshold=self.score_threshold), ratio, pad)
+        from app.ml.pose import GRID, MAX_POSED, mosaic, poses_in_tiles
+
+        order = sorted(range(len(detections)), key=lambda i: -detections[i].confidence)[:MAX_POSED]
+        out = list(detections)
+        per_picture = GRID * GRID
+        for start in range(0, len(order), per_picture):
+            chunk = order[start:start + per_picture]
+            picture, tiles = mosaic(frame, [detections[i].bbox for i in chunk], self.imgsz, LETTERBOX_FILL)
+            try:
+                outputs = self._infer(picture)
+            except Exception as exc:      # noqa: BLE001
+                raise HailoRuntimeError(f"Errore della postura sull'acceleratore: {exc}") from exc
+            decoded = self._decode(outputs, self.imgsz, score_threshold=self.score_threshold)
+            for i, points in zip(chunk, poses_in_tiles(decoded, tiles, self.imgsz)):
+                if points is not None:
+                    out[i] = replace(detections[i], keypoints=points)
+        return out
 
     def _infer(self, picture: np.ndarray) -> dict[str, np.ndarray]:
         buffers = {name: np.full(shape, np.nan, dtype=np.float32) for name, shape in self._outputs}

@@ -857,19 +857,20 @@ class _PoseFromBlobs:
     def name(self) -> str:
         return "yolov8s_pose_h8l_pi.hef"
 
-    def estimate(self, frame):
+    def estimate_for(self, frame, detections):
+        from dataclasses import replace
+
         from app.ml.detect_hailo import HailoRuntimeError
-        from app.ml.pose import Pose
 
         self.calls += 1
         if self.fail_after is not None and self.calls > self.fail_after:
             raise HailoRuntimeError("Errore della postura sull'acceleratore: timeout")
-        poses = []
-        for d in _BlobDetector().detect(frame):
+        out = []
+        for d in detections:
             x1, y1, x2, y2 = d.bbox
             points = np.stack([np.full(17, (x1 + x2) / 2), np.linspace(y1, y2, 17), np.full(17, 0.9)], axis=1)
-            poses.append(Pose(d.bbox, 0.9, points.astype(np.float32)))
-        return poses
+            out.append(replace(d, keypoints=points.astype(np.float32)))
+        return out
 
     def close(self) -> None:
         pass
