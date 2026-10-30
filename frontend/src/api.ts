@@ -173,6 +173,8 @@ export interface Stroke {
   wrists: string
 }
 
+export type StrokeLabel = 'smash' | 'bandeja' | 'lob' | 'volee' | 'altro' | 'nulla'
+
 export interface MatchSummary {
   analysed_s: number
   rallies_count: number
@@ -306,6 +308,8 @@ export interface MatchStats {
   title: string
   player_names: string[] | null
   player_hands?: Hand[] | null
+  /** What each high stroke really was, as seen in the video: "<player id>:<seconds>" -> label. */
+  stroke_labels?: Record<string, StrokeLabel> | null
   per_player: Record<string, PlayerStats>
   heatmaps: Record<string, [number, number, number][]>
   rallies: Rally[]
@@ -404,6 +408,12 @@ export const api = {
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
 
   /** Statistics recomputed from the stored detections, in seconds. */
+  labelStrokes: (id: string, labels: Record<string, StrokeLabel | null>) =>
+    req<{ stroke_labels: Record<string, StrokeLabel> | null }>(`/api/matches/${id}/stroke-labels`, {
+      method: 'PATCH',
+      body: JSON.stringify({ labels }),
+    }),
+
   refreshStats: (id: string) =>
     req<{ names_cleared: boolean }>(`/api/matches/${id}/refresh`, { method: 'POST' }),
 

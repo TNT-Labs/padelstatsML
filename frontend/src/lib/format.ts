@@ -61,3 +61,32 @@ export function strokesOf(
   if (!strokes) return null
   return hand ? strokes.filter(s => s.wrists.includes(hand)) : strokes
 }
+
+export const STROKE_LABELS: Record<string, string> = {
+  smash: 'Smash',
+  bandeja: 'Bandeja / víbora',
+  lob: 'Lob',
+  volee: 'Volée',
+  altro: 'Altro colpo',
+  nulla: 'Non è un colpo',
+}
+
+/** How the high strokes found fare against what a person saw: of those
+ *  checked, how many were a stroke at all and how many of the right kind
+ *  (smash or bandeja for "overhead", lob for "lob"). */
+export function strokeCheck(
+  strokes: { key: string; kind: 'overhead' | 'lob' }[],
+  labels: Record<string, string> | null | undefined,
+) {
+  let checked = 0
+  let real = 0
+  let rightKind = 0
+  for (const { key, kind } of strokes) {
+    const label = labels?.[key]
+    if (!label) continue
+    checked++
+    if (label !== 'nulla') real++
+    if (kind === 'overhead' ? label === 'smash' || label === 'bandeja' : label === 'lob') rightKind++
+  }
+  return { checked, real, rightKind }
+}

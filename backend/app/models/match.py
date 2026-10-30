@@ -119,6 +119,10 @@ class Match(Base):
     # "R" right, "L" left, None not said. Forehand and backhand are on
     # opposite sides for a left-hander.
     player_hands: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # What a person saw in the video at each high stroke found (app.ml.strokes),
+    # "<player id>:<seconds>" -> one of schemas.match.STROKE_LABELS: how the
+    # strokes are checked, and the ground truth to tune them on.
+    stroke_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

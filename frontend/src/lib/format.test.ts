@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh, parseClock, playerPlace, strokesOf } from './format'
+import { apiAsset, kmh, parseClock, playerPlace, strokeCheck, strokesOf } from './format'
 
 describe('parseClock', () => {
   it('reads seconds, minutes and hours', () => {
@@ -66,5 +66,19 @@ describe('strokesOf', () => {
   })
   it('is null without the posture', () => {
     expect(strokesOf(undefined, 'R')).toBeNull()
+  })
+})
+
+describe('strokeCheck', () => {
+  const strokes = [
+    { key: '0:10', kind: 'overhead' as const },
+    { key: '0:20', kind: 'overhead' as const },
+    { key: '1:30', kind: 'lob' as const },
+    { key: '1:40', kind: 'lob' as const },
+  ]
+  it('measures the checked ones only', () => {
+    const labels = { '0:10': 'bandeja', '0:20': 'nulla', '1:30': 'smash' }
+    expect(strokeCheck(strokes, labels)).toEqual({ checked: 3, real: 2, rightKind: 1 })
+    expect(strokeCheck(strokes, null)).toEqual({ checked: 0, real: 0, rightKind: 0 })
   })
 })

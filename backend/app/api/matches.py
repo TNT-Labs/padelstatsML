@@ -80,6 +80,7 @@ from app.schemas.match import (
     MatchRead,
     MatchStatsRead,
     MatchUpdate,
+    StrokeLabelsUpdate,
     UploadInitResponse,
     UploadStatus,
 )
@@ -709,6 +710,7 @@ async def start_analysis(
     # the app asks for them again when the analysis completes.
     match.player_names = None
     match.player_hands = None
+    match.stroke_labels = None
     await db.flush()
     return await _read(db, match, user)
 
@@ -764,6 +766,26 @@ async def update_match(
     return await _read(db, match, user)
 
 
+@router.patch("/{match_id}/stroke-labels")
+async def label_strokes(
+    match_id: str, payload: StrokeLabelsUpdate,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> dict:
+    """What the high strokes found really were, as a person saw them in the
+    video: None clears a label."""
+    match = await _get_match(db, match_id, user)
+    labels = dict(match.stroke_labels or {})
+    for key, label in payload.labels.items():
+        if label is None:
+            labels.pop(key, None)
+        else:
+            labels[key] = label
+    # A new dict: SQLAlchemy does not see changes inside a JSON value.
+    match.stroke_labels = labels or None
+    await db.flush()
+    return {"stroke_labels": match.stroke_labels}
+
+
 @router.get("/{match_id}/stats", response_model=MatchStatsRead)
 async def get_stats(
     match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
@@ -786,6 +808,7 @@ async def get_stats(
         title=match.title,
         player_names=match.player_names,
         player_hands=match.player_hands,
+        stroke_labels=match.stroke_labels,
         per_player=per_player,
         heatmaps=stats.heatmaps,
         rallies=stats.rallies,
