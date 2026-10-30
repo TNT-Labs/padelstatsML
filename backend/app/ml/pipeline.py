@@ -36,6 +36,7 @@ from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.smoothing import smooth_path
+from app.ml.strokes import detect_strokes
 from app.ml.rallies import Rally, activity_threshold, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
@@ -553,6 +554,11 @@ def analyse_tracklets(
             paths=paths,
         )
     )
+    # High strokes, where the posture was estimated (app.ml.strokes).
+    if any(o.keypoints is not None for p in identity.players for o in p.observations):
+        for player_id, strokes in detect_strokes(identity.players, paths, rallies).items():
+            if str(player_id) in result["per_player"]:
+                result["per_player"][str(player_id)]["strokes"] = strokes
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
     result["data_quality"]["rally_speed_threshold_ms"] = round(threshold, 2)
     # Counted on the players' samples, so a recomputed run reports it too:

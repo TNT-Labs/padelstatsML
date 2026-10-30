@@ -161,6 +161,16 @@ export interface PlayerStats {
   /** Side within the pair; absent when players were found by linking alone. */
   role?: 'drive' | 'reves' | null
   crop_url?: string | null
+  /** High strokes from the posture; absent without it. */
+  strokes?: Stroke[] | null
+}
+
+/** A stroke with the racket up: smash or bandeja near the net, lob further
+ *  back; `wrists`: which wrist was raised ("L", "R", "LR"). */
+export interface Stroke {
+  t: number
+  kind: 'overhead' | 'lob'
+  wrists: string
 }
 
 export interface MatchSummary {
