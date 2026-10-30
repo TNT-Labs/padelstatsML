@@ -314,11 +314,17 @@ dell'analisi è identico. Senza la scheda l'app funziona come prima.
 
   Lo script aggiunge a `.env` la riga
   `COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml`, che dà al
-  worker il dispositivo `/dev/hailo0`. **Se togli la scheda, togli anche
-  quella riga**: Docker non avvia un container il cui dispositivo manca.
-- **Rete usata:** `yolov8s_h8.hef` del pacchetto `hailo-models` (incluso
-  nell'immagine). Per un'altra, compilata per Hailo-8, mettila in `weights/`
-  e indicala con `HAILO_MODEL=/srv/weights/<file>.hef`.
+  worker il dispositivo `/dev/hailo0`, e le righe `HAILO_LIB`,
+  `HAILO_LIB_NAME`, `HAILO_PYTHON`: il worker usa l'HailoRT installato sul
+  Pi, la stessa versione del driver, l'unica che la scheda accetta. Dopo un
+  aggiornamento di `hailo-all` rilancia lo script. **Se togli la scheda,
+  togli la riga `COMPOSE_FILE`**: Docker non avvia un container il cui
+  dispositivo manca.
+- **Rete usata:** quella compilata per il chip della scheda, dal pacchetto
+  `hailo-models`: `yolov8s_h8.hef` per Hailo-8 (26 TOPS), `yolov8s_h8l.hef`
+  per Hailo-8L (13 TOPS; `hailortcli fw-control identify` dice
+  `Device Architecture: HAILO8L`). Per un'altra mettila in `weights/` e
+  indicala con `HAILO_MODEL=/srv/weights/<file>.hef`.
 - **Disattivarla** senza toglierla: `ACCELERATOR=cpu` in `.env`.
 - **Stato:** `docker compose exec api curl -s localhost:8000/padel/api/health`
   alla voce `accelerator`.

@@ -327,6 +327,7 @@ class AnalysisPipeline:
         try:
             detector = HailoPersonDetector(
                 status.model,
+                alternatives=status.models,
                 conf_threshold=min(self.config.detector_conf, self.config.detector_conf_weak),
                 iou_threshold=self.config.detector_iou,
             )

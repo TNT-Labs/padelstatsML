@@ -42,7 +42,11 @@ class HailoPersonDetector:
     """YOLOv8 person detector on a Hailo-8 / Hailo-8L."""
 
     def __init__(self, model_path: str | Path, conf_threshold: float = 0.30,
-                 iou_threshold: float = 0.55) -> None:
+                 iou_threshold: float = 0.55, alternatives: tuple[str, ...] | list[str] = ()) -> None:
+        """`alternatives`: other networks found; the one compiled for the
+        chip on the board is used (accel.pick_model)."""
+        from app.ml.accel import pick_model
+
         path = Path(model_path)
         if not path.is_file():
             raise DetectorError(f"Modello Hailo non trovato: {path}")
@@ -54,28 +58,44 @@ class HailoPersonDetector:
             from hailo_platform import FormatType, VDevice
 
             device = self._stack.enter_context(VDevice(VDevice.create_params()))
-            model = device.create_infer_model(str(path))
-            model.set_batch_size(1)
-            model.input().set_format_type(FormatType.UINT8)
-            output = model.output()
-            output.set_format_type(FormatType.FLOAT32)
-            # The network's own suppression was set when it was compiled
-            # (score 0.2 for the hailo-models networks): lower it to the
-            # weak detections the tracker uses to keep a far player.
-            _try(output, "set_nms_score_threshold", self.conf_threshold)
-            _try(output, "set_nms_iou_threshold", self.iou_threshold)
-            self._configured = self._stack.enter_context(model.configure())
+            self.device = _architecture(device)
+            # The network compiled for this chip first; should the chip not
+            # say which it is, the next one is tried when one does not load.
+            candidates = [self.model_path, *(m for m in alternatives if m != self.model_path)]
+            first = pick_model(candidates, self.device)
+            candidates.remove(first)
+            for attempt, candidate in enumerate([first, *candidates]):
+                self.model_path = candidate
+                try:
+                    model = device.create_infer_model(candidate)
+                    model.set_batch_size(1)
+                    model.input().set_format_type(FormatType.UINT8)
+                    output = model.output()
+                    output.set_format_type(FormatType.FLOAT32)
+                    # The network's own suppression was set when it was
+                    # compiled (score 0.2 for the hailo-models networks):
+                    # lower it to the weak detections the tracker uses to
+                    # keep a far player.
+                    _try(output, "set_nms_score_threshold", self.conf_threshold)
+                    _try(output, "set_nms_iou_threshold", self.iou_threshold)
+                    self._configured = self._stack.enter_context(model.configure())
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if attempt == len(candidates):
+                        raise
+                    logger.info("%s non caricato su %s: %s", Path(candidate).name, self.device, exc)
             height, width = (int(v) for v in model.input().shape[:2])
             self.imgsz: tuple[int, int] = (height, width)
             self._output_name = output.name
             self._output_shape = tuple(output.shape)
-            self.device = _architecture(device)
         except DetectorError:
             self._stack.close()
             raise
         except Exception as exc:          # noqa: BLE001 - any HailoRT failure means: not usable
             self._stack.close()
-            raise DetectorError(f"Acceleratore Hailo non utilizzabile: {exc}") from exc
+            chip = getattr(self, "device", "Hailo")
+            raise DetectorError(
+                f"Acceleratore {chip} non utilizzabile con {Path(self.model_path).name}: {exc}") from exc
 
     @property
     def name(self) -> str:

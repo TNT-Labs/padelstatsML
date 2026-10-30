@@ -26,9 +26,12 @@ W, H = 1920, 1080
 class _FakeHailo:
     """The few calls of the HailoRT InferModel API the detector makes."""
 
-    def __init__(self, result=None, fail_run=False, fail_open=False, arch="HAILO8"):
+    def __init__(self, result=None, fail_run=False, fail_open=False, arch="HAILO8", loads=None):
         self.result = result if result is not None else [np.zeros((0, 5), np.float32)] * 80
         self.fail_run, self.fail_open, self.arch = fail_run, fail_open, arch
+        # Networks the chip accepts (by file name ending); None: any.
+        self.loads = loads
+        self.tried: list[str] = []
         self.thresholds: dict[str, float] = {}
         self.inputs: list[np.ndarray] = []
         self.closed = False
@@ -89,7 +92,11 @@ class _FakeHailo:
                 fake.closed = True
                 return False
 
-            def create_infer_model(self, _path): return Model()
+            def create_infer_model(self, path):
+                fake.tried.append(path)
+                if fake.loads is not None and not path.endswith(fake.loads):
+                    raise RuntimeError("HAILO_INVALID_HEF")
+                return Model()
 
             def get_physical_devices(self):
                 identity = types.SimpleNamespace(device_architecture=fake.arch)
@@ -228,3 +235,44 @@ def test_the_worker_records_what_it_found(monkeypatch, tmp_path, hef):
     _install(monkeypatch, _FakeHailo(fail_open=True))
     status = accel.probe_and_record("auto", str(hef), tmp_path)
     assert not status.usable and "DRIVER_VERSION_MISMATCH" in accel.recorded_status(tmp_path)["reason"]
+
+
+# ── The network for the chip ─────────────────────────────────────────────────
+
+def test_the_network_compiled_for_the_chip_is_chosen():
+    both = ["/w/yolov8s_h8.hef", "/w/yolov8s_h8l.hef"]
+    assert accel.pick_model(both, "Hailo-8L") == "/w/yolov8s_h8l.hef"
+    assert accel.pick_model(both, "Hailo-8") == "/w/yolov8s_h8.hef"
+    # Only the 8L one: it runs on a Hailo-8 too.
+    assert accel.pick_model(["/w/yolov8s_h8l.hef"], "Hailo-8") == "/w/yolov8s_h8l.hef"
+    assert accel.pick_model(both, "Hailo") == "/w/yolov8s_h8.hef"
+
+
+def test_a_hailo_8l_board_runs_the_8l_network(monkeypatch, tmp_path, hef):
+    """The AI HAT+ 13 TOPS: Board Name Hailo-8, Device Architecture HAILO8L.
+    A network compiled for the Hailo-8 does not load on it."""
+    small = tmp_path / "yolov8s_h8l.hef"
+    small.write_bytes(b"hef")
+    fake = _FakeHailo(arch="HAILO8L", loads="_h8l.hef")
+    _install(monkeypatch, fake)
+
+    detector = HailoPersonDetector(hef, alternatives=(str(hef), str(small)))
+    assert detector.name == "Hailo-8L · yolov8s_h8l.hef"
+    assert fake.tried == [str(small)]
+
+
+def test_a_chip_that_does_not_say_which_it_is_gets_the_network_that_loads(monkeypatch, tmp_path, hef):
+    small = tmp_path / "yolov8s_h8l.hef"
+    small.write_bytes(b"hef")
+    fake = _FakeHailo(arch="?", loads="_h8l.hef")
+    _install(monkeypatch, fake)
+
+    detector = HailoPersonDetector(hef, alternatives=(str(small),))
+    assert detector.model_path == str(small)
+    assert fake.tried == [str(hef), str(small)]
+
+
+def test_no_network_for_the_chip_is_a_detector_error(monkeypatch, hef):
+    _install(monkeypatch, _FakeHailo(arch="HAILO8L", loads="_h8l.hef"))
+    with pytest.raises(DetectorError, match="HAILO_INVALID_HEF"):
+        HailoPersonDetector(hef)

@@ -1,15 +1,25 @@
-# Raspberry Pi AI HAT+ (Hailo): gives the analysis worker the board.
+# Raspberry Pi AI HAT+ (Hailo): gives the analysis worker the board and the
+# host's HailoRT — the runtime of the host's driver, the only version the
+# board accepts. Library, Python binding and networks are mounted read-only.
 #
-# Added to docker-compose.yml by a line in .env, which scripts/hailo_setup.sh
+# Added to docker-compose.yml by lines in .env that scripts/hailo_setup.sh
 # writes once the board answers on the host:
 #
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
+#   HAILO_LIB=/usr/lib/libhailort.so.<version>      the library on the host
+#   HAILO_LIB_NAME=libhailort.so.<version>           the name it is linked by
+#   HAILO_PYTHON=/usr/lib/python3/dist-packages/hailo_platform
 #
-# Without the board, remove that line: Docker refuses to start a container
-# whose device is missing. The worker itself finds the board on its own and
-# falls back to the CPU when it cannot use it (backend/app/ml/accel.py).
+# Without the board, remove the COMPOSE_FILE line: Docker refuses to start a
+# container whose device is missing. The worker itself finds the board on
+# its own and falls back to the CPU when it cannot use it
+# (backend/app/ml/accel.py).
 
 services:
   worker:
     devices:
       - /dev/hailo0:/dev/hailo0
+    volumes:
+      - ${HAILO_LIB:?lancia scripts/hailo_setup.sh}:/usr/lib/${HAILO_LIB_NAME:?lancia scripts/hailo_setup.sh}:ro
+      - ${HAILO_PYTHON:?lancia scripts/hailo_setup.sh}:/usr/lib/python3/dist-packages/hailo_platform:ro
+      - /usr/share/hailo-models:/usr/share/hailo-models:ro
