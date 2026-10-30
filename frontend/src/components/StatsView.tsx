@@ -6,11 +6,13 @@ import { InfoHeading } from './InfoHeading'
 import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
-import { handLabel, kmh, playerPlace } from '../lib/format'
+import { handLabel, kmh, playerPlace, strokesOf } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
 
 const RALLY_LEAD_S = 2
+// A stroke is seen a moment before it: the swing, the ball arriving.
+const STROKE_LEAD_S = 1.5
 
 interface Props {
   stats: MatchStats
@@ -40,6 +42,9 @@ export const StatsView: FC<Props> = ({
   const summary = stats.summary
   // Analyses older than the serve check carry no flag: no legend for them.
   const serveChecked = stats.rallies.some(r => r.serve != null)
+  // By position in `players`, each with the racket hand's strokes only.
+  const playerStrokes = players.map(([, player], i) => strokesOf(player.strokes, stats.player_hands?.[i]))
+  const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
@@ -241,6 +246,13 @@ export const StatsView: FC<Props> = ({
             coperto, fuori inquadratura o non riconosciuto: le distanze sono sottostimate di
             altrettanto. Sotto il 50% compare un avviso.
           </dd>
+          <dt>Smash e bandeja, lob</dt>
+          <dd>
+            Dallo scheletro del giocatore (solo con l'acceleratore): il polso della mano della
+            racchetta sopra le spalle in uno scambio. Entro 6,5 m dalla rete è uno smash o una
+            bandeja, più indietro un lob. Verificati sul video: circa 2 su 3 corretti. Indica la
+            mano dei giocatori in «Rinomina giocatori» per non contare il braccio libero alzato.
+          </dd>
           <dt>Mappa del giocatore</dt>
           <dd>Dove è stato in campo: più il colore è intenso, più tempo ci ha passato.</dd>
         </dl>
@@ -301,6 +313,18 @@ export const StatsView: FC<Props> = ({
                     <td>Copertura del tracciamento</td>
                     <td>{Math.round(player.tracked_ratio * 100)}%</td>
                   </tr>
+                  {playerStrokes[index] && (
+                    <>
+                      <tr>
+                        <td>Smash e bandeja</td>
+                        <td>{playerStrokes[index]!.filter(s => s.kind === 'overhead').length}</td>
+                      </tr>
+                      <tr>
+                        <td>Lob</td>
+                        <td>{playerStrokes[index]!.filter(s => s.kind === 'lob').length}</td>
+                      </tr>
+                    </>
+                  )}
                 </tbody>
               </table>
 
@@ -311,6 +335,48 @@ export const StatsView: FC<Props> = ({
           )
         })}
       </div>
+
+      {anyStrokes && (
+        <div className="card" style={{ marginBottom: '1.5rem' }}>
+          <InfoHeading title="Colpi alti">
+            <p style={{ margin: 0 }}>
+              Il polso della mano della racchetta sopra le spalle durante uno scambio, dallo
+              scheletro dei giocatori. Entro 6,5 m dalla rete è contato come smash o bandeja, più
+              indietro come lob. Verificati sul video di una partita: i colpi trovati erano colpi
+              veri 22 volte su 24, il tipo era giusto circa 2 volte su 3. Un clic porta il video
+              al colpo, per controllarlo.
+            </p>
+          </InfoHeading>
+          {players.map(([pid], index) => {
+            const strokes = playerStrokes[index]
+            if (!strokes) return null
+            return (
+              <div key={pid} className="stroke-row">
+                <div className="stroke-player">
+                  <span className="player-dot" style={{ background: PLAYER_COLORS[index % 4] }} />
+                  {names[index] || `Giocatore ${index + 1}`}
+                  <span className="muted-note">· {strokes.length}</span>
+                </div>
+                <div className="rally-strip">
+                  {strokes.map(stroke => (
+                    <button
+                      key={stroke.t}
+                      type="button"
+                      className="rally-chip"
+                      onClick={() => seek(Math.max(0, stroke.t - STROKE_LEAD_S))}
+                      title={`Guarda il colpo, al minuto ${clock(stroke.t)}`}
+                    >
+                      <span className="rally-num">{clock(stroke.t)}</span>
+                      <span className="rally-dur">{stroke.kind === 'overhead' ? 'smash' : 'lob'}</span>
+                    </button>
+                  ))}
+                  {strokes.length === 0 && <span className="muted-note">nessuno</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {stats.rallies.length > 0 && (
         <div className="card" style={{ marginBottom: '1.5rem' }}>

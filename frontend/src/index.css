@@ -260,6 +260,10 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
   .info-list { grid-template-columns: 1fr; gap: .1rem; }
   .info-list dd { margin-bottom: .5rem; }
 }
+/* One player's high strokes: name, then the strokes as chips. */
+.stroke-row { display: flex; flex-direction: column; gap: .35rem; padding: .6rem 0; border-top: 1px solid var(--border); }
+.stroke-row:first-of-type { border-top: none; }
+.stroke-player { display: flex; align-items: center; gap: .4rem; font-weight: 600; font-size: .9rem; }
 .rally-strip { display: flex; gap: .4rem; flex-wrap: wrap; }
 .rally-chip {
   display: flex; flex-direction: column; align-items: center;
