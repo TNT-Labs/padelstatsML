@@ -230,6 +230,12 @@ class CourtTracker:
 
     # ── Public API ───────────────────────────────────────────────────────────
 
+    def current_boxes(self, now_s: float, max_age_s: float = 0.4) -> list[tuple[int, tuple[float, float, float, float]]]:
+        """(track id, last box) of the tracks seen in the `max_age_s` before
+        `now_s`: where to look for each player in a frame between samples."""
+        return [(track.id, track.observations[-1].bbox) for track in self._active
+                if track.observations and 0.0 <= now_s - track.last_seen_s <= max_age_s]
+
     def update(
         self,
         frame_index: int,

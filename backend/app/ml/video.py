@@ -41,6 +41,9 @@ class Frame:
     index: int          # frame number in the source video
     timestamp_s: float
     image: np.ndarray   # BGR
+    # False for the frames between two samples, emitted only with pose_step:
+    # the posture is estimated there, nothing else.
+    main: bool = True
 
 
 class VideoError(RuntimeError):
@@ -173,6 +176,7 @@ class FrameSampler:
         info: VideoInfo | None = None,
         max_duration_s: float | None = None,
         start_s: float = 0.0,
+        pose_hz: float = 0.0,
     ) -> None:
         self.video_path = str(video_path)
         self.info = info or probe(video_path)
@@ -181,6 +185,11 @@ class FrameSampler:
         self.step = max(1, int(round(self.info.fps / self.target_hz)))
         # Effective rate after integer rounding — report this, not the request.
         self.effective_hz = self.info.fps / self.step
+        # Frames between the samples, for the posture only (Frame.main
+        # False): every pose_step frames, 0 for none. The samples themselves
+        # stay the same frames whatever this is, so a run replays alike.
+        pose_step = max(1, int(round(self.info.fps / pose_hz))) if pose_hz > 0 else 0
+        self.pose_step = pose_step if 0 < pose_step < self.step else 0
         # Measured from the start, not from the beginning of the video.
         self.max_duration_s = max_duration_s
         self._requested_start_s = max(0.0, float(start_s))
@@ -239,10 +248,11 @@ class FrameSampler:
                 if start is not None:
                     if self.max_duration_s is not None and timestamp - self._start_ts >= self.max_duration_s:
                         break
-                    if (idx - start) % self.step == 0:
+                    main = (idx - start) % self.step == 0
+                    if main or (self.pose_step and (idx - start) % self.pose_step == 0):
                         ok, image = cap.retrieve()
                         if ok and image is not None:
-                            yield Frame(index=idx, timestamp_s=timestamp, image=image)
+                            yield Frame(index=idx, timestamp_s=timestamp, image=image, main=main)
                 idx += 1
         finally:
             cap.release()

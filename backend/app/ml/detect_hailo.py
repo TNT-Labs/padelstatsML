@@ -306,27 +306,37 @@ class HailoPoseEstimator:
 
     def estimate_for(self, frame: np.ndarray, detections: list) -> list:
         """`detections`, the most confident MAX_POSED of them with their
-        keypoints: each cropped around its box into a tile of a mosaic, up
-        to four per inference, so that a far player fills the network's
-        view as a near one does."""
+        keypoints."""
         from dataclasses import replace
 
-        from app.ml.pose import GRID, MAX_POSED, mosaic, poses_in_tiles
+        from app.ml.pose import MAX_POSED
 
         order = sorted(range(len(detections)), key=lambda i: -detections[i].confidence)[:MAX_POSED]
+        points = self.points_for(frame, [detections[i].bbox for i in order])
         out = list(detections)
+        for i, found in zip(order, points):
+            if found is not None:
+                out[i] = replace(detections[i], keypoints=found)
+        return out
+
+    def points_for(self, frame: np.ndarray, boxes: list) -> list[np.ndarray | None]:
+        """The keypoints of the person in each box (None where none): each
+        cropped around its box into a tile of a mosaic, up to four per
+        inference, so that a far player fills the network's view as a near
+        one does."""
+        from app.ml.pose import GRID, mosaic, poses_in_tiles
+
+        out: list[np.ndarray | None] = []
         per_picture = GRID * GRID
-        for start in range(0, len(order), per_picture):
-            chunk = order[start:start + per_picture]
-            picture, tiles = mosaic(frame, [detections[i].bbox for i in chunk], self.imgsz, LETTERBOX_FILL)
+        for start in range(0, len(boxes), per_picture):
+            chunk = boxes[start:start + per_picture]
+            picture, tiles = mosaic(frame, chunk, self.imgsz, LETTERBOX_FILL)
             try:
                 outputs = self._infer(picture)
             except Exception as exc:      # noqa: BLE001
                 raise HailoRuntimeError(f"Errore della postura sull'acceleratore: {exc}") from exc
             decoded = self._decode(outputs, self.imgsz, score_threshold=self.score_threshold)
-            for i, points in zip(chunk, poses_in_tiles(decoded, tiles, self.imgsz)):
-                if points is not None:
-                    out[i] = replace(detections[i], keypoints=points)
+            out += poses_in_tiles(decoded, tiles, self.imgsz)
         return out
 
     def _infer(self, picture: np.ndarray) -> dict[str, np.ndarray]:

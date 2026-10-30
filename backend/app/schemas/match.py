@@ -23,7 +23,7 @@ PlayerName = Annotated[str, Field(max_length=60)]
 # "R" right-handed, "L" left-handed, None not said.
 PlayerHand = Literal["R", "L"] | None
 # What a high stroke found really was, seen in the video.
-StrokeLabel = Literal["smash", "bandeja", "lob", "volee", "altro", "nulla"]
+StrokeLabel = Literal["smash", "bandeja", "lob", "volee", "dritto", "rovescio", "altro", "nulla"]
 
 
 class StrokeLabelsUpdate(BaseModel):
@@ -184,6 +184,9 @@ class PlayerStats(BaseModel):
     # High strokes from the posture (app.ml.strokes): candidates as stored,
     # [{"t", "kind"}] as read; None without the posture.
     strokes: list[dict] | None = None
+    # Forehands and backhands (app.ml.strokes.detect_swings): candidates as
+    # stored, [{"t", "kind", "volley"}] as read; None without dense posture.
+    swings: list[dict] | None = None
 
 
 class MatchSummary(BaseModel):
