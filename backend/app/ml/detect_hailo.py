@@ -87,7 +87,11 @@ class HailoPersonDetector:
             height, width = (int(v) for v in model.input().shape[:2])
             self.imgsz: tuple[int, int] = (height, width)
             self._output_name = output.name
-            self._output_shape = tuple(output.shape)
+            # One inference on an empty picture now: a network that loads
+            # but cannot run fails here, with its reason, not at the first
+            # frame of an analysis. It also finds the output buffer the
+            # runtime accepts (output_buffers).
+            self._new_output = self._working_output(output_buffers(output))
         except DetectorError:
             self._stack.close()
             raise
@@ -113,14 +117,32 @@ class HailoPersonDetector:
 
         picture, ratio, pad = letterbox_rgb(work, self.imgsz)
         try:
-            bindings = self._configured.create_bindings(
-                output_buffers={self._output_name: np.empty(self._output_shape, dtype=np.float32)})
-            bindings.input().set_buffer(picture)
-            self._configured.run([bindings], TIMEOUT_MS)
-            raw = bindings.output().get_buffer()
+            raw = self._infer(picture, self._new_output)
         except Exception as exc:          # noqa: BLE001
             raise HailoRuntimeError(f"Errore dell'acceleratore Hailo: {exc}") from exc
         return self._detections(person_boxes(raw), ratio, pad, offset, work.shape[:2], frame.shape[:2])
+
+    def _infer(self, picture: np.ndarray, new_output):
+        bindings = self._configured.create_bindings(output_buffers={self._output_name: new_output()})
+        bindings.input().set_buffer(picture)
+        self._configured.run([bindings], TIMEOUT_MS)
+        return bindings.output().get_buffer()
+
+    def _working_output(self, candidates):
+        """The first output buffer with which an inference runs and reads
+        back as boxes; DetectorError with every reason otherwise."""
+        blank = np.full((*self.imgsz, 3), LETTERBOX_FILL, dtype=np.uint8)
+        reasons = []
+        for label, new_output in candidates:
+            try:
+                person_boxes(self._infer(blank, new_output))
+            except Exception as exc:      # noqa: BLE001
+                reasons.append(f"{label}: {exc}")
+                logger.info("Buffer di uscita %s non accettato: %s", label, exc)
+                continue
+            logger.info("Buffer di uscita Hailo: %s", label)
+            return new_output
+        raise DetectorError("inferenza di prova non riuscita (" + " | ".join(reasons) + ")")
 
     def _detections(self, boxes, ratio, pad, offset, work_shape, frame_shape) -> list[Detection]:
         boxes = boxes[boxes[:, 4] >= self.conf_threshold]
@@ -137,6 +159,33 @@ class HailoPersonDetector:
 
     def close(self) -> None:
         self._stack.close()
+
+
+def output_buffers(output) -> list[tuple[str, object]]:
+    """Ways to allocate the network's output, in order: as large as its
+    shape says, then as large as its non-maximum suppression needs — per
+    class the box count and room for the most boxes it keeps, five values
+    each. Which one a HailoRT version accepts for an NMS output is not
+    documented the same way across versions."""
+    candidates: list[tuple[str, object]] = []
+    shape = tuple(int(v) for v in getattr(output, "shape", ()) or ())
+    if shape:
+        candidates.append((f"shape {shape}", lambda: np.empty(shape, dtype=np.float32)))
+    nms = getattr(output, "nms_shape", None)
+    classes = getattr(nms, "number_of_classes", None)
+    boxes = getattr(nms, "max_bboxes_per_class", None) or getattr(nms, "max_bboxes_total", None)
+    if classes and boxes:
+        size = int(classes) * (1 + 5 * int(boxes))
+        candidates.append((f"NMS {classes} classi x {boxes} riquadri", lambda: np.empty(size, dtype=np.float32)))
+    frame_size = getattr(output, "get_frame_size", None)
+    if callable(frame_size):
+        try:
+            count = int(frame_size()) // 4
+        except Exception:                 # noqa: BLE001
+            count = 0
+        if count:
+            candidates.append((f"frame {count * 4} byte", lambda: np.empty(count, dtype=np.float32)))
+    return candidates
 
 
 def person_boxes(raw) -> np.ndarray:

@@ -26,12 +26,16 @@ W, H = 1920, 1080
 class _FakeHailo:
     """The few calls of the HailoRT InferModel API the detector makes."""
 
-    def __init__(self, result=None, fail_run=False, fail_open=False, arch="HAILO8", loads=None):
+    def __init__(self, result=None, fail_run=False, fail_open=False, arch="HAILO8", loads=None,
+                 accept_size=None):
         self.result = result if result is not None else [np.zeros((0, 5), np.float32)] * 80
         self.fail_run, self.fail_open, self.arch = fail_run, fail_open, arch
         # Networks the chip accepts (by file name ending); None: any.
         self.loads = loads
         self.tried: list[str] = []
+        # Output buffer size (floats) the runtime accepts; None: any.
+        self.accept_size = accept_size
+        self.runs = 0
         self.thresholds: dict[str, float] = {}
         self.inputs: list[np.ndarray] = []
         self.closed = False
@@ -45,6 +49,7 @@ class _FakeHailo:
 
         class Output:
             name, shape = "yolov8s/yolov8_nms_postprocess", (80, 5, 100)
+            nms_shape = types.SimpleNamespace(number_of_classes=80, max_bboxes_per_class=100)
 
             def set_format_type(self, _t): pass
             def set_nms_score_threshold(self, v): fake.thresholds["score"] = v
@@ -56,7 +61,8 @@ class _FakeHailo:
             def set_format_type(self, _t): pass
 
         class Bindings:
-            def __init__(self):
+            def __init__(self, buffer):
+                self.buffer = buffer
                 self._in = types.SimpleNamespace(set_buffer=fake.inputs.append)
                 self._out = types.SimpleNamespace(get_buffer=lambda: fake.result)
 
@@ -66,10 +72,15 @@ class _FakeHailo:
         class Configured:
             def __enter__(self): return self
             def __exit__(self, *_): return False
-            def create_bindings(self, output_buffers): return Bindings()
+            def create_bindings(self, output_buffers):
+                return Bindings(next(iter(output_buffers.values())))
 
-            def run(self, _bindings, _timeout):
-                if fake.fail_run:
+            def run(self, bindings, _timeout):
+                size = bindings[0].buffer.size
+                if fake.accept_size is not None and size != fake.accept_size:
+                    raise RuntimeError(f"HAILO_INVALID_ARGUMENT: buffer of {size} floats")
+                fake.runs += 1
+                if fake.fail_run and fake.runs > 1:      # after the trial inference
                     raise RuntimeError("HAILO_TIMEOUT")
 
         class Model:
@@ -275,4 +286,19 @@ def test_a_chip_that_does_not_say_which_it_is_gets_the_network_that_loads(monkey
 def test_no_network_for_the_chip_is_a_detector_error(monkeypatch, hef):
     _install(monkeypatch, _FakeHailo(arch="HAILO8L", loads="_h8l.hef"))
     with pytest.raises(DetectorError, match="HAILO_INVALID_HEF"):
+        HailoPersonDetector(hef)
+
+
+def test_the_output_buffer_the_runtime_accepts_is_found(monkeypatch, hef):
+    """For an NMS output, the buffer its shape suggests is not the one some
+    HailoRT versions want: the trial inference finds the one that runs."""
+    fake = _FakeHailo(accept_size=80 * (1 + 5 * 100))
+    _install(monkeypatch, fake)
+    detector = HailoPersonDetector(hef)
+    assert detector.detect(np.zeros((H, W, 3), np.uint8)) == []
+
+
+def test_a_network_that_cannot_run_fails_when_opened_with_every_reason(monkeypatch, hef):
+    _install(monkeypatch, _FakeHailo(accept_size=7))
+    with pytest.raises(DetectorError, match="inferenza di prova non riuscita.*buffer of 40000.*buffer of 40080"):
         HailoPersonDetector(hef)
