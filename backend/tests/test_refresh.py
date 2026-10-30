@@ -123,3 +123,22 @@ async def test_the_hands_are_kept_with_the_names(analysed_match):
     assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
     stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
     assert stats["player_hands"] == ["R", "R", "L", None]
+
+
+async def test_strokes_are_labelled_as_seen_in_the_video(analysed_match):
+    from conftest import signed_in
+
+    owner, match_id = analysed_match
+    url = f"/api/matches/{match_id}/stroke-labels"
+    response = await owner.patch(url, json={"labels": {"1:83.4": "smash", "2:129.0": "nulla"}})
+    assert response.status_code == 200, response.text
+    response = await owner.patch(url, json={"labels": {"2:129.0": None, "0:5": "lob"}})
+    assert response.json()["stroke_labels"] == {"1:83.4": "smash", "0:5": "lob"}
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["stroke_labels"] == {"1:83.4": "smash", "0:5": "lob"}
+
+    assert (await owner.patch(url, json={"labels": {"1:83.4": "dritto"}})).status_code == 422
+    assert (await owner.patch(url, json={"labels": {"chi": "lob"}})).status_code == 422
+    viewer = await signed_in("labels-viewer", "visualizzatore")
+    async with viewer:
+        assert (await viewer.patch(url, json={"labels": {"1:83.4": "lob"}})).status_code == 403

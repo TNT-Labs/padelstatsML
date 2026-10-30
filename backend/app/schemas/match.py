@@ -22,6 +22,14 @@ def _as_utc(value: datetime) -> datetime:
 PlayerName = Annotated[str, Field(max_length=60)]
 # "R" right-handed, "L" left-handed, None not said.
 PlayerHand = Literal["R", "L"] | None
+# What a high stroke found really was, seen in the video.
+StrokeLabel = Literal["smash", "bandeja", "lob", "volee", "altro", "nulla"]
+
+
+class StrokeLabelsUpdate(BaseModel):
+    """Labels to set ("<player id>:<seconds>" -> label) or clear (None)."""
+    labels: dict[Annotated[str, Field(max_length=32, pattern=r"^\d+:\d+(\.\d+)?$")], StrokeLabel | None] = Field(
+        max_length=500)
 
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
@@ -237,6 +245,7 @@ class MatchStatsRead(BaseModel):
     title: str
     player_names: list[str] | None
     player_hands: list[PlayerHand] | None = None
+    stroke_labels: dict[str, str] | None = None
     per_player: dict[str, PlayerStats]
     heatmaps: dict[str, list[list[float]]]
     rallies: list[RallyRead]
