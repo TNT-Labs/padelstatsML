@@ -34,7 +34,6 @@ from app.ml.detect_hailo import HailoPersonDetector, HailoPoseEstimator, HailoRu
 from app.ml.footpoint import FOOT_MODEL_VERSION
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
-from app.ml.pose import attach_poses
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.smoothing import smooth_path
 from app.ml.rallies import Rally, activity_threshold, detect_rallies
@@ -209,7 +208,7 @@ class AnalysisPipeline:
                 far_added += added
                 if poser is not None:
                     try:
-                        poses = poser.estimate(frame.image)
+                        posed = poser.estimate_for(frame.image, detections)
                     except HailoRuntimeError as exc:
                         logger.error("%s · proseguo senza postura", exc)
                         _close(poser)
@@ -217,8 +216,8 @@ class AnalysisPipeline:
                         pose_note = (f"La postura si è interrotta al minuto {_clock(frame.timestamp_s)}: "
                                      "da lì in poi non è stata stimata.")
                     else:
-                        detections = attach_poses(detections, poses)
-                        posed_frames += bool(poses)
+                        posed_frames += any(d.keypoints is not None for d in posed)
+                        detections = posed
                 tracked = tracker.update(
                     frame_index=frame.index,
                     timestamp_s=frame.timestamp_s,

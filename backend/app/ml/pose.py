@@ -2,8 +2,9 @@
 
 Computed only with the AI accelerator (app.ml.detect_hailo), by a YOLOv8
 pose network: on the CPU it would cost as much as the whole analysis again.
-Each pose is attached to the detection whose box it overlaps (attach_poses)
-and travels with it as Observation.keypoints: stored in the artifacts,
+Each detection is cropped into a tile of a mosaic the network looks at
+(mosaic, poses_in_tiles), so the pose found there is that player's; it
+travels with the detection as Observation.keypoints: stored in the artifacts,
 drawn on the video, and the material for strokes (overheads, forehands,
 backhands) once checked against the video.
 
@@ -15,7 +16,7 @@ decode_yolov8_pose follows Hailo's own Python post-processing
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -35,17 +36,19 @@ BOX_CHANNELS = 4 * REG_MAX
 KEYPOINT_CHANNELS = 51
 
 SCORE_THRESHOLD = 0.3
+# In a tile somebody is known to be: a lower score is enough.
+TILE_SCORE_THRESHOLD = 0.15
+# The pose network sees up to 4 players at once, each a tile of a 2 x 2
+# mosaic: a far player 40 px tall in the frame is 320 px there. Over the
+# whole frame the network found the near players and missed the far ones.
+GRID = 2
+# Room around each player's box in the tile, for raised arms and racket.
+TILE_MARGIN = 1.3
+# Players given a pose per frame, most confident detections first: two
+# mosaics at most.
+MAX_POSED = 8
 NMS_IOU = 0.6
 MAX_POSES = 20
-# A pose belongs to a detection when their boxes overlap this much.
-ATTACH_IOU = 0.45
-
-
-@dataclass(frozen=True)
-class Pose:
-    bbox: tuple[float, float, float, float]   # frame pixels
-    score: float
-    keypoints: np.ndarray                     # (17, 3): x, y in frame pixels, visibility 0-1
 
 
 def decode_yolov8_pose(outputs: dict[str, np.ndarray], imgsz: tuple[int, int],
@@ -96,45 +99,54 @@ def decode_yolov8_pose(outputs: dict[str, np.ndarray], imgsz: tuple[int, int],
     return [(boxes_all[i], float(scores_all[i]), kpts_all[i]) for i in kept]
 
 
-def to_frame(decoded, ratio: float, pad: tuple[float, float]) -> list[Pose]:
-    """Poses in frame pixels from the network's letterboxed input."""
-    out = []
+@dataclass(frozen=True)
+class Tile:
+    """Where one detection's crop sits in the mosaic: frame point
+    (x, y) -> mosaic (x0 + (x - cx0) * scale, y0 + (y - cy0) * scale)."""
+    x0: float
+    y0: float
+    cx0: float
+    cy0: float
+    scale: float
+
+    def to_frame(self, points: np.ndarray) -> np.ndarray:
+        out = np.array(points, dtype=np.float32, copy=True)
+        out[..., 0] = (out[..., 0] - self.x0) / self.scale + self.cx0
+        out[..., 1] = (out[..., 1] - self.y0) / self.scale + self.cy0
+        return out
+
+    def contains(self, x: float, y: float, side: float) -> bool:
+        return self.x0 <= x < self.x0 + side and self.y0 <= y < self.y0 + side
+
+
+def mosaic(frame: np.ndarray, boxes, imgsz: tuple[int, int], fill: int = 114) -> tuple[np.ndarray, list[Tile]]:
+    """The network's input with up to GRID x GRID players, each cropped
+    square around its box (TILE_MARGIN) and scaled to fill its tile; RGB."""
+    side = imgsz[0] // GRID
+    picture = np.full((imgsz[0], imgsz[1], 3), fill, dtype=np.uint8)
+    tiles: list[Tile] = []
+    for k, (x1, y1, x2, y2) in enumerate(list(boxes)[: GRID * GRID]):
+        row, col = divmod(k, GRID)
+        crop = max(x2 - x1, y2 - y1, 8.0) * TILE_MARGIN
+        cx0, cy0 = (x1 + x2) / 2 - crop / 2, (y1 + y2) / 2 - crop / 2
+        scale = side / crop
+        x0, y0 = col * side, row * side
+        matrix = np.float32([[scale, 0, x0 - cx0 * scale], [0, scale, y0 - cy0 * scale]])
+        warped = cv2.warpAffine(frame, matrix, (imgsz[1], imgsz[0]), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=(fill, fill, fill))
+        picture[y0:y0 + side, x0:x0 + side] = warped[y0:y0 + side, x0:x0 + side]
+        tiles.append(Tile(float(x0), float(y0), float(cx0), float(cy0), float(scale)))
+    return np.ascontiguousarray(cv2.cvtColor(picture, cv2.COLOR_BGR2RGB)), tiles
+
+
+def poses_in_tiles(decoded, tiles: list[Tile], imgsz: tuple[int, int]) -> list[np.ndarray | None]:
+    """For each tile the keypoints, in frame pixels, of the most confident
+    pose centred in it; None where there is none."""
+    side = imgsz[0] // GRID
+    best: list[tuple[float, np.ndarray] | None] = [None] * len(tiles)
     for box, score, kpts in decoded:
-        frame_box = ((box[[0, 2]] - pad[0]) / ratio, (box[[1, 3]] - pad[1]) / ratio)
-        points = kpts.copy()
-        points[:, 0] = (points[:, 0] - pad[0]) / ratio
-        points[:, 1] = (points[:, 1] - pad[1]) / ratio
-        out.append(Pose((float(frame_box[0][0]), float(frame_box[1][0]),
-                         float(frame_box[0][1]), float(frame_box[1][1])), score, points.astype(np.float32)))
-    return out
-
-
-def attach_poses(detections: list, poses: list[Pose], min_iou: float = ATTACH_IOU) -> list:
-    """The detections, each with the keypoints of the pose that overlaps its
-    box best (one pose per detection, the best overlaps first)."""
-    if not poses or not detections:
-        return detections
-    pairs = sorted(
-        ((_iou(d.bbox, p.bbox), i, j) for i, d in enumerate(detections) for j, p in enumerate(poses)),
-        reverse=True,
-    )
-    out, used_d, used_p = list(detections), set(), set()
-    for overlap, i, j in pairs:
-        if overlap < min_iou:
-            break
-        if i in used_d or j in used_p:
-            continue
-        used_d.add(i)
-        used_p.add(j)
-        out[i] = replace(detections[i], keypoints=poses[j].keypoints)
-    return out
-
-
-def _iou(a, b) -> float:
-    w = min(a[2], b[2]) - max(a[0], b[0])
-    h = min(a[3], b[3]) - max(a[1], b[1])
-    if w <= 0 or h <= 0:
-        return 0.0
-    inter = w * h
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return float(inter / union) if union > 0 else 0.0
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        for k, tile in enumerate(tiles):
+            if tile.contains(cx, cy, side) and (best[k] is None or score > best[k][0]):
+                best[k] = (score, kpts)
+    return [tiles[k].to_frame(b[1]) if b is not None else None for k, b in enumerate(best)]

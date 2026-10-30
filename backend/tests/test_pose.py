@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from app.ml.detect import Detection
-from app.ml.pose import Pose, attach_poses, decode_yolov8_pose, to_frame
+from app.ml.pose import Tile, decode_yolov8_pose, mosaic, poses_in_tiles
 
 IMGSZ = (640, 640)
 
@@ -58,26 +58,30 @@ def test_nobody_nothing():
     assert decode_yolov8_pose(_heads(logit=-6.0), IMGSZ) == []
 
 
-def test_poses_go_back_to_frame_pixels():
-    decoded = decode_yolov8_pose(_heads(), IMGSZ)
-    ratio, pad = 640 / 1920, (0.0, 140.0)
-    pose = to_frame(decoded, ratio, pad)[0]
-    x1, y1, x2, y2 = pose.bbox
-    assert x1 == pytest.approx((20.5 * 16 - 32) / ratio, abs=0.5)
-    assert y1 == pytest.approx((10.5 * 16 - 64 - 140) / ratio, abs=0.5)
-    assert pose.keypoints[0, 1] == pytest.approx((10.5 * 16 + 16 - 140) / ratio, abs=0.5)
+def test_a_player_is_cropped_into_its_tile_and_comes_back_in_frame_pixels():
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    frame[500:560, 900:930] = 255                       # a small far player, 30 x 60 px
+    picture, tiles = mosaic(frame, [(100, 600, 180, 900), (900, 500, 930, 560)], IMGSZ)
+    assert picture.shape == (640, 640, 3) and len(tiles) == 2
+    second = tiles[1]
+    # 60 px of player fill most of a 320 px tile.
+    assert second.scale == pytest.approx(320 / (60 * 1.3))
+    assert (picture[0:320, 320:640] == 255).mean() > 0.25
+    # A point of the player there and back.
+    x = second.x0 + (915 - second.cx0) * second.scale
+    y = second.y0 + (530 - second.cy0) * second.scale
+    assert second.to_frame(np.array([[x, y, 0.9]]))[0] == pytest.approx([915, 530, 0.9])
 
 
-def test_each_pose_goes_to_the_box_it_overlaps():
-    near = Detection((100, 100, 160, 260), 0.9)
-    far = Detection((800, 50, 830, 120), 0.6)
-    pose_near = Pose((102, 98, 158, 262), 0.8, np.ones((17, 3), np.float32))
-    pose_elsewhere = Pose((400, 400, 440, 500), 0.8, np.zeros((17, 3), np.float32))
-
-    out = attach_poses([near, far], [pose_elsewhere, pose_near])
-    assert out[0].keypoints is pose_near.keypoints
-    assert out[1].keypoints is None
-    assert attach_poses([near], []) == [near]
+def test_each_tile_keeps_the_pose_centred_in_it():
+    tiles = [Tile(0, 0, 100, 100, 2.0), Tile(320, 0, 500, 100, 4.0)]
+    kpts = np.tile(np.array([[400.0, 80.0, 0.9]], np.float32), (17, 1))
+    weak = np.tile(np.array([[420.0, 90.0, 0.9]], np.float32), (17, 1))
+    decoded = [(np.array([360.0, 20.0, 440.0, 140.0]), 0.4, weak),
+               (np.array([350.0, 10.0, 450.0, 150.0]), 0.8, kpts)]
+    first, second = poses_in_tiles(decoded, tiles, IMGSZ)
+    assert first is None
+    assert second[0] == pytest.approx([(400 - 320) / 4 + 500, 80 / 4 + 100, 0.9])
 
 
 # ── The estimator on a stand-in for HailoRT ──────────────────────────────────
@@ -140,16 +144,23 @@ def _fresh_device(monkeypatch):
     monkeypatch.setattr(detect_hailo, "_SHARED", {"device": None, "stack": None, "users": 0})
 
 
-def test_the_estimator_finds_the_pose_in_the_frame(monkeypatch, tmp_path):
+def test_the_estimator_gives_each_detection_the_pose_of_its_tile(monkeypatch, tmp_path):
+    """The fake network sees one person, in the second tile (top right):
+    the second most confident detection gets the keypoints."""
     from app.ml.detect_hailo import HailoPoseEstimator
 
     hef = tmp_path / "yolov8s_pose_h8l_pi.hef"
     hef.write_bytes(b"hef")
     monkeypatch.setitem(sys.modules, "hailo_platform", _fake_runtime(_heads()))
     estimator = HailoPoseEstimator(hef)
-    poses = estimator.estimate(np.zeros((1080, 1920, 3), np.uint8))
+    detections = [Detection((900, 500, 930, 560), 0.5), Detection((100, 600, 180, 900), 0.9)]
+    posed = estimator.estimate_for(np.zeros((1080, 1920, 3), np.uint8), detections)
     assert estimator.name == "yolov8s_pose_h8l_pi.hef"
-    assert len(poses) == 1 and poses[0].keypoints.shape == (17, 3)
+    assert posed[1].keypoints is None                  # first tile: nobody
+    points = posed[0].keypoints
+    assert points.shape == (17, 3)
+    # Back in frame pixels, near the far player's box.
+    assert 860 < points[0, 0] < 970 and 470 < points[0, 1] < 590
     estimator.close()
 
 

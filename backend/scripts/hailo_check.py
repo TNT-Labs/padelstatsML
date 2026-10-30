@@ -103,9 +103,10 @@ def _compare(video: str, detector, settings, poser=None) -> None:
     print(f"Scheda:     {len(on_board)} persone "
           f"(confidenze {', '.join(f'{d.confidence:.2f}' for d in on_board[:8])})")
     if poser is not None:
-        poses = poser.estimate(frame)
-        visible = [int((p.keypoints[:, 2] >= 0.5).sum()) for p in poses]
-        print(f"Postura:    {len(poses)} persone, punti del corpo visibili {visible} su 17")
+        posed = poser.estimate_for(frame, on_board)
+        visible = [int((d.keypoints[:, 2] >= 0.5).sum()) if d.keypoints is not None else 0 for d in posed]
+        print(f"Postura:    {sum(d.keypoints is not None for d in posed)} su {len(posed)} giocatori, "
+              f"punti del corpo visibili {visible} su 17")
     try:
         cpu = PersonDetector(settings.detector_model, imgsz=settings.detector_imgsz,
                              conf_threshold=settings.detector_conf_weak).detect(frame)
