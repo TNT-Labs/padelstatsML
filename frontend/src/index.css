@@ -156,6 +156,8 @@ input[type="text"]:focus { outline: 2px solid var(--green); outline-offset: -1px
 .modal h2 { margin-bottom: .5rem; }
 .modal-actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
 @media (max-width: 480px) { .modal-actions .btn { flex: 1 1 100%; } }
+/* Right / left hand under a player's name. */
+.hand-choice { display: flex; justify-content: center; gap: .4rem; margin-top: .6rem; }
 .preset-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .88rem; }
 /* A saved camera position: its name applies it, the × beside it deletes it. */
 .preset-chip { display: inline-flex; }

@@ -115,6 +115,10 @@ class Match(Base):
     analysis_start_s: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     player_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # The hand each player holds the racket in, by player id like the names:
+    # "R" right, "L" left, None not said. Forehand and backhand are on
+    # opposite sides for a left-hander.
+    player_hands: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

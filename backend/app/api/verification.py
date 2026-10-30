@@ -223,6 +223,7 @@ async def apply_refinement(
     names_cleared = bool(match.player_names) and not same_slots(stats.per_player, result["per_player"])
     if names_cleared:
         match.player_names = None
+        match.player_hands = None
     match.calibration = calibration_data
     stats.per_player = result["per_player"]
     stats.heatmaps = result["heatmaps"]

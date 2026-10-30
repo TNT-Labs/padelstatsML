@@ -108,3 +108,15 @@ async def test_only_an_analysed_match_can_be_refreshed():
     async with owner:
         match_id = (await owner.post("/api/matches", json={"title": "Nuova"})).json()["match_id"]
         assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 409
+
+
+async def test_the_hands_are_kept_with_the_names(analysed_match):
+    owner, match_id = analysed_match
+    response = await owner.patch(f"/api/matches/{match_id}", json={"player_hands": ["R", "R", "L", None]})
+    assert response.status_code == 200, response.text
+    assert response.json()["player_hands"] == ["R", "R", "L", None]
+    assert (await owner.patch(f"/api/matches/{match_id}", json={"player_hands": ["X"]})).status_code == 422
+
+    assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["player_hands"] == ["R", "R", "L", None]

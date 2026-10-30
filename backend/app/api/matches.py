@@ -708,6 +708,7 @@ async def start_analysis(
     # improves. Kept, they would silently label the wrong players; cleared,
     # the app asks for them again when the analysis completes.
     match.player_names = None
+    match.player_hands = None
     await db.flush()
     return await _read(db, match, user)
 
@@ -757,6 +758,8 @@ async def update_match(
         match.title = payload.title
     if payload.player_names is not None:
         match.player_names = [n.strip() for n in payload.player_names]
+    if payload.player_hands is not None:
+        match.player_hands = list(payload.player_hands)
     await db.flush()
     return await _read(db, match, user)
 
@@ -782,6 +785,7 @@ async def get_stats(
         match_id=match_id,
         title=match.title,
         player_names=match.player_names,
+        player_hands=match.player_hands,
         per_player=per_player,
         heatmaps=stats.heatmaps,
         rallies=stats.rallies,
