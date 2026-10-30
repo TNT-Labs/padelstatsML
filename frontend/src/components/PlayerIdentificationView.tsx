@@ -1,5 +1,5 @@
 import { useState, type FC } from 'react'
-import { api, type MatchStats } from '../api'
+import { api, type Hand, type MatchStats } from '../api'
 import { playerPlace } from '../lib/format'
 import { PlayerThumb } from './PlayerThumb'
 
@@ -14,11 +14,15 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
   const [names, setNames] = useState<string[]>(
     players.map((_, i) => stats.player_names?.[i] ?? ''),
   )
+  const [hands, setHands] = useState<Hand[]>(players.map((_, i) => stats.player_hands?.[i] ?? null))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const setName = (index: number, value: string) =>
     setNames(current => current.map((n, i) => (i === index ? value : n)))
+  // A second click on the chosen hand clears it: "not said" stays possible.
+  const setHand = (index: number, value: Hand) =>
+    setHands(current => current.map((h, i) => (i === index ? (h === value ? null : value) : h)))
 
   const save = async () => {
     setSaving(true)
@@ -26,7 +30,7 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
     try {
       // Persisted on the Pi, not kept in browser state: the names used to be
       // lost on reload and never reached a second device.
-      await api.updateMatch(stats.match_id, { player_names: names })
+      await api.updateMatch(stats.match_id, { player_names: names, player_hands: hands })
       onConfirm()
     } catch (e) {
       setError((e as Error).message)
@@ -44,7 +48,9 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
       </div>
 
       <p className="muted-note" style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
-        Associa un nome a ciascun giocatore riconosciuto. I nomi restano salvati sul Pi.
+        Associa un nome a ciascun giocatore riconosciuto e indica se gioca con la destra o con la
+        sinistra: diritto e rovescio stanno dai due lati opposti per un mancino. Tutto resta
+        salvato sul Pi.
       </p>
 
       <div className="grid-2" style={{ marginBottom: '2rem' }}>
@@ -61,6 +67,19 @@ export const PlayerIdentificationView: FC<Props> = ({ stats, onConfirm, onSkip }
               onChange={e => setName(index, e.target.value)}
               style={{ width: '100%', textAlign: 'center' }}
             />
+            <div className="hand-choice" role="group" aria-label={`Mano di ${names[index] || `Giocatore ${index + 1}`}`}>
+              {(['R', 'L'] as const).map(hand => (
+                <button
+                  key={hand}
+                  type="button"
+                  className={`btn btn-sm ${hands[index] === hand ? 'btn-primary' : 'btn-ghost'}`}
+                  aria-pressed={hands[index] === hand}
+                  onClick={() => setHand(index, hand)}
+                >
+                  {hand === 'R' ? 'Destro' : 'Mancino'}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
       </div>

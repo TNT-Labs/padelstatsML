@@ -6,7 +6,7 @@ import { InfoHeading } from './InfoHeading'
 import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
-import { kmh, playerPlace } from '../lib/format'
+import { handLabel, kmh, playerPlace } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
 
@@ -260,7 +260,11 @@ export const StatsView: FC<Props> = ({
                     <span className="player-dot" style={{ background: PLAYER_COLORS[index % 4] }} />
                     <h3 style={{ margin: 0 }}>{name}</h3>
                   </div>
-                  <div className="muted-note">{playerPlace(player.team, player.role)}</div>
+                  <div className="muted-note">
+                    {[playerPlace(player.team, player.role), handLabel(stats.player_hands?.[index])]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </div>
                 </div>
               </div>
 

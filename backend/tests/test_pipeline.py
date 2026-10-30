@@ -749,6 +749,7 @@ class _HailoBlobDetector(_BlobDetector):
     """Stands in for the Hailo detector: the blob finder under its name."""
 
     fail_after: int | None = None
+    on_accelerator = True
 
     def __init__(self, *_args, **_kwargs) -> None:
         super().__init__()
@@ -839,3 +840,74 @@ def test_a_required_accelerator_that_is_missing_is_an_error(monkeypatch, synthet
 
     with pytest.raises(AcceleratorError):
         _run_with(monkeypatch, synthetic_match, calibration, HailoStatus(False, "non rilevato"), mode="hailo")
+
+
+# ── Posture beside the detector on the accelerator ──────────────────────────
+
+class _PoseFromBlobs:
+    """Stands in for the pose network: a pose on every person the blob finder
+    sees, its points down the middle of the box."""
+
+    fail_after: int | None = None
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "yolov8s_pose_h8l_pi.hef"
+
+    def estimate(self, frame):
+        from app.ml.detect_hailo import HailoRuntimeError
+        from app.ml.pose import Pose
+
+        self.calls += 1
+        if self.fail_after is not None and self.calls > self.fail_after:
+            raise HailoRuntimeError("Errore della postura sull'acceleratore: timeout")
+        poses = []
+        for d in _BlobDetector().detect(frame):
+            x1, y1, x2, y2 = d.bbox
+            points = np.stack([np.full(17, (x1 + x2) / 2), np.linspace(y1, y2, 17), np.full(17, 0.9)], axis=1)
+            poses.append(Pose(d.bbox, 0.9, points.astype(np.float32)))
+        return poses
+
+    def close(self) -> None:
+        pass
+
+
+def _run_with_pose(monkeypatch, synthetic_match, calibration, artifacts, poser=_PoseFromBlobs):
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _BlobDetector)
+    monkeypatch.setattr(pipeline_module, "HailoPersonDetector", _HailoBlobDetector)
+    monkeypatch.setattr(pipeline_module, "HailoPoseEstimator", poser)
+    monkeypatch.setattr(pipeline_module, "hailo_status", lambda *_a, **_k: _usable())
+    monkeypatch.setattr(pipeline_module, "pose_models", lambda *_a: ("/x/yolov8s_pose_h8l_pi.hef",))
+    monkeypatch.setattr(pipeline_module, "_ACCELERATOR_FAILED", None)
+    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", pose="auto"))
+    return pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=artifacts)
+
+
+def test_the_posture_is_stored_with_the_detections(monkeypatch, synthetic_match, calibration, tmp_path):
+    from app.ml.artifacts import read_observations
+
+    result = _run_with_pose(monkeypatch, synthetic_match, calibration, tmp_path / "run")
+    pose = result["data_quality"]["pose"]
+    assert pose["model"] == "yolov8s_pose_h8l_pi.hef" and pose["frames"] > 100
+    stored = [obs for _, obs in read_observations(tmp_path / "run")]
+    with_points = [obs for obs in stored if obs.keypoints is not None]
+    assert len(with_points) > 0.9 * len(stored)
+    assert len(result["per_player"]) == 4
+
+
+def test_a_posture_that_stops_leaves_the_analysis_going(monkeypatch, synthetic_match, calibration, tmp_path):
+    class Failing(_PoseFromBlobs):
+        fail_after = 30
+
+    result = _run_with_pose(monkeypatch, synthetic_match, calibration, tmp_path / "run", poser=Failing)
+    quality = result["data_quality"]
+    assert len(result["per_player"]) == 4
+    assert any("La postura si è interrotta" in w for w in quality["warnings"])
+    assert quality["pose"]["frames"] == 30

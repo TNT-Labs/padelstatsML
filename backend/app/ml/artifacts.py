@@ -299,7 +299,16 @@ def _encode(track_id: int, obs: Observation) -> dict:
         "q": round(obs.confidence, 3),
         "h": [round(float(v), _PRECISION_COLOR) for v in obs.color],
         **({"e": _encode_embedding(obs.embedding)} if obs.embedding is not None else {}),
+        **({"k": _encode_keypoints(obs.keypoints)} if obs.keypoints is not None else {}),
     }
+
+
+def _encode_keypoints(points: np.ndarray) -> list[float]:
+    """17 x (x, y, visibility): pixels to a tenth, visibility to a hundredth."""
+    flat = []
+    for x, y, v in np.asarray(points, dtype=np.float32).reshape(-1, 3):
+        flat += [round(float(x), 1), round(float(y), 1), round(float(v), 2)]
+    return flat
 
 
 def _encode_embedding(vector: np.ndarray) -> str:
@@ -326,6 +335,7 @@ def _decode(record: dict) -> tuple[int, Observation]:
         confidence=float(record["q"]),
         color=np.asarray(record["h"], dtype=np.float32),
         embedding=_decode_embedding(record["e"]) if "e" in record else None,
+        keypoints=np.asarray(record["k"], dtype=np.float32).reshape(-1, 3) if "k" in record else None,
     )
 
 

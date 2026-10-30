@@ -103,6 +103,7 @@ def main() -> int:
         match = session.get(Match, match_id)
         if not same_people and match.player_names:
             match.player_names = None
+            match.player_hands = None
 
     for player_id, stats in sorted(result["per_player"].items(), key=lambda kv: int(kv[0])):
         print(f"  G{int(player_id) + 1}: tracciato {stats['tracked_ratio'] * 100:.0f}%"

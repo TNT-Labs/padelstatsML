@@ -202,6 +202,8 @@ def _run_job(job_id: str) -> None:
                 inference_threads=settings.inference_threads,
                 accelerator=settings.accelerator,
                 hailo_model=settings.hailo_model or None,
+                pose="off" if settings.pose.strip().lower() in ("off", "0", "false", "no") else "auto",
+                hailo_pose_model=settings.hailo_pose_model or None,
                 sample_hz=settings.sample_hz,
                 max_analysis_minutes=settings.max_analysis_minutes,
                 max_player_speed_ms=settings.max_player_speed_ms,

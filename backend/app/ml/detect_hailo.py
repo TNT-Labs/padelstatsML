@@ -41,6 +41,9 @@ class HailoRuntimeError(DetectorError):
 class HailoPersonDetector:
     """YOLOv8 person detector on a Hailo-8 / Hailo-8L."""
 
+    # The pose network can share its board (pipeline._poser).
+    on_accelerator = True
+
     def __init__(self, model_path: str | Path, conf_threshold: float = 0.30,
                  iou_threshold: float = 0.55, alternatives: tuple[str, ...] | list[str] = ()) -> None:
         """`alternatives`: other networks found; the one compiled for the
@@ -55,9 +58,9 @@ class HailoPersonDetector:
         self.iou_threshold = float(iou_threshold)
         self._stack = contextlib.ExitStack()
         try:
-            from hailo_platform import FormatType, VDevice
+            from hailo_platform import FormatType
 
-            device = self._stack.enter_context(VDevice(_device_params(VDevice)))
+            device = self._stack.enter_context(shared_device())
             self.device = _architecture(device)
             # The network compiled for this chip first; should the chip not
             # say which it is, the next one is tried when one does not load.
@@ -232,6 +235,103 @@ def letterbox_rgb(image: np.ndarray, imgsz: tuple[int, int]) -> tuple[np.ndarray
     left, top = (target_w - new_w) // 2, (target_h - new_h) // 2
     canvas[top: top + new_h, left: left + new_w] = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     return np.ascontiguousarray(canvas), ratio, (float(left), float(top))
+
+
+# One device for the process: the detector and the pose network run on it
+# side by side, HailoRT's scheduler taking turns between them. A second
+# VDevice in the same process would find the board taken.
+_SHARED: dict = {"device": None, "stack": None, "users": 0}
+
+
+@contextlib.contextmanager
+def shared_device():
+    """The process's Hailo device, opened by its first user and closed by
+    its last."""
+    if _SHARED["device"] is None:
+        from hailo_platform import VDevice
+
+        stack = contextlib.ExitStack()
+        _SHARED["device"] = stack.enter_context(VDevice(_device_params(VDevice)))
+        _SHARED["stack"] = stack
+    _SHARED["users"] += 1
+    try:
+        yield _SHARED["device"]
+    finally:
+        _SHARED["users"] -= 1
+        if _SHARED["users"] <= 0:
+            stack, _SHARED["device"], _SHARED["stack"], _SHARED["users"] = _SHARED["stack"], None, None, 0
+            stack.close()
+
+
+class HailoPoseEstimator:
+    """YOLOv8 pose network on the same board as the detector: the 17 body
+    points of every person in the frame (app.ml.pose)."""
+
+    def __init__(self, model_path: str | Path, alternatives: tuple[str, ...] | list[str] = (),
+                 score_threshold: float = 0.3) -> None:
+        from app.ml.accel import pick_model
+        from app.ml.pose import decode_yolov8_pose
+
+        self._decode = decode_yolov8_pose
+        self.score_threshold = float(score_threshold)
+        self.model_path = str(model_path)
+        self._stack = contextlib.ExitStack()
+        try:
+            from hailo_platform import FormatType
+
+            device = self._stack.enter_context(shared_device())
+            self.device = _architecture(device)
+            self.model_path = pick_model([self.model_path, *alternatives], self.device)
+            model = device.create_infer_model(self.model_path)
+            model.set_batch_size(1)
+            model.input().set_format_type(FormatType.UINT8)
+            self._outputs = []
+            for name in _output_names(model):
+                stream = model.output(name)
+                stream.set_format_type(FormatType.FLOAT32)
+                self._outputs.append((name, tuple(int(v) for v in stream.shape)))
+            self._configured = self._stack.enter_context(model.configure())
+            height, width = (int(v) for v in model.input().shape[:2])
+            self.imgsz: tuple[int, int] = (height, width)
+            self._infer(np.full((height, width, 3), LETTERBOX_FILL, dtype=np.uint8))
+        except Exception as exc:          # noqa: BLE001 - any HailoRT failure means: no posture
+            self._stack.close()
+            raise DetectorError(f"Postura non disponibile con {Path(self.model_path).name}: {exc}") from exc
+
+    @property
+    def name(self) -> str:
+        return Path(self.model_path).name
+
+    def estimate(self, frame: np.ndarray) -> list:
+        """The poses in `frame`, in frame pixels."""
+        from app.ml.pose import to_frame
+
+        picture, ratio, pad = letterbox_rgb(frame, self.imgsz)
+        try:
+            outputs = self._infer(picture)
+        except Exception as exc:          # noqa: BLE001
+            raise HailoRuntimeError(f"Errore della postura sull'acceleratore: {exc}") from exc
+        return to_frame(self._decode(outputs, self.imgsz, score_threshold=self.score_threshold), ratio, pad)
+
+    def _infer(self, picture: np.ndarray) -> dict[str, np.ndarray]:
+        buffers = {name: np.full(shape, np.nan, dtype=np.float32) for name, shape in self._outputs}
+        bindings = self._configured.create_bindings(output_buffers=buffers)
+        bindings.input().set_buffer(picture)
+        self._configured.run([bindings], TIMEOUT_MS)
+        outputs = {name: np.asarray(bindings.output(name).get_buffer()) for name, _ in self._outputs}
+        if any(a.size and not np.isfinite(a.reshape(-1)[0]) for a in outputs.values()):
+            raise RuntimeError("la scheda non ha scritto il risultato (inferenza non eseguita)")
+        return outputs
+
+    def close(self) -> None:
+        self._stack.close()
+
+
+def _output_names(model) -> list[str]:
+    names = getattr(model, "output_names", None)
+    if names:
+        return list(names)
+    return [stream.name for stream in model.outputs]
 
 
 def _device_params(vdevice_class):

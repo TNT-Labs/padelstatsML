@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FC, type RefObject } from 'react'
 import { api, type PlayerTracks } from '../api'
 import { PLAYER_COLORS } from '../lib/players'
-import { boxAt, clock, fitRect } from '../lib/videoOverlay'
+import { MIN_VISIBLE, SKELETON, boxAt, clock, fitRect, pointsAt } from '../lib/videoOverlay'
 
 interface Props {
   matchId: string
@@ -33,6 +33,8 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
   const [tracksNote, setTracksNote] = useState<string | null>(null)
   const [loadingTracks, setLoadingTracks] = useState(true)
   const [showBoxes, setShowBoxes] = useState(true)
+  const [showSkeleton, setShowSkeleton] = useState(true)
+  const hasSkeleton = !!tracks?.players.some(p => p.kp)
   const [videoError, setVideoError] = useState<string | null>(null)
   const src = api.videoUrl(matchId)
 
@@ -89,6 +91,27 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       ctx.strokeStyle = color
       ctx.strokeRect(x, y, (box[2] - box[0]) * scale, (box[3] - box[1]) * scale)
 
+      const points = showSkeleton ? pointsAt(player.t, player.kp, video.currentTime, maxGap) : null
+      if (points) {
+        const px = (k: number) => offsetX + points[3 * k] * scale
+        const py = (k: number) => offsetY + points[3 * k + 1] * scale
+        const seen = (k: number) => points[3 * k + 2] >= MIN_VISIBLE
+        ctx.beginPath()
+        for (const [a, b] of SKELETON) {
+          if (!seen(a) || !seen(b)) continue
+          ctx.moveTo(px(a), py(a))
+          ctx.lineTo(px(b), py(b))
+        }
+        ctx.stroke()
+        ctx.fillStyle = color
+        for (let k = 0; k < 17; k++) {
+          if (!seen(k)) continue
+          ctx.beginPath()
+          ctx.arc(px(k), py(k), width < NARROW_PX ? 1.5 : 2.5, 0, 2 * Math.PI)
+          ctx.fill()
+        }
+      }
+
       const label = names[player.id] || `G${player.id + 1}`
       const labelW = ctx.measureText(label).width + 6
       const labelY = Math.max(y, tag.height)
@@ -97,7 +120,7 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       ctx.fillStyle = '#fff'
       ctx.fillText(label, x + 2, labelY - 2)
     }
-  }, [tracks, showBoxes, names, videoRef])
+  }, [tracks, showBoxes, showSkeleton, names, videoRef])
 
   useEffect(() => {
     const video = videoRef.current
@@ -154,15 +177,28 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
     <div className="card" style={{ marginBottom: '1.25rem' }}>
       <div className="card-head">
         <h2 style={{ margin: 0 }}>Video della partita</h2>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={showBoxes}
-            onChange={e => setShowBoxes(e.target.checked)}
-            disabled={!tracks}
-          />
-          Mostra i giocatori
-        </label>
+        <div className="toggles">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={showBoxes}
+              onChange={e => setShowBoxes(e.target.checked)}
+              disabled={!tracks}
+            />
+            Mostra i giocatori
+          </label>
+          {hasSkeleton && (
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showSkeleton}
+                onChange={e => setShowSkeleton(e.target.checked)}
+                disabled={!showBoxes}
+              />
+              Scheletro
+            </label>
+          )}
+        </div>
       </div>
 
       <div className="video-wrap">

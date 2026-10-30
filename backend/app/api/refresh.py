@@ -73,6 +73,7 @@ async def refresh_stats(
     names_cleared = bool(match.player_names) and not same_slots(stats.per_player, result["per_player"])
     if names_cleared:
         match.player_names = None
+        match.player_hands = None
     if not same_slots(stats.per_player, result["per_player"]):
         # Other people under the same numbers: no picture until the new
         # ones are cut, rather than a face that names the wrong player.

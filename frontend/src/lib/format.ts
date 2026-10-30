@@ -41,6 +41,10 @@ export function apiAsset(url: string, base: string): string {
  * near the camera, or far from it, where the analysis starts: at changeovers
  * the pairs trade ends and keep their ids.
  */
+export function handLabel(hand?: 'R' | 'L' | null): string {
+  return hand === 'L' ? 'mancino' : hand === 'R' ? 'destro' : ''
+}
+
 export function playerPlace(team: number, role?: 'drive' | 'reves' | null): string {
   const pair = team === 0 ? 'Coppia vicina a inizio analisi' : team === 1 ? 'Coppia lontana a inizio analisi' : '—'
   if (role === 'drive') return `${pair} · lato drive`

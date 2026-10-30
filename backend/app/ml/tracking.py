@@ -97,6 +97,9 @@ class Observation:
     # Unit-length re-identification vector (see app.ml.reid), or None when no
     # re-ID model is installed or the crop was too small to describe anybody.
     embedding: np.ndarray | None = field(default=None, repr=False, compare=False)
+    # The body's 17 points (app.ml.pose: x, y in frame pixels, visibility),
+    # or None without the accelerator or when no pose matched the box.
+    keypoints: np.ndarray | None = field(default=None, repr=False, compare=False)
 
 
 def observation_key(obs: Observation) -> tuple[int, tuple[float, float]]:
@@ -454,6 +457,7 @@ class CourtTracker:
                     foot_court=(float(pos[0]), float(pos[1])),
                     confidence=det.confidence,
                     color=_kit_histogram(frame, det.bbox),
+                    keypoints=getattr(det, "keypoints", None),
                 )
             )
 

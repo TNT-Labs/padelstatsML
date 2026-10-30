@@ -39,6 +39,7 @@ export interface Match {
   width: number | null
   height: number | null
   player_names: string[] | null
+  player_hands?: Hand[] | null
   calibrated: boolean
   /** Second of the video the analysis starts from; null: the beginning. */
   analysis_start_s?: number | null
@@ -205,6 +206,8 @@ export interface DataQuality {
   variable_frame_rate?: boolean
   /** Second detector look at the far half, when enabled. */
   far_pass?: { active: boolean; added: number } | null
+  /** The players' posture on the accelerator. */
+  pose?: { model: string | null; frames: number } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */
   tracking?: { weak_detections: number; feet_below_net: number; scenery?: number } | null
@@ -285,10 +288,14 @@ export interface VerificationPlan {
   last: VerificationResult | null
 }
 
+/** The hand a player holds the racket in: right, left, not said. */
+export type Hand = 'R' | 'L' | null
+
 export interface MatchStats {
   match_id: string
   title: string
   player_names: string[] | null
+  player_hands?: Hand[] | null
   per_player: Record<string, PlayerStats>
   heatmaps: Record<string, [number, number, number][]>
   rallies: Rally[]
@@ -305,6 +312,9 @@ export interface PlayerBoxes {
   t: number[]
   /** x1, y1, x2, y2 of each sample, in the video's pixels, one after another. */
   box: number[]
+  /** The body's 17 points of each sample (x, y, visibility 0-100, one after
+   *  another), null where none; absent without the posture. */
+  kp?: (number[] | null)[]
 }
 
 export interface PlayerTracks {
@@ -375,7 +385,7 @@ export const api = {
       body: JSON.stringify({ title, file_size_bytes: fileSizeBytes }),
     }),
 
-  updateMatch: (id: string, patch: { title?: string; player_names?: string[] }) =>
+  updateMatch: (id: string, patch: { title?: string; player_names?: string[]; player_hands?: Hand[] }) =>
     req<Match>(`/api/matches/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   startAnalysis: (id: string) => req<Match>(`/api/matches/${id}/start`, { method: 'POST' }),

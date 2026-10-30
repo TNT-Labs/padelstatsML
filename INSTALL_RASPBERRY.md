@@ -333,6 +333,11 @@ dell'analisi è identico. Senza la scheda l'app funziona come prima.
   meglio un dissipatore sul chip Hailo e una ventola che soffi fra scheda e
   Pi. Intanto `WORKER_CPUS=3` in `.env` e `docker compose up -d` riducono il
   carico (analisi un po' più lunga).
+- **Postura.** Con la scheda il worker stima anche i 17 punti del corpo di
+  ogni giocatore (rete `yolov8s_pose_*.hef` di `hailo-models`): nel video
+  della partita l'interruttore **Scheletro** li disegna, e nel pannello
+  "Affidabilità dei dati" la riga **Postura** dice in quanti fotogrammi.
+  `POSE=off` la disattiva.
 - **Disattivarla** senza toglierla: `ACCELERATOR=cpu` in `.env`.
 - **Stato:** `docker compose exec api curl -s localhost:8000/padel/api/health`
   alla voce `accelerator`.

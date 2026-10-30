@@ -83,6 +83,15 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 </dd>
               </div>
             )}
+            {quality.pose && (
+              <div>
+                <dt>Postura</dt>
+                <dd>
+                  {quality.pose.frames.toLocaleString('it-IT')} fotogrammi con lo scheletro dei giocatori
+                  {quality.pose.model && ` · ${quality.pose.model}`}
+                </dd>
+              </div>
+            )}
             {quality.tracking &&
               (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0 || !!quality.tracking.scenery) && (
               <div>

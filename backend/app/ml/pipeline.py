@@ -26,14 +26,15 @@ from pathlib import Path
 
 import numpy as np
 
-from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status
+from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status, pose_models
 from app.ml.artifacts import ArtifactWriter
 from app.ml.court import CourtCalibration
 from app.ml.detect import DetectorError, PersonDetector, merge_detections, within_crop
-from app.ml.detect_hailo import HailoPersonDetector, HailoRuntimeError
+from app.ml.detect_hailo import HailoPersonDetector, HailoPoseEstimator, HailoRuntimeError
 from app.ml.footpoint import FOOT_MODEL_VERSION
 from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
+from app.ml.pose import attach_poses
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.smoothing import smooth_path
 from app.ml.rallies import Rally, activity_threshold, detect_rallies
@@ -89,6 +90,10 @@ class PipelineConfig:
     # "cpu" or "hailo" (see app/ml/accel.py), and the accelerator's network.
     accelerator: str = "cpu"
     hailo_model: str | None = None
+    # The players' posture on the accelerator ("auto" / "off"), and a pose
+    # network of one's own (see app/ml/pose.py).
+    pose: str = "off"
+    hailo_pose_model: str | None = None
 
 
 @dataclass
@@ -135,6 +140,8 @@ class AnalysisPipeline:
 
         report(2, "Caricamento modello…")
         detector, accelerator_note = self._detector()
+        poser, pose_note = self._poser(detector)
+        posed_frames = 0
         embedder = self._embedder()
 
         max_duration_s = self.config.max_analysis_minutes * 60.0
@@ -191,6 +198,8 @@ class AnalysisPipeline:
                     # of the video on the CPU, and the note says from when.
                     _accelerator_failed(str(exc))
                     logger.error("%s · proseguo sul processore", exc)
+                    _close(poser)
+                    poser = None
                     _close(detector)
                     detector = self._cpu_detector()
                     accelerator_note = (
@@ -198,6 +207,18 @@ class AnalysisPipeline:
                         "il resto del video è stato analizzato sul processore.")
                     detections, added = _look(detector, frame.image, roi, far_roi)
                 far_added += added
+                if poser is not None:
+                    try:
+                        poses = poser.estimate(frame.image)
+                    except HailoRuntimeError as exc:
+                        logger.error("%s · proseguo senza postura", exc)
+                        _close(poser)
+                        poser = None
+                        pose_note = (f"La postura si è interrotta al minuto {_clock(frame.timestamp_s)}: "
+                                     "da lì in poi non è stata stimata.")
+                    else:
+                        detections = attach_poses(detections, poses)
+                        posed_frames += bool(poses)
                 tracked = tracker.update(
                     frame_index=frame.index,
                     timestamp_s=frame.timestamp_s,
@@ -226,6 +247,11 @@ class AnalysisPipeline:
                 # have been.
                 "detector": _detector_name(detector) or Path(self.config.detector_model).name,
                 "accelerator_note": accelerator_note,
+                # The players' posture: the network, and the frames where
+                # someone's was found.
+                "pose": ({"model": poser.name if poser is not None else None, "frames": posed_frames}
+                         if posed_frames or poser is not None else None),
+                "pose_note": pose_note,
                 "variable_frame_rate": sampler.variable_frame_rate,
                 # Detections recognised as part of the empty court and left out.
                 "scenery": tracker.detections_rejected_scenery,
@@ -257,6 +283,7 @@ class AnalysisPipeline:
         finally:
             if writer is not None:
                 writer.__exit__(None, None, None)
+            _close(poser)
             _close(detector)
 
         report(88, f"{len(tracklets)} tracce raccolte su {frames_sampled} frame")
@@ -339,6 +366,22 @@ class AnalysisPipeline:
         logger.info("Rilevatore sull'acceleratore: %s", detector.name)
         return detector, None
 
+    def _poser(self, detector):
+        """(pose estimator, note): only beside a detector on the accelerator,
+        sharing its board; None with the reason when it cannot be."""
+        if self.config.pose == "off" or not getattr(detector, "on_accelerator", False):
+            return None, None
+        models = pose_models(self.config.hailo_pose_model)
+        if not models:
+            return None, None
+        try:
+            poser = HailoPoseEstimator(models[0], alternatives=models)
+        except DetectorError as exc:
+            logger.warning("%s", exc)
+            return None, f"{exc}: analisi senza postura."
+        logger.info("Postura sull'acceleratore: %s", poser.name)
+        return poser, None
+
     def _cpu_detector(self) -> PersonDetector:
         return PersonDetector(
             model_path=self.config.detector_model,
@@ -412,6 +455,7 @@ class AnalysisPipeline:
                 "detector_model": Path(self.config.detector_model).name,
                 "detector_imgsz": self.config.detector_imgsz,
                 "accelerator": accelerator_mode(self.config.accelerator),
+                "pose": self.config.pose,
                 "detector_conf": self.config.detector_conf,
                 "detector_conf_weak": self.config.detector_conf_weak,
                 "detector_iou": self.config.detector_iou,
@@ -447,6 +491,10 @@ def apply_run_quality(result: dict, run_quality: dict | None) -> None:
         quality["warnings"].append(run_quality["truncated"])
     if run_quality.get("detector"):
         quality["detector_model"] = run_quality["detector"]
+    if run_quality.get("pose"):
+        quality["pose"] = run_quality["pose"]
+    if run_quality.get("pose_note"):
+        quality["warnings"].append(run_quality["pose_note"])
     if run_quality.get("accelerator_note"):
         quality["warnings"].append(run_quality["accelerator_note"])
 
@@ -545,6 +593,8 @@ def _detector_name(detector) -> str | None:
 
 
 def _close(detector) -> None:
+    if detector is None:
+        return
     close = getattr(detector, "close", None)
     if close is not None:
         close()

@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     # Compiled network (.hef). Empty: the first found among weights/ and the
     # hailo-models package (accel.DEFAULT_MODELS).
     hailo_model: str = ""
+    # The players' posture (17 body points) on the accelerator, alongside the
+    # detector: "auto" when a pose network is found, "off" never. Without
+    # the accelerator there is none. HAILO_POSE_MODEL: a .hef of one's own.
+    pose: str = "auto"
+    hailo_pose_model: str = ""
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

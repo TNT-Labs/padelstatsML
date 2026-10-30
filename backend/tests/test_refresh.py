@@ -78,6 +78,9 @@ async def test_statistics_are_recomputed_from_the_stored_run(analysed_match):
     # check kept with them, the calibration it measured unchanged.
     assert stats["player_names"] == ["A", "B", "C", "D"]
     assert stats["data_quality"]["verification"]["at"] == "2026-10-01T10:00:00+00:00"
+    # How the tracker got its players reaches the reliability panel (the
+    # response schema used to drop it).
+    assert set(stats["data_quality"]["tracking"]) >= {"weak_detections", "feet_below_net"}
 
 
 async def test_read_only_accounts_cannot_refresh(analysed_match):
@@ -108,3 +111,15 @@ async def test_only_an_analysed_match_can_be_refreshed():
     async with owner:
         match_id = (await owner.post("/api/matches", json={"title": "Nuova"})).json()["match_id"]
         assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 409
+
+
+async def test_the_hands_are_kept_with_the_names(analysed_match):
+    owner, match_id = analysed_match
+    response = await owner.patch(f"/api/matches/{match_id}", json={"player_hands": ["R", "R", "L", None]})
+    assert response.status_code == 200, response.text
+    assert response.json()["player_hands"] == ["R", "R", "L", None]
+    assert (await owner.patch(f"/api/matches/{match_id}", json={"player_hands": ["X"]})).status_code == 422
+
+    assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["player_hands"] == ["R", "R", "L", None]

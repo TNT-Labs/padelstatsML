@@ -63,14 +63,30 @@ def main() -> int:
         return 1
     print(f"\nInferenza di prova riuscita: {detector.name}")
 
+    from app.ml.accel import pose_models
+    from app.ml.detect_hailo import HailoPoseEstimator
+
+    poser = None
+    models = pose_models(settings.hailo_pose_model or None)
+    print(f"Reti postura: {', '.join(Path(m).name for m in models) or '-'}")
+    if models:
+        try:
+            poser = HailoPoseEstimator(models[0], alternatives=models)
+            print(f"Postura: inferenza di prova riuscita con {poser.name}")
+        except DetectorError:
+            print("\nERRORE nella postura:")
+            traceback.print_exc()
+
     if len(sys.argv) > 1:
-        _compare(sys.argv[1], detector, settings)
+        _compare(sys.argv[1], detector, settings, poser)
+    if poser is not None:
+        poser.close()
     detector.close()
     print("\nTutto a posto: la scheda rileva.")
     return 0
 
 
-def _compare(video: str, detector, settings) -> None:
+def _compare(video: str, detector, settings, poser=None) -> None:
     """People found in one frame a minute in, on the board and on the CPU."""
     import cv2
 
@@ -86,6 +102,10 @@ def _compare(video: str, detector, settings) -> None:
     on_board = detector.detect(frame)
     print(f"Scheda:     {len(on_board)} persone "
           f"(confidenze {', '.join(f'{d.confidence:.2f}' for d in on_board[:8])})")
+    if poser is not None:
+        poses = poser.estimate(frame)
+        visible = [int((p.keypoints[:, 2] >= 0.5).sum()) for p in poses]
+        print(f"Postura:    {len(poses)} persone, punti del corpo visibili {visible} su 17")
     try:
         cpu = PersonDetector(settings.detector_model, imgsz=settings.detector_imgsz,
                              conf_threshold=settings.detector_conf_weak).detect(frame)

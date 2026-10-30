@@ -20,6 +20,8 @@ def _as_utc(value: datetime) -> datetime:
 # ── Matches ──────────────────────────────────────────────────────────────────
 
 PlayerName = Annotated[str, Field(max_length=60)]
+# "R" right-handed, "L" left-handed, None not said.
+PlayerHand = Literal["R", "L"] | None
 
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
@@ -30,6 +32,7 @@ class MatchCreate(BaseModel):
 class MatchUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     player_names: list[PlayerName] | None = Field(default=None, max_length=4)
+    player_hands: list[PlayerHand] | None = Field(default=None, max_length=4)
 
 
 class UploadInitResponse(BaseModel):
@@ -59,6 +62,7 @@ class MatchRead(BaseModel):
     width: int | None
     height: int | None
     player_names: list[str] | None
+    player_hands: list[PlayerHand] | None = None
     calibrated: bool
     analysis_start_s: float | None = None
     # Only filled in for administrators, who see everyone's matches.
@@ -84,6 +88,7 @@ class MatchRead(BaseModel):
             width=match.width,
             height=match.height,
             player_names=match.player_names,
+            player_hands=match.player_hands,
             calibrated=bool(match.calibration),
             analysis_start_s=match.analysis_start_s,
             owner=owner,
@@ -205,6 +210,11 @@ class DataQuality(BaseModel):
     variable_frame_rate: bool = False
     # Second detector look at the far half: {"active", "added"}, when enabled.
     far_pass: dict | None = None
+    # {"weak_detections", "feet_below_net", "scenery"}: how the tracker got
+    # its players. Listed here or the response drops it, as it did.
+    tracking: dict | None = None
+    # The players' posture on the accelerator: {"model", "frames"}.
+    pose: dict | None = None
     # Last accuracy check against points marked by hand (app.ml.verification).
     verification: dict | None = None
 
@@ -223,6 +233,7 @@ class MatchStatsRead(BaseModel):
     match_id: str
     title: str
     player_names: list[str] | None
+    player_hands: list[PlayerHand] | None = None
     per_player: dict[str, PlayerStats]
     heatmaps: dict[str, list[list[float]]]
     rallies: list[RallyRead]

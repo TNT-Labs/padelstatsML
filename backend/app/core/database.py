@@ -89,7 +89,7 @@ def sync_session() -> Iterator[Session]:
 # 1: accounts — matches and camera presets get an owner.
 # 2: matches.analysis_start_s — where in the video the analysis starts.
 # 3: camera_presets.k1 — lens correction of a saved camera.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def init_schema(engine: Engine | None = None) -> None:
@@ -115,6 +115,8 @@ def init_schema(engine: Engine | None = None) -> None:
             conn.exec_driver_sql("ALTER TABLE matches ADD COLUMN analysis_start_s FLOAT")
         if version < 3 and "k1" not in _columns(conn, "camera_presets"):
             conn.exec_driver_sql("ALTER TABLE camera_presets ADD COLUMN k1 FLOAT")
+        if version < 4 and "player_hands" not in _columns(conn, "matches"):
+            conn.exec_driver_sql("ALTER TABLE matches ADD COLUMN player_hands JSON")
         if version < SCHEMA_VERSION:
             conn.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
