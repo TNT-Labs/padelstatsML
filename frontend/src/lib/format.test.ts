@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh, parseClock, playerPlace, strokeCheck, strokesOf } from './format'
+import { apiAsset, kmh, parseClock, playerPlace, strokeCheck } from './format'
 
 describe('parseClock', () => {
   it('reads seconds, minutes and hours', () => {
@@ -50,22 +50,6 @@ describe('playerPlace', () => {
   it('leaves the side out for results found by linking alone', () => {
     expect(playerPlace(0)).toBe('Coppia vicina a inizio analisi')
     expect(playerPlace(1, null)).toBe('Coppia lontana a inizio analisi')
-  })
-})
-
-describe('strokesOf', () => {
-  const strokes = [
-    { t: 1, kind: 'overhead' as const, wrists: 'R' },
-    { t: 2, kind: 'lob' as const, wrists: 'L' },
-    { t: 3, kind: 'overhead' as const, wrists: 'LR' },
-  ]
-  it('keeps the racket hand only, once it is known', () => {
-    expect(strokesOf(strokes, 'R')!.map(s => s.t)).toEqual([1, 3])
-    expect(strokesOf(strokes, 'L')!.map(s => s.t)).toEqual([2, 3])
-    expect(strokesOf(strokes, null)).toHaveLength(3)
-  })
-  it('is null without the posture', () => {
-    expect(strokesOf(undefined, 'R')).toBeNull()
   })
 })
 

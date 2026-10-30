@@ -70,6 +70,7 @@ from app.ml.court import (
     suggest_corners,
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
+from app.ml.strokes import for_hand
 from app.ml.video import VideoError, extract_background, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
 from app.schemas.match import (
@@ -796,9 +797,15 @@ async def get_stats(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Statistiche non ancora disponibili.")
 
     crops = stats.player_crops or {}
+    hands = match.player_hands or []
     per_player = {}
     for player_id, values in stats.per_player.items():
         entry = dict(values)
+        if entry.get("strokes") is not None:
+            # Classified with the racket hand, known only once the players
+            # are named with it (app.ml.strokes).
+            index = int(player_id)
+            entry["strokes"] = for_hand(entry["strokes"], hands[index] if index < len(hands) else None)
         if player_id in crops:
             entry["crop_url"] = crop_url(match_id, int(player_id))
         per_player[player_id] = entry

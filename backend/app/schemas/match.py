@@ -181,8 +181,8 @@ class PlayerStats(BaseModel):
     # "drive" or "reves" when players were found by their side of the pair.
     role: str | None = None
     crop_url: str | None = None
-    # High strokes from the posture (app.ml.strokes): [{"t", "kind", "wrists"}];
-    # None without it.
+    # High strokes from the posture (app.ml.strokes): candidates as stored,
+    # [{"t", "kind"}] as read; None without the posture.
     strokes: list[dict] | None = None
 
 
