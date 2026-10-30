@@ -75,6 +75,37 @@ export function pointsAt(
   return before <= after ? a : b
 }
 
+/** A name tag: left edge, bottom edge (where it would sit, on the box's
+ *  top), width and height, in canvas pixels. */
+export interface Tag {
+  x: number
+  bottom: number
+  w: number
+  h: number
+}
+
+/**
+ * Bottom edges for the name tags so that none covers another: a player
+ * just behind another has his box's top at the same height, and his tag
+ * hid the other's name. Tags are placed top first; one that would overlap
+ * an earlier one moves down a tag's height at a time, over its own box.
+ */
+export function placeTags(tags: Tag[]): number[] {
+  const placed: { x: number; top: number; w: number; h: number }[] = []
+  const out = new Array<number>(tags.length)
+  const order = tags.map((_, i) => i).sort((a, b) => tags[a].bottom - tags[b].bottom)
+  for (const i of order) {
+    const tag = tags[i]
+    let bottom = tag.bottom
+    const overlaps = () =>
+      placed.some(p => tag.x < p.x + p.w && p.x < tag.x + tag.w && bottom - tag.h < p.top + p.h && p.top < bottom)
+    for (let step = 0; step < 8 && overlaps(); step++) bottom += tag.h
+    placed.push({ x: tag.x, top: bottom - tag.h, w: tag.w, h: tag.h })
+    out[i] = bottom
+  }
+  return out
+}
+
 /** Where a frame of `frameW`×`frameH` lands in a `boxW`×`boxH` element
  *  showing it whole (object-fit: contain, as <video> does). */
 export function fitRect(frameW: number, frameH: number, boxW: number, boxH: number) {
