@@ -44,6 +44,7 @@ from app.ml.court import DERIVED_MAX_OFF_FRAME, CalibrationSource, CourtCalibrat
 from app.ml.tracking import Observation, Tracklet
 
 SCHEMA_VERSION = 1
+POSES_FILE = "poses.jsonl"
 
 
 class ArtifactWriter:
@@ -70,12 +71,30 @@ class ArtifactWriter:
         for stale in ("meta.json", "result.json"):
             (self.directory / stale).unlink(missing_ok=True)
         self._tracks = (self.directory / "tracks.jsonl").open("w", encoding="utf-8")
+        # The posture between the samples, when estimated: opened on the
+        # first, and a stale one from a previous run removed now.
+        (self.directory / POSES_FILE).unlink(missing_ok=True)
+        self._poses: IO[str] | None = None
         return self
 
     def __exit__(self, *_exc) -> None:
         if self._tracks is not None:
             self._tracks.close()
             self._tracks = None
+        if self._poses is not None:
+            self._poses.close()
+            self._poses = None
+
+    def write_poses(self, frame_index: int, timestamp_s: float, poses) -> None:
+        """The posture in a frame between two samples: [(track id, 17 x 3)]."""
+        if not poses:
+            return
+        if self._poses is None:
+            self._poses = (self.directory / POSES_FILE).open("w", encoding="utf-8")
+        record = {"f": frame_index, "t": round(timestamp_s, _PRECISION_TIME),
+                  "p": [[int(track_id), _encode_keypoints(points)] for track_id, points in poses]}
+        self._poses.write(json.dumps(record, separators=(",", ":")))
+        self._poses.write("\n")
 
     @property
     def observations_written(self) -> int:
@@ -337,6 +356,28 @@ def _decode(record: dict) -> tuple[int, Observation]:
         embedding=_decode_embedding(record["e"]) if "e" in record else None,
         keypoints=np.asarray(record["k"], dtype=np.float32).reshape(-1, 3) if "k" in record else None,
     )
+
+
+def read_poses(directory: str | Path) -> list[tuple[float, int, np.ndarray]]:
+    """The posture stored between the samples: (time, track id, 17 x 3),
+    in time order; none for runs without it."""
+    path = Path(directory) / POSES_FILE
+    if not path.exists():
+        return []
+    out: list[tuple[float, int, np.ndarray]] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                break                       # a run cut short: its last line
+            for track_id, flat in record["p"]:
+                out.append((float(record["t"]), int(track_id),
+                            np.asarray(flat, dtype=np.float32).reshape(-1, 3)))
+    return out
 
 
 def read_observations(directory: str | Path) -> list[tuple[int, Observation]]:

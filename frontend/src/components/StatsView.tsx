@@ -44,6 +44,8 @@ export const StatsView: FC<Props> = ({
   // By position in `players`: the high strokes, classified by the server
   // with the racket hand; null without the posture.
   const playerStrokes = players.map(([, player]) => player.strokes ?? null)
+  const playerSwings = players.map(([, player]) => player.swings ?? null)
+  const anySwings = playerSwings.some(s => s !== null)
   const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -333,13 +335,49 @@ export const StatsView: FC<Props> = ({
       {anyStrokes && (
         <StrokesCard
           // Fresh statistics (a refresh) bring their own labels.
-          key={`${stats.match_id}:${JSON.stringify(stats.stroke_labels ?? {})}`}
+          key={`high:${stats.match_id}:${JSON.stringify(stats.stroke_labels ?? {})}`}
+          title="Colpi alti"
+          info={
+            <>
+              Dallo scheletro dei giocatori, con la mano della racchetta. <strong>Smash e bandeja</strong>:
+              entro 6,5 m dalla rete, la racchetta e il braccio libero entrambi alzati, come per puntare
+              la palla; verificati colpo per colpo su una partita, giusti 29 su 30 e trovati 29 su 34.
+              <strong> Lob</strong>: la racchetta alta più indietro, quasi fermi; giusti 7 su 8, ma su
+              pochi casi, per questo non è contato nelle schede. Con «Verifica» indichi cosa è ciascuno
+              nel video: la precisione si misura qui sotto e le verifiche servono a migliorarlo.
+            </>
+          }
           stats={stats}
           strokes={playerStrokes}
           players={players.map(([pid]) => pid)}
           names={names}
           readOnly={readOnly}
           onSeek={seek}
+        />
+      )}
+
+      {anySwings && (
+        <StrokesCard
+          key={`ground:${stats.match_id}:${JSON.stringify(stats.stroke_labels ?? {})}`}
+          title="Dritti e rovesci · sperimentale"
+          info={
+            <>
+              Dallo scheletro dei giocatori stimato 15 volte al secondo: il colpo è il momento in cui il
+              polso della mano della racchetta si muove più veloce, dritto o rovescio dal lato del corpo
+              da cui parte, volée entro 3,5 m dalla rete. È una prima versione, non ancora verificata:
+              per questo non è contata nelle schede dei giocatori. Serve la mano indicata in «Rinomina
+              giocatori». Con «Verifica» indichi cosa è ciascuno nel video: le verifiche servono a
+              tararlo.
+            </>
+          }
+          stats={stats}
+          strokes={playerSwings}
+          players={players.map(([pid]) => pid)}
+          names={names}
+          readOnly={readOnly}
+          onSeek={seek}
+          emptyNote={index =>
+            stats.player_hands?.[index] ? 'nessuno' : 'indica la mano in «Rinomina giocatori»'}
         />
       )}
 

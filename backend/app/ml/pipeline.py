@@ -36,7 +36,7 @@ from app.ml.identity import IdentityResult, resolve_players
 from app.ml.player_boxes import save_player_boxes
 from app.ml.metrics import MetricsInput, compute_metrics
 from app.ml.smoothing import smooth_path
-from app.ml.strokes import detect_strokes
+from app.ml.strokes import detect_strokes, detect_swings, pose_series
 from app.ml.rallies import Rally, activity_threshold, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
@@ -94,6 +94,9 @@ class PipelineConfig:
     # network of one's own (see app/ml/pose.py).
     pose: str = "off"
     hailo_pose_model: str | None = None
+    # Posture rate (per second) between the samples, for strokes: 0 only at
+    # the samples.
+    pose_hz: float = 15.0
 
 
 @dataclass
@@ -151,7 +154,11 @@ class AnalysisPipeline:
             info=info,
             max_duration_s=max_duration_s,
             start_s=start_s,
+            # The posture between the samples too, for the swing of a
+            # stroke: the samples' own analysis is unchanged.
+            pose_hz=self.config.pose_hz if poser is not None else 0.0,
         )
+        dense_poses: list[tuple[float, int, np.ndarray]] = []
         if sampler.start_frame:
             report(2, f"Salto al minuto {_clock(sampler.start_s)}, inizio dell'analisi…")
         # The empty court: detections that are part of it (a banner with a
@@ -191,6 +198,23 @@ class AnalysisPipeline:
                 writer.write_meta(self._meta(video_path, info, calibration, sampler))
 
             for frame in sampler:
+                if not frame.main:
+                    if poser is not None:
+                        boxes = tracker.current_boxes(frame.timestamp_s)
+                        try:
+                            points = poser.points_for(frame.image, [box for _, box in boxes])
+                        except HailoRuntimeError as exc:
+                            logger.error("%s · proseguo senza postura", exc)
+                            _close(poser)
+                            poser = None
+                            pose_note = (f"La postura si è interrotta al minuto {_clock(frame.timestamp_s)}: "
+                                         "da lì in poi non è stata stimata.")
+                            continue
+                        found = [(track_id, p) for (track_id, _), p in zip(boxes, points) if p is not None]
+                        dense_poses += [(frame.timestamp_s, track_id, p) for track_id, p in found]
+                        if writer is not None:
+                            writer.write_poses(frame.index, frame.timestamp_s, found)
+                    continue
                 try:
                     detections, added = _look(detector, frame.image, roi, far_roi)
                 except HailoRuntimeError as exc:
@@ -249,7 +273,8 @@ class AnalysisPipeline:
                 "accelerator_note": accelerator_note,
                 # The players' posture: the network, and the frames where
                 # someone's was found.
-                "pose": ({"model": poser.name if poser is not None else None, "frames": posed_frames}
+                "pose": ({"model": poser.name if poser is not None else None, "frames": posed_frames,
+                          "dense_hz": round(sampler.info.fps / sampler.pose_step, 1) if sampler.pose_step else None}
                          if posed_frames or poser is not None else None),
                 "pose_note": pose_note,
                 "variable_frame_rate": sampler.variable_frame_rate,
@@ -313,6 +338,7 @@ class AnalysisPipeline:
             analysed_s=analysed_s,
             identity_progress=identity_progress,
             start_s=sampler.start_s,
+            dense_poses=dense_poses,
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
@@ -508,6 +534,7 @@ def analyse_tracklets(
     analysed_s: float,
     identity_progress: Callable[[int, int], None] | None = None,
     start_s: float = 0.0,
+    dense_poses: list | None = None,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -559,6 +586,12 @@ def analyse_tracklets(
         for player_id, strokes in detect_strokes(identity.players, paths, rallies).items():
             if str(player_id) in result["per_player"]:
                 result["per_player"][str(player_id)]["strokes"] = strokes
+    # Forehands and backhands, where the posture between the samples is.
+    if dense_poses:
+        series = pose_series(identity.players, tracklets, dense_poses)
+        for player_id, swings in detect_swings(series, paths, rallies).items():
+            if str(player_id) in result["per_player"]:
+                result["per_player"][str(player_id)]["swings"] = swings
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
     result["data_quality"]["rally_speed_threshold_ms"] = round(threshold, 2)
     # Counted on the players' samples, so a recomputed run reports it too:

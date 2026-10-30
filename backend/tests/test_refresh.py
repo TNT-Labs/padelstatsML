@@ -137,7 +137,7 @@ async def test_strokes_are_labelled_as_seen_in_the_video(analysed_match):
     stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
     assert stats["stroke_labels"] == {"1:83.4": "smash", "0:5": "lob"}
 
-    assert (await owner.patch(url, json={"labels": {"1:83.4": "dritto"}})).status_code == 422
+    assert (await owner.patch(url, json={"labels": {"1:83.4": "servizio"}})).status_code == 422
     assert (await owner.patch(url, json={"labels": {"chi": "lob"}})).status_code == 422
     viewer = await signed_in("labels-viewer", "visualizzatore")
     async with viewer:

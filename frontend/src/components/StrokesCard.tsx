@@ -1,6 +1,6 @@
-import { useState, type FC } from 'react'
+import { useState, type FC, type ReactNode } from 'react'
 import { api, type MatchStats, type Stroke, type StrokeLabel } from '../api'
-import { STROKE_LABELS, strokeCheck } from '../lib/format'
+import { STROKE_LABELS, strokeCheck, strokeName } from '../lib/format'
 import { PLAYER_COLORS } from '../lib/players'
 import { clock } from '../lib/videoOverlay'
 import { InfoHeading } from './InfoHeading'
@@ -9,6 +9,9 @@ import { InfoHeading } from './InfoHeading'
 const STROKE_LEAD_S = 1.5
 
 interface Props {
+  title: string
+  /** What the strokes are and how far they are to be trusted. */
+  info: ReactNode
   stats: MatchStats
   /** Per player, in the order of `players`: the racket hand's strokes, or null. */
   strokes: (Stroke[] | null)[]
@@ -16,15 +19,19 @@ interface Props {
   names: string[]
   readOnly: boolean
   onSeek: (seconds: number) => void
+  /** What to say for a player with none, by position: "nessuno" by default. */
+  emptyNote?: (index: number) => string
 }
 
 /**
- * The high strokes found, to watch and to check: smash and bandeja (counted
- * with the players too), lob (here only, too few checked yet). Checking them
+ * Strokes found from the posture, to watch and to check: the high ones
+ * (smash and bandeja, lob) and the forehands and backhands. Checking them
  * stroke by stroke measures the precision on each match and gives the cases
  * to tune on.
  */
-export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnly, onSeek }) => {
+export const StrokesCard: FC<Props> = ({
+  title, info, stats, strokes, players, names, readOnly, onSeek, emptyNote,
+}) => {
   const [checking, setChecking] = useState(false)
   const [labels, setLabels] = useState<Record<string, StrokeLabel>>(stats.stroke_labels ?? {})
   const [error, setError] = useState<string | null>(null)
@@ -51,8 +58,8 @@ export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnl
   const copy = async () => {
     const lines = all
       .filter(s => labels[s.key])
-      .map(s => `${names[s.i] || `G${s.i + 1}`} ${clock(s.t)} ${s.kind === 'overhead' ? 'smash' : 'lob'} -> ${labels[s.key]}`)
-    const text = [`${stats.title} · colpi alti verificati ${check.checked}`, ...lines].join('\n')
+      .map(s => `${names[s.i] || `G${s.i + 1}`} ${clock(s.t)} ${strokeName(s)} -> ${labels[s.key]}`)
+    const text = [`${stats.title} · ${title.toLowerCase()} verificati ${check.checked}`, ...lines].join('\n')
     try {
       await navigator.clipboard.writeText(text)
       setCopied('Copiate: incollale nella conversazione.')
@@ -64,15 +71,8 @@ export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnl
 
   return (
     <div className="card" style={{ marginBottom: '1.5rem' }}>
-      <InfoHeading title="Colpi alti">
-        <p style={{ margin: 0 }}>
-          Dallo scheletro dei giocatori, con la mano della racchetta. <strong>Smash e bandeja</strong>:
-          entro 6,5 m dalla rete, la racchetta e il braccio libero entrambi alzati, come per puntare la
-          palla; verificati colpo per colpo su una partita, giusti 29 su 30 e trovati 29 su 34.
-          <strong> Lob</strong>: la racchetta alta più indietro, quasi fermi; giusti 7 su 8, ma su pochi
-          casi, per questo non è contato nelle schede. Con «Verifica» indichi cosa è ciascuno nel
-          video: la precisione si misura qui sotto e le verifiche servono a migliorarlo.
-        </p>
+      <InfoHeading title={title}>
+        <p style={{ margin: 0 }}>{info}</p>
       </InfoHeading>
 
       <div className="stroke-tools">
@@ -132,7 +132,7 @@ export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnl
                       title={`Guarda il colpo, al minuto ${clock(stroke.t)}`}
                     >
                       <span className="rally-num">{clock(stroke.t)}</span>
-                      <span className="rally-dur">{stroke.kind === 'overhead' ? 'smash' : 'lob'}</span>
+                      <span className="rally-dur">{strokeName(stroke)}</span>
                     </button>
                     {checking && (
                       <select
@@ -153,7 +153,7 @@ export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnl
                   </div>
                 )
               })}
-              {list.length === 0 && <span className="muted-note">nessuno</span>}
+              {list.length === 0 && <span className="muted-note">{emptyNote ? emptyNote(index) : 'nessuno'}</span>}
             </div>
           </div>
         )

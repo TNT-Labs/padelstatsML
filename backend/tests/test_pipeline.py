@@ -857,6 +857,11 @@ class _PoseFromBlobs:
     def name(self) -> str:
         return "yolov8s_pose_h8l_pi.hef"
 
+    def points_for(self, frame, boxes):
+        """Between the samples: the same skeleton in each box."""
+        return [np.stack([np.full(17, (x1 + x2) / 2), np.linspace(y1, y2, 17), np.full(17, 0.9)],
+                         axis=1).astype(np.float32) for x1, y1, x2, y2 in boxes]
+
     def estimate_for(self, frame, detections):
         from dataclasses import replace
 
@@ -897,6 +902,14 @@ def test_the_posture_is_stored_with_the_detections(monkeypatch, synthetic_match,
     result = _run_with_pose(monkeypatch, synthetic_match, calibration, tmp_path / "run")
     pose = result["data_quality"]["pose"]
     assert pose["model"] == "yolov8s_pose_h8l_pi.hef" and pose["frames"] > 100
+    # Between the samples too: three poses a sample at 30 fps.
+    assert pose["dense_hz"] == 15.0
+    from app.ml.artifacts import read_poses
+
+    between = read_poses(tmp_path / "run")
+    assert len(between) > 1.5 * len(read_observations(tmp_path / "run"))
+    assert all(p.shape == (17, 3) for _, _, p in between[:10])
+    assert all("swings" in player for player in result["per_player"].values())
     stored = [obs for _, obs in read_observations(tmp_path / "run")]
     with_points = [obs for obs in stored if obs.keypoints is not None]
     assert len(with_points) > 0.9 * len(stored)
