@@ -38,14 +38,15 @@ logger = logging.getLogger("padel.accel")
 DEVICE_GLOB = "/dev/hailo*"
 # Networks looked for, in order, when HAILO_MODEL is not set: one placed in
 # weights/ by hand first, then the ones the hailo-models package installs
-# (raspberrypi/rpicam-apps uses the same files).
+# (raspberrypi/rpicam-apps uses the same files). A network is compiled for
+# one chip: *_h8.hef for the Hailo-8 (26 TOPS), *_h8l.hef for the Hailo-8L
+# (13 TOPS). The one for the chip found is taken (pick_model); an _h8l
+# network also runs on a Hailo-8, slower, the reverse does not.
 DEFAULT_MODELS = (
     "/srv/weights/yolov8m_h8.hef",
     "/srv/weights/yolov8s_h8.hef",
     "/usr/share/hailo-models/yolov8s_h8.hef",
 )
-# Networks compiled for the 13 TOPS Hailo-8L also run on the Hailo-8, slower:
-# a last resort.
 FALLBACK_MODELS = (
     "/srv/weights/yolov8s_h8l.hef",
     "/usr/share/hailo-models/yolov8s_h8l.hef",
@@ -66,6 +67,9 @@ class HailoStatus:
     reason: str
     device: str | None = None
     model: str | None = None
+    # Every network found, in order of preference: the chip, known only once
+    # the device is open, chooses among them (pick_model).
+    models: tuple[str, ...] = ()
 
 
 def accelerator_mode(value: str | None) -> str:
@@ -84,21 +88,34 @@ def hailo_status(mode: str = "auto", model: str | None = None) -> HailoStatus:
     if importlib.util.find_spec("hailo_platform") is None:
         return HailoStatus(False, f"{devices[0]} presente ma runtime HailoRT assente nell'immagine",
                            device=devices[0])
-    chosen = _model(model)
-    if chosen is None:
+    found = _models(model)
+    if not found:
         wanted = model or "yolov8s_h8.hef"
         return HailoStatus(False, f"{devices[0]} presente ma modello {Path(wanted).name} non trovato",
                            device=devices[0])
-    return HailoStatus(True, f"Hailo · {Path(chosen).name}", device=devices[0], model=chosen)
+    return HailoStatus(True, f"Hailo · {Path(found[0]).name}", device=devices[0], model=found[0],
+                       models=found)
 
 
-def _model(configured: str | None) -> str | None:
+def _models(configured: str | None) -> tuple[str, ...]:
     if configured:
-        return configured if Path(configured).is_file() else None
-    for candidate in DEFAULT_MODELS + FALLBACK_MODELS:
-        if Path(candidate).is_file():
-            return candidate
-    return None
+        return (configured,) if Path(configured).is_file() else ()
+    return tuple(c for c in DEFAULT_MODELS + FALLBACK_MODELS if Path(c).is_file())
+
+
+def pick_model(models: list[str] | tuple[str, ...], chip: str) -> str:
+    """The network for `chip` ("Hailo-8", "Hailo-8L"): one compiled for it
+    first. A Hailo-8L cannot run a network compiled for the Hailo-8."""
+    def for_8l(path: str) -> bool:
+        return Path(path).stem.lower().endswith("h8l")
+
+    if chip == "Hailo-8L":
+        preferred = [m for m in models if for_8l(m)]
+    elif chip == "Hailo-8":
+        preferred = [m for m in models if not for_8l(m)]
+    else:
+        preferred = []
+    return (preferred or list(models))[0]
 
 
 # What the worker found when it started, for /api/health: the API container
@@ -115,7 +132,7 @@ def probe_and_record(mode: str, model: str | None, data_dir: Path) -> HailoStatu
         from app.ml.detect_hailo import HailoPersonDetector
 
         try:
-            detector = HailoPersonDetector(status.model)
+            detector = HailoPersonDetector(status.model, alternatives=status.models)
         except DetectorError as exc:
             status = HailoStatus(False, str(exc), device=status.device, model=status.model)
         else:
