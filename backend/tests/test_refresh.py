@@ -78,6 +78,9 @@ async def test_statistics_are_recomputed_from_the_stored_run(analysed_match):
     # check kept with them, the calibration it measured unchanged.
     assert stats["player_names"] == ["A", "B", "C", "D"]
     assert stats["data_quality"]["verification"]["at"] == "2026-10-01T10:00:00+00:00"
+    # How the tracker got its players reaches the reliability panel (the
+    # response schema used to drop it).
+    assert set(stats["data_quality"]["tracking"]) >= {"weak_detections", "feet_below_net"}
 
 
 async def test_read_only_accounts_cannot_refresh(analysed_match):

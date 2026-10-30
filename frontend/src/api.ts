@@ -206,6 +206,8 @@ export interface DataQuality {
   variable_frame_rate?: boolean
   /** Second detector look at the far half, when enabled. */
   far_pass?: { active: boolean; added: number } | null
+  /** The players' posture on the accelerator. */
+  pose?: { model: string | null; frames: number } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */
   tracking?: { weak_detections: number; feet_below_net: number; scenery?: number } | null

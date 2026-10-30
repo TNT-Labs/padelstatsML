@@ -210,6 +210,11 @@ class DataQuality(BaseModel):
     variable_frame_rate: bool = False
     # Second detector look at the far half: {"active", "added"}, when enabled.
     far_pass: dict | None = None
+    # {"weak_detections", "feet_below_net", "scenery"}: how the tracker got
+    # its players. Listed here or the response drops it, as it did.
+    tracking: dict | None = None
+    # The players' posture on the accelerator: {"model", "frames"}.
+    pose: dict | None = None
     # Last accuracy check against points marked by hand (app.ml.verification).
     verification: dict | None = None
 

@@ -54,6 +54,21 @@ FALLBACK_MODELS = (
 
 MODES = ("auto", "cpu", "hailo")
 
+# Pose networks (app.ml.pose): any *pose*.hef in these folders, the one for
+# the chip chosen like the detector's (yolov8s_pose_h8.hef,
+# yolov8s_pose_h8l_pi.hef in the hailo-models package).
+POSE_FOLDERS = ("/srv/weights", "/usr/share/hailo-models")
+
+
+def pose_models(configured: str | None = None) -> tuple[str, ...]:
+    """Pose networks found, the configured one alone if set."""
+    if configured:
+        return (configured,) if Path(configured).is_file() else ()
+    found: list[str] = []
+    for folder in POSE_FOLDERS:
+        found += sorted(glob.glob(str(Path(folder) / "*pose*.hef")))
+    return tuple(found)
+
 
 class AcceleratorError(RuntimeError):
     """ACCELERATOR=hailo and the accelerator cannot be used."""
@@ -107,7 +122,7 @@ def pick_model(models: list[str] | tuple[str, ...], chip: str) -> str:
     """The network for `chip` ("Hailo-8", "Hailo-8L"): one compiled for it
     first. A Hailo-8L cannot run a network compiled for the Hailo-8."""
     def for_8l(path: str) -> bool:
-        return Path(path).stem.lower().endswith("h8l")
+        return "h8l" in Path(path).stem.lower().split("_")
 
     if chip == "Hailo-8L":
         preferred = [m for m in models if for_8l(m)]

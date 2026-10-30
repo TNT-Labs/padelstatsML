@@ -123,6 +123,15 @@ class _FakeHailo:
         return mod
 
 
+@pytest.fixture(autouse=True)
+def _fresh_device(monkeypatch):
+    """Each test opens its own (fake) board: the process-wide device of
+    detect_hailo starts closed."""
+    import app.ml.detect_hailo as detect_hailo
+
+    monkeypatch.setattr(detect_hailo, "_SHARED", {"device": None, "stack": None, "users": 0})
+
+
 @pytest.fixture
 def hef(tmp_path):
     path = tmp_path / "yolov8s_h8.hef"

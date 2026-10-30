@@ -16,7 +16,7 @@ a pure function of one frame, so `FrameSampler` stays in charge of decoding.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -29,6 +29,8 @@ PERSON_CLASS_ID = 0
 class Detection:
     bbox: tuple[float, float, float, float]   # x1, y1, x2, y2 in full-frame px
     confidence: float
+    # The body's 17 points (app.ml.pose), when posture is estimated.
+    keypoints: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     @property
     def foot_px(self) -> tuple[float, float]:
