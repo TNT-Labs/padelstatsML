@@ -19,10 +19,10 @@ interface Props {
 }
 
 /**
- * The high strokes found, to watch and to check. Experimental: the kind of
- * stroke is right about two times in three on the match it was tuned on, so
- * no count is shown with the players; checking them here, stroke by stroke,
- * measures it and gives the cases to tune it on.
+ * The high strokes found, to watch and to check: smash and bandeja (counted
+ * with the players too), lob (here only, too few checked yet). Checking them
+ * stroke by stroke measures the precision on each match and gives the cases
+ * to tune on.
  */
 export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnly, onSeek }) => {
   const [checking, setChecking] = useState(false)
@@ -64,13 +64,14 @@ export const StrokesCard: FC<Props> = ({ stats, strokes, players, names, readOnl
 
   return (
     <div className="card" style={{ marginBottom: '1.5rem' }}>
-      <InfoHeading title="Colpi alti · sperimentale">
+      <InfoHeading title="Colpi alti">
         <p style={{ margin: 0 }}>
-          Il polso della mano della racchetta sopra le spalle durante uno scambio, dallo scheletro dei
-          giocatori: entro 6,5 m dalla rete è indicato come smash, più indietro come lob. È ancora in
-          prova: il tipo di colpo non è affidabile e alcuni non sono colpi, per questo non è contato
-          nelle schede dei giocatori. Con «Verifica» indichi cosa è ciascuno nel video: la precisione
-          si misura qui sotto e le verifiche servono a migliorarlo.
+          Dallo scheletro dei giocatori, con la mano della racchetta. <strong>Smash e bandeja</strong>:
+          entro 6,5 m dalla rete, la racchetta e il braccio libero entrambi alzati, come per puntare la
+          palla; verificati colpo per colpo su una partita, giusti 29 su 30 e trovati 29 su 34.
+          <strong> Lob</strong>: la racchetta alta più indietro, quasi fermi; giusti 7 su 8, ma su pochi
+          casi, per questo non è contato nelle schede. Con «Verifica» indichi cosa è ciascuno nel
+          video: la precisione si misura qui sotto e le verifiche servono a migliorarlo.
         </p>
       </InfoHeading>
 

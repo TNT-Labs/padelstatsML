@@ -165,12 +165,11 @@ export interface PlayerStats {
   strokes?: Stroke[] | null
 }
 
-/** A stroke with the racket up: smash or bandeja near the net, lob further
- *  back; `wrists`: which wrist was raised ("L", "R", "LR"). */
+/** A stroke with the racket up, classified with the racket hand: smash or
+ *  bandeja ("overhead"), or lob. */
 export interface Stroke {
   t: number
   kind: 'overhead' | 'lob'
-  wrists: string
 }
 
 export type StrokeLabel = 'smash' | 'bandeja' | 'lob' | 'volee' | 'altro' | 'nulla'

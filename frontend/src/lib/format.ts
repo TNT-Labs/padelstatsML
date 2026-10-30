@@ -52,16 +52,6 @@ export function playerPlace(team: number, role?: 'drive' | 'reves' | null): stri
   return pair
 }
 
-/** A player's high strokes with the racket hand, when it is known: the
- *  free arm raised to point at the ball is not a stroke. */
-export function strokesOf(
-  strokes: { t: number; kind: 'overhead' | 'lob'; wrists: string }[] | null | undefined,
-  hand?: 'R' | 'L' | null,
-) {
-  if (!strokes) return null
-  return hand ? strokes.filter(s => s.wrists.includes(hand)) : strokes
-}
-
 export const STROKE_LABELS: Record<string, string> = {
   smash: 'Smash',
   bandeja: 'Bandeja / víbora',

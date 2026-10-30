@@ -7,7 +7,7 @@ import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
 import { StrokesCard } from './StrokesCard'
-import { handLabel, kmh, playerPlace, strokesOf } from '../lib/format'
+import { handLabel, kmh, playerPlace } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
 
@@ -41,8 +41,9 @@ export const StatsView: FC<Props> = ({
   const summary = stats.summary
   // Analyses older than the serve check carry no flag: no legend for them.
   const serveChecked = stats.rallies.some(r => r.serve != null)
-  // By position in `players`, each with the racket hand's strokes only.
-  const playerStrokes = players.map(([, player], i) => strokesOf(player.strokes, stats.player_hands?.[i]))
+  // By position in `players`: the high strokes, classified by the server
+  // with the racket hand; null without the posture.
+  const playerStrokes = players.map(([, player]) => player.strokes ?? null)
   const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -245,6 +246,13 @@ export const StatsView: FC<Props> = ({
             coperto, fuori inquadratura o non riconosciuto: le distanze sono sottostimate di
             altrettanto. Sotto il 50% compare un avviso.
           </dd>
+          <dt>Smash e bandeja</dt>
+          <dd>
+            Dallo scheletro del giocatore (solo con l'acceleratore): il braccio della racchetta e il
+            braccio libero entrambi alzati, entro 6,5 m dalla rete. Verificati colpo per colpo su una
+            partita: giusti 29 su 30, trovati 29 su 34. Serve la mano indicata in «Rinomina
+            giocatori». L'elenco è nella sezione Colpi alti.
+          </dd>
           <dt>Mappa del giocatore</dt>
           <dd>Dove è stato in campo: più il colore è intenso, più tempo ci ha passato.</dd>
         </dl>
@@ -305,6 +313,12 @@ export const StatsView: FC<Props> = ({
                     <td>Copertura del tracciamento</td>
                     <td>{Math.round(player.tracked_ratio * 100)}%</td>
                   </tr>
+                  {playerStrokes[index] && (
+                    <tr>
+                      <td>Smash e bandeja</td>
+                      <td>{playerStrokes[index]!.filter(s => s.kind === 'overhead').length}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
 

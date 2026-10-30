@@ -142,3 +142,24 @@ async def test_strokes_are_labelled_as_seen_in_the_video(analysed_match):
     viewer = await signed_in("labels-viewer", "visualizzatore")
     async with viewer:
         assert (await viewer.patch(url, json={"labels": {"1:83.4": "lob"}})).status_code == 403
+
+
+async def test_strokes_are_classified_with_the_racket_hand_when_read(analysed_match):
+    from app.core.database import sync_session
+    from app.models import Match, MatchStats
+
+    owner, match_id = analysed_match
+    candidate = {"t": 50.0, "net_m": 4.0, "speed": 1.0, "up": "LR", "high": {"L": 0.6, "R": -0.8}}
+    with sync_session() as session:
+        stats = session.get(MatchStats, match_id)
+        per_player = {k: dict(v) for k, v in stats.per_player.items()}
+        per_player["0"]["strokes"] = [candidate]
+        per_player["1"]["strokes"] = [candidate]
+        stats.per_player = per_player
+        session.get(Match, match_id).player_hands = ["R", "L", None, None]
+
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    # Right-handed: the right arm up with the left: a smash. Left-handed:
+    # the left up but the right hanging: not one.
+    assert stats["per_player"]["0"]["strokes"] == [{"t": 50.0, "kind": "overhead"}]
+    assert stats["per_player"]["1"]["strokes"] == []
