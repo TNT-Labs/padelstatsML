@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boxAt, clock, fitRect, lastAtOrBefore } from './videoOverlay'
+import { boxAt, clock, fitRect, lastAtOrBefore, pointsAt } from './videoOverlay'
 
 describe('lastAtOrBefore', () => {
   const times = [0, 0.2, 0.4, 1.0]
@@ -47,5 +47,24 @@ describe('clock', () => {
   it('writes minutes and seconds', () => {
     expect(clock(0)).toBe('0:00')
     expect(clock(754.9)).toBe('12:34')
+  })
+})
+
+describe('pointsAt', () => {
+  const times = [0, 0.2, 2.2]
+  const p = (x: number, v: number) => Array.from({ length: 17 }, () => [x, 10, v]).flat()
+  const points = [p(0, 90), p(10, 60), null]
+  const gap = 0.5
+
+  it('glides between two close samples, as sure as the less sure one', () => {
+    const mid = pointsAt(times, points, 0.1, gap)!
+    expect(mid.slice(0, 3)).toEqual([5, 10, 60])
+  })
+  it('keeps the nearer sample for a moment, then nothing', () => {
+    expect(pointsAt(times, points, 0.3, gap)!.slice(0, 3)).toEqual([10, 10, 60])
+    expect(pointsAt(times, points, 1.2, gap)).toBeNull()
+  })
+  it('is null without the posture', () => {
+    expect(pointsAt(times, undefined, 0.1, gap)).toBeNull()
   })
 })

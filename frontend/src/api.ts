@@ -312,6 +312,9 @@ export interface PlayerBoxes {
   t: number[]
   /** x1, y1, x2, y2 of each sample, in the video's pixels, one after another. */
   box: number[]
+  /** The body's 17 points of each sample (x, y, visibility 0-100, one after
+   *  another), null where none; absent without the posture. */
+  kp?: (number[] | null)[]
 }
 
 export interface PlayerTracks {

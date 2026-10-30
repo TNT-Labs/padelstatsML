@@ -195,3 +195,26 @@ def test_keypoints_travel_with_the_observation_into_the_artifacts(tmp_path, cali
     _, stored = read_observations(tmp_path)[0]
     assert stored.keypoints.shape == (17, 3)
     assert stored.keypoints[0] == pytest.approx([1234.6, 789.0, 0.88])
+
+
+def test_the_video_overlay_carries_the_points_only_when_there_are_any():
+    from app.ml.identity import IdentityResult, PlayerTrack
+    from app.ml.player_boxes import payload_from
+    from app.ml.tracking import Observation
+
+    def obs(t, points):
+        return Observation(frame_index=int(t * 5), timestamp_s=t, bbox=(10, 20, 50, 120), foot_px=(30, 120),
+                           foot_court=(3.0, 4.0 + t), confidence=0.9, color=np.zeros(4, np.float32),
+                           keypoints=points)
+
+    points = np.tile(np.array([[30.4, 60.6, 0.876]], np.float32), (17, 1))
+    with_pose = PlayerTrack(0, 0, [obs(0.0, points), obs(0.2, None)])
+    without = PlayerTrack(1, 0, [obs(0.0, None)])
+    identity = IdentityResult(players=[with_pose, without], warnings=[], side_changes=0, clusters_found=2,
+                              observations_discarded=0)
+    payload = payload_from(identity, 5.0, {"width": 640, "height": 360}, None)
+
+    first, second = payload["players"]
+    assert first["kp"][0][:3] == [30, 61, 88] and len(first["kp"][0]) == 51
+    assert first["kp"][1] is None
+    assert "kp" not in second

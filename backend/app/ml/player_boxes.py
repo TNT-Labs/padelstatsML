@@ -24,7 +24,7 @@ from app.ml.roles import ROLE_NAMES
 
 # Bump when the payload or the way it is computed changes: older cached
 # files are then ignored and rebuilt.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 _CACHE_GLOB = "players-*.json.gz"
 
 
@@ -81,17 +81,23 @@ def build_payload(
 def payload_from(identity: IdentityResult, sample_hz: float, frame: dict, stats_per_player: dict | None) -> dict:
     players = []
     for player in identity.players:
-        times, boxes = [], []
+        times, boxes, points = [], [], []
         for obs in player.observations:
             times.append(round(float(obs.timestamp_s), 2))
             boxes.extend(int(round(v)) for v in obs.bbox)
-        players.append({
+            points.append(_points(obs.keypoints))
+        entry = {
             "id": player.player_id,
             "team": player.team,
             "role": ROLE_NAMES.get(player.role),
             "t": times,
             "box": boxes,
-        })
+        }
+        # The body's points, per sample (None where no pose matched), only
+        # when the analysis estimated the posture.
+        if any(p is not None for p in points):
+            entry["kp"] = points
+        players.append(entry)
     return {
         "sample_hz": float(sample_hz),
         "frame": frame,
@@ -99,6 +105,16 @@ def payload_from(identity: IdentityResult, sample_hz: float, frame: dict, stats_
         "changeovers": [round(float(t), 1) for t in identity.changeovers],
         "matches_stats": matches_stats(identity.players, stats_per_player),
     }
+
+
+def _points(keypoints) -> list[int] | None:
+    """17 x (x, y, visibility in hundredths), whole pixels: small to send."""
+    if keypoints is None:
+        return None
+    out: list[int] = []
+    for x, y, v in keypoints:
+        out += [int(round(float(x))), int(round(float(y))), int(round(float(v) * 100))]
+    return out
 
 
 def _store(directory: Path, payload: dict, stats_per_player: dict | None) -> bytes:
