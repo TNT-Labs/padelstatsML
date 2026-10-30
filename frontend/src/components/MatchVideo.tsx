@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FC, type RefObject } from 'react'
 import { api, type PlayerTracks } from '../api'
 import { PLAYER_COLORS } from '../lib/players'
-import { MIN_VISIBLE, SKELETON, boxAt, clock, fitRect, pointsAt } from '../lib/videoOverlay'
+import { MIN_VISIBLE, SKELETON, boxAt, clock, fitRect, placeTags, pointsAt, type Tag } from '../lib/videoOverlay'
 
 interface Props {
   matchId: string
@@ -82,6 +82,8 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
     ctx.lineWidth = width < NARROW_PX ? 1.5 : 2
     ctx.font = `600 ${tag.font}px system-ui, sans-serif`
     ctx.textBaseline = 'bottom'
+    // Names after every box and skeleton, placed so that none hides another.
+    const tags: (Tag & { label: string; color: string })[] = []
     for (const player of tracks.players) {
       const box = boxAt(player.t, player.box, video.currentTime, maxGap)
       if (!box) continue
@@ -113,13 +115,18 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       }
 
       const label = names[player.id] || `G${player.id + 1}`
-      const labelW = ctx.measureText(label).width + 6
-      const labelY = Math.max(y, tag.height)
-      ctx.fillStyle = color
-      ctx.fillRect(x - 1, labelY - tag.height, labelW, tag.height)
-      ctx.fillStyle = '#fff'
-      ctx.fillText(label, x + 2, labelY - 2)
+      tags.push({
+        label, color, x: x - 1, bottom: Math.max(y, tag.height),
+        w: ctx.measureText(label).width + 6, h: tag.height,
+      })
     }
+    placeTags(tags).forEach((bottom, i) => {
+      const { label, color, x, w, h } = tags[i]
+      ctx.fillStyle = color
+      ctx.fillRect(x, bottom - h, w, h)
+      ctx.fillStyle = '#fff'
+      ctx.fillText(label, x + 3, bottom - 2)
+    })
   }, [tracks, showBoxes, showSkeleton, names, videoRef])
 
   useEffect(() => {

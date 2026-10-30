@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boxAt, clock, fitRect, lastAtOrBefore, pointsAt } from './videoOverlay'
+import { boxAt, clock, fitRect, lastAtOrBefore, placeTags, pointsAt } from './videoOverlay'
 
 describe('lastAtOrBefore', () => {
   const times = [0, 0.2, 0.4, 1.0]
@@ -66,5 +66,17 @@ describe('pointsAt', () => {
   })
   it('is null without the posture', () => {
     expect(pointsAt(times, undefined, 0.1, gap)).toBeNull()
+  })
+})
+
+describe('placeTags', () => {
+  it('leaves apart tags where they are', () => {
+    expect(placeTags([{ x: 0, bottom: 20, w: 40, h: 16 }, { x: 100, bottom: 20, w: 40, h: 16 }])).toEqual([20, 20])
+  })
+  it('moves down a tag that would cover another', () => {
+    // A far player just behind a near one: tops at nearly the same height.
+    const [near, far] = placeTags([{ x: 100, bottom: 50, w: 50, h: 16 }, { x: 120, bottom: 48, w: 50, h: 16 }])
+    expect(far).toBe(48)
+    expect(near).toBe(66)
   })
 })
