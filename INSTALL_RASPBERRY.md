@@ -325,6 +325,14 @@ dell'analisi è identico. Senza la scheda l'app funziona come prima.
   per Hailo-8L (13 TOPS; `hailortcli fw-control identify` dice
   `Device Architecture: HAILO8L`). Per un'altra mettila in `weights/` e
   indicala con `HAILO_MODEL=/srv/weights/<file>.hef`.
+- **Calore.** Con la scheda il processore decodifica il video senza pause e
+  la scheda sopra il dissipatore gli toglie aria: controlla durante
+  un'analisi `vcgencmd measure_temp` (sotto 80 °C) e `vcgencmd get_throttled`
+  (`0x0`; altro = rallenta per il calore). Serve il dissipatore attivo
+  collegato, la scheda sui distanziali da 16 mm, un case aperto o ventilato;
+  meglio un dissipatore sul chip Hailo e una ventola che soffi fra scheda e
+  Pi. Intanto `WORKER_CPUS=3` in `.env` e `docker compose up -d` riducono il
+  carico (analisi un po' più lunga).
 - **Disattivarla** senza toglierla: `ACCELERATOR=cpu` in `.env`.
 - **Stato:** `docker compose exec api curl -s localhost:8000/padel/api/health`
   alla voce `accelerator`.

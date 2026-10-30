@@ -82,10 +82,17 @@ services:
     # The worker is the only heavy consumer on the board. Leaving it ~5 GB of
     # the 8 GB keeps the page cache warm for video decode, which is where the
     # analysis actually spends its time.
+    #
+    # Cores it may use (WORKER_CPUS in .env, default all 4). With the AI HAT+
+    # the detector no longer holds the CPU back: video decoding runs flat
+    # out on every core, and a Pi whose airflow the board blocks reaches the
+    # 85 °C at which it slows itself down. 3 keeps it cooler, the analysis a
+    # little longer.
     deploy:
       resources:
         limits:
           memory: 5G
+          cpus: "${WORKER_CPUS:-4}"
 
 networks:
   sito:
