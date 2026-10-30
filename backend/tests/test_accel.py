@@ -36,6 +36,9 @@ class _FakeHailo:
         # Output buffer size (floats) the runtime accepts; None: any.
         self.accept_size = accept_size
         self.runs = 0
+        # As the real runtime: without the scheduler the network is never
+        # activated, and the inference silently writes nothing.
+        self.scheduler = None
         self.thresholds: dict[str, float] = {}
         self.inputs: list[np.ndarray] = []
         self.closed = False
@@ -64,7 +67,8 @@ class _FakeHailo:
             def __init__(self, buffer):
                 self.buffer = buffer
                 self._in = types.SimpleNamespace(set_buffer=fake.inputs.append)
-                self._out = types.SimpleNamespace(get_buffer=lambda: fake.result)
+                self._out = types.SimpleNamespace(
+                    get_buffer=lambda: fake.result if fake.scheduler == "ROUND_ROBIN" else self.buffer)
 
             def input(self): return self._in
             def output(self): return self._out
@@ -91,9 +95,10 @@ class _FakeHailo:
 
         class VDevice:
             @staticmethod
-            def create_params(): return object()
+            def create_params(): return types.SimpleNamespace(scheduling_algorithm=None)
 
-            def __init__(self, _params):
+            def __init__(self, params):
+                fake.scheduler = params.scheduling_algorithm
                 if fake.fail_open:
                     raise RuntimeError("HAILO_DRIVER_VERSION_MISMATCH")
 
@@ -114,6 +119,7 @@ class _FakeHailo:
                 return [types.SimpleNamespace(control=types.SimpleNamespace(identify=lambda: identity))]
 
         mod.FormatType, mod.VDevice = FormatType, VDevice
+        mod.HailoSchedulingAlgorithm = types.SimpleNamespace(ROUND_ROBIN="ROUND_ROBIN", NONE=None)
         return mod
 
 
@@ -301,4 +307,23 @@ def test_the_output_buffer_the_runtime_accepts_is_found(monkeypatch, hef):
 def test_a_network_that_cannot_run_fails_when_opened_with_every_reason(monkeypatch, hef):
     _install(monkeypatch, _FakeHailo(accept_size=7))
     with pytest.raises(DetectorError, match="inferenza di prova non riuscita.*buffer of 40000.*buffer of 40080"):
+        HailoPersonDetector(hef)
+
+
+def test_the_scheduler_is_on_so_the_network_is_activated(monkeypatch, hef):
+    """On the Pi: without HailoRT's scheduler the network loaded but every
+    inference failed with HAILO_STREAM_NOT_ACTIVATED, reported only in the
+    runtime's log, the output left unwritten."""
+    fake = _FakeHailo()
+    _install(monkeypatch, fake)
+    HailoPersonDetector(hef)
+    assert fake.scheduler == "ROUND_ROBIN"
+
+
+def test_an_inference_that_writes_nothing_is_not_taken_for_a_success(monkeypatch, hef):
+    import app.ml.detect_hailo as detect_hailo
+
+    _install(monkeypatch, _FakeHailo())
+    monkeypatch.setattr(detect_hailo, "_device_params", lambda vdevice: vdevice.create_params())
+    with pytest.raises(DetectorError, match="non ha scritto il risultato"):
         HailoPersonDetector(hef)

@@ -57,7 +57,7 @@ class HailoPersonDetector:
         try:
             from hailo_platform import FormatType, VDevice
 
-            device = self._stack.enter_context(VDevice(VDevice.create_params()))
+            device = self._stack.enter_context(VDevice(_device_params(VDevice)))
             self.device = _architecture(device)
             # The network compiled for this chip first; should the chip not
             # say which it is, the next one is tried when one does not load.
@@ -126,7 +126,12 @@ class HailoPersonDetector:
         bindings = self._configured.create_bindings(output_buffers={self._output_name: new_output()})
         bindings.input().set_buffer(picture)
         self._configured.run([bindings], TIMEOUT_MS)
-        return bindings.output().get_buffer()
+        raw = bindings.output().get_buffer()
+        # HailoRT can report a failed inference only in its log and return:
+        # the buffer, filled with NaN, then comes back unwritten.
+        if isinstance(raw, np.ndarray) and raw.size and not np.isfinite(raw.reshape(-1)[0]):
+            raise RuntimeError("la scheda non ha scritto il risultato (inferenza non eseguita)")
+        return raw
 
     def _working_output(self, candidates):
         """The first output buffer with which an inference runs and reads
@@ -170,13 +175,14 @@ def output_buffers(output) -> list[tuple[str, object]]:
     candidates: list[tuple[str, object]] = []
     shape = tuple(int(v) for v in getattr(output, "shape", ()) or ())
     if shape:
-        candidates.append((f"shape {shape}", lambda: np.empty(shape, dtype=np.float32)))
+        candidates.append((f"shape {shape}", lambda: np.full(shape, np.nan, dtype=np.float32)))
     nms = getattr(output, "nms_shape", None)
     classes = getattr(nms, "number_of_classes", None)
     boxes = getattr(nms, "max_bboxes_per_class", None) or getattr(nms, "max_bboxes_total", None)
     if classes and boxes:
         size = int(classes) * (1 + 5 * int(boxes))
-        candidates.append((f"NMS {classes} classi x {boxes} riquadri", lambda: np.empty(size, dtype=np.float32)))
+        candidates.append((f"NMS {classes} classi x {boxes} riquadri",
+                           lambda: np.full(size, np.nan, dtype=np.float32)))
     frame_size = getattr(output, "get_frame_size", None)
     if callable(frame_size):
         try:
@@ -184,7 +190,7 @@ def output_buffers(output) -> list[tuple[str, object]]:
         except Exception:                 # noqa: BLE001
             count = 0
         if count:
-            candidates.append((f"frame {count * 4} byte", lambda: np.empty(count, dtype=np.float32)))
+            candidates.append((f"frame {count * 4} byte", lambda: np.full(count, np.nan, dtype=np.float32)))
     return candidates
 
 
@@ -226,6 +232,20 @@ def letterbox_rgb(image: np.ndarray, imgsz: tuple[int, int]) -> tuple[np.ndarray
     left, top = (target_w - new_w) // 2, (target_h - new_h) // 2
     canvas[top: top + new_h, left: left + new_w] = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     return np.ascontiguousarray(canvas), ratio, (float(left), float(top))
+
+
+def _device_params(vdevice_class):
+    """The device's parameters with HailoRT's scheduler on: it activates the
+    network for each inference. Without it the network loads but is never
+    activated, and every inference fails (HAILO_STREAM_NOT_ACTIVATED)."""
+    params = vdevice_class.create_params()
+    try:
+        from hailo_platform import HailoSchedulingAlgorithm
+
+        params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+    except Exception as exc:              # noqa: BLE001
+        logger.info("Scheduler HailoRT non impostato: %s", exc)
+    return params
 
 
 def _try(target, method: str, value: float) -> None:

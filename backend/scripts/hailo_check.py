@@ -33,9 +33,9 @@ def main() -> int:
         from hailo_platform import VDevice
 
         from app.ml.accel import pick_model
-        from app.ml.detect_hailo import _architecture, output_buffers
+        from app.ml.detect_hailo import _architecture, _device_params, output_buffers
 
-        with VDevice(VDevice.create_params()) as device:
+        with VDevice(_device_params(VDevice)) as device:
             chip = _architecture(device)
             model_path = pick_model(status.models, chip)
             print(f"Chip:    {chip}")
