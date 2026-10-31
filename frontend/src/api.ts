@@ -219,6 +219,8 @@ export interface DataQuality {
   far_pass?: { active: boolean; added: number } | null
   /** The players' posture on the accelerator. */
   pose?: { model: string | null; frames: number } | null
+  /** The ball, when followed: frames looked at, frames it was found in. */
+  ball?: { model: string | null; frames: number; found: number } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */
   tracking?: { weak_detections: number; feet_below_net: number; scenery?: number } | null
@@ -341,6 +343,15 @@ export interface PlayerTracks {
   matches_stats: boolean
 }
 
+/** The ball found by the analysis: its flights, each its times and points
+ *  in video pixels (backend app/ml/ball_track.py). */
+export interface BallTrack {
+  frame: [number, number]
+  seen: number
+  raw: number
+  flights: { t: number[]; x: number[]; y: number[] }[]
+}
+
 /** Where the ball is in a frame, video pixels; "none": not in sight. */
 export type BallLabel = [number, number] | 'none'
 
@@ -435,6 +446,7 @@ export const api = {
       body: JSON.stringify({ labels }),
     }),
   ballExportUrl: (id: string) => `${BASE}/api/matches/${id}/ball/export.zip`,
+  ballTrack: (id: string) => req<BallTrack>(`/api/matches/${id}/ball/track`),
 
   /** Statistics recomputed from the stored detections, in seconds. */
   labelStrokes: (id: string, labels: Record<string, StrokeLabel | null>) =>

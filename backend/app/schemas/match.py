@@ -226,6 +226,8 @@ class DataQuality(BaseModel):
     tracking: dict | None = None
     # The players' posture on the accelerator: {"model", "frames"}.
     pose: dict | None = None
+    # The ball, when followed: the network, frames looked at, frames with it.
+    ball: dict | None = None
     # Last accuracy check against points marked by hand (app.ml.verification).
     verification: dict | None = None
 

@@ -118,3 +118,36 @@ export function clock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds))
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
+
+/** A flight of the ball: times (sorted) and points, video pixels. */
+export interface Flight {
+  t: number[]
+  x: number[]
+  y: number[]
+}
+
+// The ball is shown this long after its last point (two frames at 30 fps),
+// and the path it came by for this long.
+export const BALL_HOLD_S = 0.07
+export const BALL_TRAIL_S = 0.4
+
+/**
+ * The ball at video time `t`: where it is and the path it came along, or
+ * null when no flight is under way. `flights` sorted by their first time.
+ * The trail never crosses from one flight to another: a jump between two
+ * flights is not a path the ball took.
+ */
+export function ballAt(flights: Flight[], t: number): { at: [number, number]; trail: [number, number][] } | null {
+  const starts = flights.map(f => f.t[0])
+  const latest = lastAtOrBefore(starts, t)
+  // Flights can overlap (two tracklets at once): the latest few to start.
+  for (let k = latest; k >= 0 && k > latest - 4; k--) {
+    const f = flights[k]
+    const i = lastAtOrBefore(f.t, t)
+    if (i < 0 || t - f.t[i] > BALL_HOLD_S) continue
+    const trail: [number, number][] = []
+    for (let j = i; j >= 0 && t - f.t[j] <= BALL_TRAIL_S; j--) trail.unshift([f.x[j], f.y[j]])
+    return { at: [f.x[i], f.y[i]], trail }
+  }
+  return null
+}

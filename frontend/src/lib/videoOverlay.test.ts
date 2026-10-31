@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boxAt, clock, fitRect, lastAtOrBefore, placeTags, pointsAt } from './videoOverlay'
+import { ballAt, boxAt, clock, fitRect, lastAtOrBefore, placeTags, pointsAt } from './videoOverlay'
 
 describe('lastAtOrBefore', () => {
   const times = [0, 0.2, 0.4, 1.0]
@@ -78,5 +78,28 @@ describe('placeTags', () => {
     const [near, far] = placeTags([{ x: 100, bottom: 50, w: 50, h: 16 }, { x: 120, bottom: 48, w: 50, h: 16 }])
     expect(far).toBe(48)
     expect(near).toBe(66)
+  })
+})
+
+describe('ballAt', () => {
+  const flights = [
+    { t: [1.0, 1.033, 1.067, 1.1], x: [10, 20, 30, 40], y: [5, 5, 5, 5] },
+    { t: [3.0, 3.033], x: [500, 510], y: [100, 101] },
+  ]
+
+  it('shows the ball with the path it came along', () => {
+    const ball = ballAt(flights, 1.07)
+    expect(ball?.at).toEqual([30, 5])
+    expect(ball?.trail).toEqual([[10, 5], [20, 5], [30, 5]])
+  })
+
+  it('shows nothing between flights or before the first', () => {
+    expect(ballAt(flights, 0.5)).toBeNull()
+    expect(ballAt(flights, 2.0)).toBeNull()
+    expect(ballAt([], 2.0)).toBeNull()
+  })
+
+  it('never draws a trail across two flights', () => {
+    expect(ballAt(flights, 3.04)?.trail).toEqual([[500, 100], [510, 101]])
   })
 })

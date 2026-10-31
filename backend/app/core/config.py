@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     # hidden at the stroke half the time), and it lengthens the analysis.
     # Kept to gather data for a model trained on strokes.
     pose_hz: float = 0.0
+    # The ball, on every frame, with the network trained on the user's
+    # marked frames (training/ball, weights/ball_h8l.hef): "auto" when it is
+    # there and the detector runs on the accelerator, "off" never.
+    ball: str = "auto"
+    hailo_ball_model: str = ""
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

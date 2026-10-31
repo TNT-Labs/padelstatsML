@@ -45,6 +45,10 @@ from app.ml.tracking import Observation, Tracklet
 
 SCHEMA_VERSION = 1
 POSES_FILE = "poses.jsonl"
+# The ball, as the network saw it on every frame: one line per frame where
+# it found one, [frame, time, x, y, peak] in video pixels. Raw: what is noise
+# and what a flight is, app/ml/ball_track.py decides when read.
+BALL_FILE = "ball.jsonl"
 
 
 class ArtifactWriter:
@@ -75,6 +79,8 @@ class ArtifactWriter:
         # first, and a stale one from a previous run removed now.
         (self.directory / POSES_FILE).unlink(missing_ok=True)
         self._poses: IO[str] | None = None
+        (self.directory / BALL_FILE).unlink(missing_ok=True)
+        self._ball: IO[str] | None = None
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -84,6 +90,14 @@ class ArtifactWriter:
         if self._poses is not None:
             self._poses.close()
             self._poses = None
+        if self._ball is not None:
+            self._ball.close()
+            self._ball = None
+
+    def write_ball(self, frame_index: int, timestamp_s: float, x: float, y: float, peak: float) -> None:
+        if self._ball is None:
+            self._ball = (self.directory / BALL_FILE).open("w", encoding="utf-8")
+        self._ball.write(f"[{frame_index},{timestamp_s:.3f},{x:.1f},{y:.1f},{peak:.2f}]\n")
 
     def write_poses(self, frame_index: int, timestamp_s: float, poses) -> None:
         """The posture in a frame between two samples: [(track id, 17 x 3)]."""
@@ -377,6 +391,23 @@ def read_poses(directory: str | Path) -> list[tuple[float, int, np.ndarray]]:
             for track_id, flat in record["p"]:
                 out.append((float(record["t"]), int(track_id),
                             np.asarray(flat, dtype=np.float32).reshape(-1, 3)))
+    return out
+
+
+def read_ball(directory: str | Path) -> list[tuple[int, float, float, float, float]]:
+    """The ball as found on each frame: (frame, time, x, y, peak), in frame
+    order; none for runs without it."""
+    path = Path(directory) / BALL_FILE
+    if not path.exists():
+        return []
+    out = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                f, t, x, y, p = json.loads(line)
+            except ValueError:
+                break                       # a run cut short: its last line
+            out.append((int(f), float(t), float(x), float(y), float(p)))
     return out
 
 
