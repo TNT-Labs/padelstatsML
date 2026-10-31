@@ -76,9 +76,29 @@ def _heat(x: float, y: float) -> np.ndarray:
     return (((xs - x) ** 2 + (ys - y) ** 2) <= RADIUS ** 2).astype(np.float32)
 
 
+def _open(path: str) -> zipfile.ZipFile:
+    """An exported zip, or why the file is not one."""
+    file = Path(path)
+    if not file.is_file():
+        raise SystemExit(f"{path}: file non trovato.")
+    if zipfile.is_zipfile(file):
+        return zipfile.ZipFile(file)
+    size = file.stat().st_size
+    head = file.read_bytes()[:300]
+    if head.startswith(b"PK"):
+        why = ("lo zip è incompleto: il caricamento (barra in basso a sinistra in Colab) "
+               "o il download non era finito. Ricaricalo e aspetta la fine.")
+    elif head.lstrip().startswith((b"{", b"<")):
+        why = ("non è lo zip ma una risposta del server: "
+               + head.decode("utf-8", "replace").strip()[:200])
+    else:
+        why = "il file non è uno zip esportato da Annota palla."
+    raise SystemExit(f"{path} ({size / 1e6:.1f} MB): {why}")
+
+
 def load(zips: list[str]):
     """Samples per clip and an image reader over the zips."""
-    archives = {z: zipfile.ZipFile(z) for z in zips}
+    archives = {z: _open(z) for z in zips}
     cache: dict[tuple[str, str], np.ndarray] = {}
 
     def images(key):

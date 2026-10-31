@@ -19,7 +19,11 @@ Poi premi **Scarica i dati annotati**: ottieni uno zip per partita.
 ## 2. Addestrare (Google Colab, GPU gratuita)
 
 1. Apri colab.research.google.com e crea un nuovo notebook. Scegli *Runtime → Cambia tipo di runtime → GPU T4*.
-2. Carica `train_tracknet.py` e gli zip, dall'icona cartella a sinistra.
+2. Carica `train_tracknet.py` e gli zip, dall'icona cartella a sinistra. **Aspetta che il
+   cerchio di caricamento in basso a sinistra sparisca**: uno zip di 100 MB richiede qualche
+   minuto, e se lanci prima lo script lo trova tronco. Per zip grandi è più sicuro metterli su
+   Google Drive e collegarlo (`from google.colab import drive; drive.mount('/content/drive')`).
+   Controllo: `!unzip -tq palla_*.zip` deve rispondere *No errors detected*.
 3. Esegui:
 
 ```
