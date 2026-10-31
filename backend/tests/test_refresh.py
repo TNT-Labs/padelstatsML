@@ -201,3 +201,23 @@ async def test_the_marked_frames_are_exported_for_training(analysed_match):
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert {"labels.csv", "meta.json"} <= set(archive.namelist())
+
+
+async def test_the_ball_found_by_the_analysis_is_served_as_flights(analysed_match):
+    from conftest import signed_in
+
+    from app.core.storage import artifacts_dir
+
+    owner, match_id = analysed_match
+    url = f"/api/matches/{match_id}/ball/track"
+    assert (await owner.get(url)).status_code == 404          # no ball in this run
+    lines = [f"[{f},{f / 30:.3f},{100 + 10 * f},{500 - 5 * f},0.8]" for f in range(2, 40)]
+    lines += ["[50,1.667,1700.0,200.0,0.6]"]                    # a stray answer
+    (artifacts_dir(match_id) / "ball.jsonl").write_text("\n".join(lines) + "\n")
+
+    body = (await owner.get(url)).json()
+    assert body["raw"] == 39 and body["seen"] == 38 and len(body["flights"]) == 1
+    assert body["flights"][0]["x"][0] == 120
+    viewer = await signed_in("ball-track-viewer", "visualizzatore")
+    async with viewer:
+        assert (await viewer.get(url)).status_code == 200      # viewers see it too

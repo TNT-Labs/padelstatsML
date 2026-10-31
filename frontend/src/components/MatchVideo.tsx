@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FC, type RefObject } from 'react'
-import { api, type PlayerTracks } from '../api'
+import { api, type BallTrack, type PlayerTracks } from '../api'
 import { PLAYER_COLORS } from '../lib/players'
-import { MIN_VISIBLE, SKELETON, boxAt, clock, fitRect, placeTags, pointsAt, type Tag } from '../lib/videoOverlay'
+import { MIN_VISIBLE, SKELETON, ballAt, boxAt, clock, fitRect, placeTags, pointsAt, type Tag } from '../lib/videoOverlay'
 
 interface Props {
   matchId: string
@@ -34,6 +34,9 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
   const [loadingTracks, setLoadingTracks] = useState(true)
   const [showBoxes, setShowBoxes] = useState(true)
   const [showSkeleton, setShowSkeleton] = useState(true)
+  // The ball, when the analysis followed it (ball network on the accelerator).
+  const [ball, setBall] = useState<BallTrack | null>(null)
+  const [showBall, setShowBall] = useState(true)
   const hasSkeleton = !!tracks?.players.some(p => p.kp)
   const [videoError, setVideoError] = useState<string | null>(null)
   const src = api.videoUrl(matchId)
@@ -48,6 +51,11 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       .then(result => !cancelled && setTracks(result))
       .catch(err => !cancelled && setTracksNote(err instanceof Error ? err.message : String(err)))
       .finally(() => !cancelled && setLoadingTracks(false))
+    setBall(null)
+    api
+      .ballTrack(matchId)
+      .then(result => !cancelled && setBall(result.flights.length ? result : null))
+      .catch(() => undefined)          // 404: no ball in this analysis
     return () => {
       cancelled = true
     }
@@ -68,16 +76,40 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
     if (!ctx) return
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    if (!showBoxes || !tracks) return
+    const showingBall = showBall && !!ball
+    if ((!showBoxes || !tracks) && !showingBall) return
 
-    const frameW = tracks.frame.width || video.videoWidth
-    const frameH = tracks.frame.height || video.videoHeight
+    const frameW = tracks?.frame.width || ball?.frame[0] || video.videoWidth
+    const frameH = tracks?.frame.height || ball?.frame[1] || video.videoHeight
     if (!frameW || !frameH) return
     const { scale, offsetX, offsetY } = fitRect(frameW, frameH, width, height)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    if (showingBall) {
+      const found = ballAt(ball.flights, video.currentTime)
+      if (found) {
+        const narrow = width < NARROW_PX
+        ctx.strokeStyle = 'rgba(255, 214, 10, .85)'
+        ctx.lineWidth = narrow ? 1.5 : 2
+        ctx.beginPath()
+        found.trail.forEach(([x, y], k) => {
+          const px = offsetX + x * scale
+          const py = offsetY + y * scale
+          if (k === 0) ctx.moveTo(px, py)
+          else ctx.lineTo(px, py)
+        })
+        ctx.stroke()
+        ctx.strokeStyle = '#ff3b30'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(offsetX + found.at[0] * scale, offsetY + found.at[1] * scale, narrow ? 5 : 8, 0, 2 * Math.PI)
+        ctx.stroke()
+      }
+    }
+    if (!showBoxes || !tracks) return
     // Samples are a few per second: bridge one missed sample, not more.
     const maxGap = 2.5 / (tracks.sample_hz || 5)
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const tag = width < NARROW_PX ? TAG.narrow : TAG.wide
     ctx.lineWidth = width < NARROW_PX ? 1.5 : 2
     ctx.font = `600 ${tag.font}px system-ui, sans-serif`
@@ -127,7 +159,7 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       ctx.fillStyle = '#fff'
       ctx.fillText(label, x + 3, bottom - 2)
     })
-  }, [tracks, showBoxes, showSkeleton, names, videoRef])
+  }, [tracks, showBoxes, showSkeleton, ball, showBall, names, videoRef])
 
   useEffect(() => {
     const video = videoRef.current
@@ -203,6 +235,12 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
                 disabled={!showBoxes}
               />
               Scheletro
+            </label>
+          )}
+          {ball && (
+            <label className="toggle">
+              <input type="checkbox" checked={showBall} onChange={e => setShowBall(e.target.checked)} />
+              Palla
             </label>
           )}
         </div>

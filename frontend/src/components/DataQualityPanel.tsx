@@ -92,6 +92,16 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                 </dd>
               </div>
             )}
+            {quality.ball && quality.ball.frames > 0 && (
+              <div>
+                <dt>Palla</dt>
+                <dd>
+                  vista in {Math.round((100 * quality.ball.found) / quality.ball.frames)}% dei{' '}
+                  {quality.ball.frames.toLocaleString('it-IT')} fotogrammi
+                  {quality.ball.model && ` · ${quality.ball.model}`}
+                </dd>
+              </div>
+            )}
             {quality.tracking &&
               (quality.tracking.feet_below_net > 0 || quality.tracking.weak_detections > 0 || !!quality.tracking.scenery) && (
               <div>

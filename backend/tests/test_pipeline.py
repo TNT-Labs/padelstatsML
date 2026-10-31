@@ -924,3 +924,78 @@ def test_a_posture_that_stops_leaves_the_analysis_going(monkeypatch, synthetic_m
     assert len(result["per_player"]) == 4
     assert any("La postura si è interrotta" in w for w in quality["warnings"])
     assert quality["pose"]["frames"] == 30
+
+
+# ── The ball, on every frame, beside the detector on the accelerator ────────
+
+class _BallEverywhere:
+    """Stands in for the ball network: a ball on every frame after the
+    first two, moving left to right."""
+
+    fail_after: int | None = None
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "ball_h8l.hef"
+
+    def find(self, frames, frame_size):
+        assert len(frames) == 3 and frames[0].shape == (288, 512, 3)
+        self.calls += 1
+        if self.fail_after is not None and self.calls > self.fail_after:
+            raise RuntimeError("la scheda non ha scritto il risultato")
+        return (float(self.calls % frame_size[0]), 300.0, 0.8)
+
+    def close(self) -> None:
+        pass
+
+
+def _run_with_ball(monkeypatch, synthetic_match, calibration, artifacts, baller=_BallEverywhere,
+                   model="/x/ball_h8l.hef"):
+    from dataclasses import replace
+
+    import app.ml.pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _BlobDetector)
+    monkeypatch.setattr(pipeline_module, "HailoPersonDetector", _HailoBlobDetector)
+    monkeypatch.setattr(pipeline_module, "HailoBallDetector", baller)
+    monkeypatch.setattr(pipeline_module, "find_ball_model", lambda *_a: model)
+    monkeypatch.setattr(pipeline_module, "hailo_status", lambda *_a, **_k: _usable())
+    monkeypatch.setattr(pipeline_module, "_ACCELERATOR_FAILED", None)
+    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", ball="auto"))
+    return pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=artifacts)
+
+
+def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calibration, tmp_path):
+    from app.ml.artifacts import read_ball
+    from app.ml.video import probe
+
+    result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path / "a")
+    frames = probe(synthetic_match).frame_count
+    ball = read_ball(tmp_path / "a")
+    # Every frame but the first two (three in a row are the input), in order.
+    assert len(ball) == frames - 2
+    assert [b[0] for b in ball] == list(range(2, frames))
+    assert result["data_quality"]["ball"] == {"model": "ball_h8l.hef", "frames": frames - 2, "found": frames - 2}
+
+    # The players are analysed on the same samples as without the ball.
+    plain = _run_with(monkeypatch, synthetic_match, calibration, _usable())
+    assert result["summary"] == plain["summary"]
+
+
+def test_a_ball_network_failing_leaves_the_players_analysed(monkeypatch, synthetic_match, calibration, tmp_path):
+    class Failing(_BallEverywhere):
+        fail_after = 30
+
+    result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path, baller=Failing)
+    assert len(result["per_player"]) == 4
+    assert result["data_quality"]["ball"]["frames"] == 30
+    assert any("palla si è interrotta" in w for w in result["data_quality"]["warnings"])
+
+
+def test_without_the_ball_network_nothing_changes(monkeypatch, synthetic_match, calibration, tmp_path):
+    result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path, model=None)
+    assert result["data_quality"].get("ball") is None
+    assert not (tmp_path / "ball.jsonl").exists()

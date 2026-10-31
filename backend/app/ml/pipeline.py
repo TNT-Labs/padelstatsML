@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,9 @@ import numpy as np
 
 from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status, pose_models
 from app.ml.artifacts import ArtifactWriter
+from app.ml.ball import HailoBallDetector
+from app.ml.ball import find_model as find_ball_model
+from app.ml.ball import small as ball_input
 from app.ml.court import CourtCalibration
 from app.ml.detect import DetectorError, PersonDetector, merge_detections, within_crop
 from app.ml.detect_hailo import HailoPersonDetector, HailoPoseEstimator, HailoRuntimeError
@@ -97,6 +101,10 @@ class PipelineConfig:
     # Posture rate (per second) between the samples too, stored in
     # poses.jsonl: 0, only at the samples (see Settings.pose_hz).
     pose_hz: float = 0.0
+    # The ball on every frame ("auto" / "off"), on the accelerator beside the
+    # detector, and a network of one's own (see app/ml/ball.py).
+    ball: str = "off"
+    hailo_ball_model: str | None = None
 
 
 @dataclass
@@ -145,6 +153,11 @@ class AnalysisPipeline:
         detector, accelerator_note = self._detector()
         poser, pose_note = self._poser(detector)
         posed_frames = 0
+        baller, ball_note = self._baller(detector)
+        ball_model = baller.name if baller is not None else None
+        ball_frames = ball_found = 0
+        recent: deque = deque(maxlen=3)        # the last frames, small, for the ball
+        last_index = -2
         embedder = self._embedder()
 
         max_duration_s = self.config.max_analysis_minutes * 60.0
@@ -158,6 +171,8 @@ class AnalysisPipeline:
             # stored for a model of strokes: the samples' own analysis is
             # unchanged.
             pose_hz=self.config.pose_hz if poser is not None else 0.0,
+            # The ball needs every frame: three in a row are its input.
+            every_frame=baller is not None,
         )
         if sampler.start_frame:
             report(2, f"Salto al minuto {_clock(sampler.start_s)}, inizio dell'analisi…")
@@ -198,8 +213,28 @@ class AnalysisPipeline:
                 writer.write_meta(self._meta(video_path, info, calibration, sampler))
 
             for frame in sampler:
+                if baller is not None:
+                    if frame.index != last_index + 1:
+                        recent.clear()
+                    last_index = frame.index
+                    recent.append(ball_input(frame.image))
+                    if len(recent) == 3:
+                        try:
+                            ball = baller.find(list(recent), (info.width, info.height))
+                        except Exception as exc:      # noqa: BLE001 - the players matter more
+                            logger.error("Palla: %s · proseguo senza", exc)
+                            _close(baller)
+                            baller = None
+                            ball_note = (f"La palla si è interrotta al minuto {_clock(frame.timestamp_s)}: "
+                                         "da lì in poi non è stata seguita.")
+                        else:
+                            ball_frames += 1
+                            if ball is not None:
+                                ball_found += 1
+                                if writer is not None:
+                                    writer.write_ball(frame.index, frame.timestamp_s, *ball)
                 if not frame.main:
-                    if poser is not None:
+                    if frame.pose and poser is not None:
                         boxes = tracker.current_boxes(frame.timestamp_s)
                         try:
                             points = poser.points_for(frame.image, [box for _, box in boxes])
@@ -223,6 +258,11 @@ class AnalysisPipeline:
                     logger.error("%s · proseguo sul processore", exc)
                     _close(poser)
                     poser = None
+                    if baller is not None:
+                        _close(baller)
+                        baller = None
+                        ball_note = (f"La palla si è interrotta al minuto {_clock(frame.timestamp_s)} "
+                                     "con l'acceleratore.")
                     _close(detector)
                     detector = self._cpu_detector()
                     accelerator_note = (
@@ -276,6 +316,11 @@ class AnalysisPipeline:
                           "dense_hz": round(sampler.info.fps / sampler.pose_step, 1) if sampler.pose_step else None}
                          if posed_frames or poser is not None else None),
                 "pose_note": pose_note,
+                # The ball: the network, the frames it looked at, those it
+                # found the ball in (before the flights are made of them).
+                "ball": ({"model": ball_model, "frames": ball_frames, "found": ball_found}
+                         if ball_model else None),
+                "ball_note": ball_note,
                 "variable_frame_rate": sampler.variable_frame_rate,
                 # Detections recognised as part of the empty court and left out.
                 "scenery": tracker.detections_rejected_scenery,
@@ -307,6 +352,7 @@ class AnalysisPipeline:
         finally:
             if writer is not None:
                 writer.__exit__(None, None, None)
+            _close(baller)
             _close(poser)
             _close(detector)
 
@@ -405,6 +451,22 @@ class AnalysisPipeline:
             return None, f"{exc}: analisi senza postura."
         logger.info("Postura sull'acceleratore: %s", poser.name)
         return poser, None
+
+    def _baller(self, detector):
+        """(ball detector, note): on the accelerator beside the players'
+        network, when the ball network is in weights/; None otherwise."""
+        if self.config.ball == "off" or not getattr(detector, "on_accelerator", False):
+            return None, None
+        model = find_ball_model(self.config.hailo_ball_model)
+        if model is None:
+            return None, None
+        try:
+            baller = HailoBallDetector(model)
+        except Exception as exc:              # noqa: BLE001 - any HailoRT failure means: no ball
+            logger.warning("Palla non disponibile con %s: %s", Path(model).name, exc)
+            return None, f"Rete della palla {Path(model).name} non caricata ({exc}): analisi senza palla."
+        logger.info("Palla sull'acceleratore: %s", baller.name)
+        return baller, None
 
     def _cpu_detector(self) -> PersonDetector:
         return PersonDetector(
@@ -519,6 +581,10 @@ def apply_run_quality(result: dict, run_quality: dict | None) -> None:
         quality["pose"] = run_quality["pose"]
     if run_quality.get("pose_note"):
         quality["warnings"].append(run_quality["pose_note"])
+    if run_quality.get("ball"):
+        quality["ball"] = run_quality["ball"]
+    if run_quality.get("ball_note"):
+        quality["warnings"].append(run_quality["ball_note"])
     if run_quality.get("accelerator_note"):
         quality["warnings"].append(run_quality["accelerator_note"])
 

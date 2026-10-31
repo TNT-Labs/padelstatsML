@@ -5,6 +5,7 @@
     GET  /api/matches/{id}/ball/labels                         every mark so far
     PATCH /api/matches/{id}/ball/labels                        set or clear marks
     GET  /api/matches/{id}/ball/export.zip                     the marked clips, for training
+    GET  /api/matches/{id}/ball/track                          the ball found by the analysis
 
 For whoever may change the match: marking is work on the match's data. See
 app/ml/ball_data.py.
@@ -12,21 +13,23 @@ app/ml/ball_data.py.
 from __future__ import annotations
 
 import asyncio
+import gzip
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_editor
+from app.api.deps import current_user, require_editor
 from app.api.matches import _get_match
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.storage import video_path
+from app.core.storage import artifacts_dir, video_path
 from app.ml.ball_data import NOT_VISIBLE, BallData, ball_dir, choose_clips
+from app.ml.ball_track import track_gz
 from app.models import Match, MatchStats, MatchStatus, User
 
 router = APIRouter(prefix="/api/matches", tags=["ball"])
@@ -132,3 +135,21 @@ async def ball_export(match_id: str, db: AsyncSession = Depends(get_db), user: U
         await run_in_threadpool(data.export_zip, match_id, (match.width or 1920, match.height or 1080), target)
     return FileResponse(str(target), media_type="application/zip",
                         filename=f"palla_{match_id[:8]}.zip")
+
+
+@router.get("/{match_id}/ball/track")
+async def ball_track(
+    match_id: str, request: Request,
+    db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
+) -> Response:
+    """The ball's flights through the video, for the web player
+    (app/ml/ball_track.py). For whoever sees the match."""
+    match = await _get_match(db, match_id, user)
+    width, height = match.width or 1920, match.height or 1080
+    data = await run_in_threadpool(track_gz, artifacts_dir(match_id), width, height)
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Palla non seguita in questa analisi.")
+    headers = {"Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(data, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(data), media_type="application/json", headers=headers)
