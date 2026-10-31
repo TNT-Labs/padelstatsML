@@ -258,3 +258,19 @@ async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_mat
     stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
     assert all(isinstance(r["hits"], list) for r in stats["rallies"])
     assert all(isinstance(p["hits"], int) for p in stats["per_player"].values())
+
+
+async def test_the_hits_seen_in_the_video_are_marked(analysed_match):
+    from conftest import signed_in
+
+    owner, match_id = analysed_match
+    url = f"/api/matches/{match_id}/hit-labels"
+    response = await owner.put(url, json={"hits": [[12.345, 2], [10.0, 0]]})
+    assert response.status_code == 200, response.text
+    assert response.json()["hit_labels"] == [[10.0, 0], [12.35, 2]]
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["hit_labels"] == [[10.0, 0], [12.35, 2]]
+    assert (await owner.put(url, json={"hits": [[1.0, 4]]})).status_code == 422
+    assert (await owner.put(url, json={"hits": []})).json()["hit_labels"] is None
+    viewer = await signed_in("hits-viewer", "visualizzatore")
+    async with viewer:
+        assert (await viewer.put(url, json={"hits": [[1.0, 1]]})).status_code == 403

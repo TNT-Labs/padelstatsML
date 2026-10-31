@@ -226,6 +226,7 @@ async def apply_refinement(
         match.player_hands = None
     if not same_slots(stats.per_player, result["per_player"]):
         match.stroke_labels = None
+        match.hit_labels = None
     match.calibration = calibration_data
     stats.per_player = result["per_player"]
     stats.heatmaps = result["heatmaps"]

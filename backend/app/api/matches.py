@@ -81,6 +81,7 @@ from app.schemas.match import (
     MatchRead,
     MatchStatsRead,
     MatchUpdate,
+    HitLabelsUpdate,
     StrokeLabelsUpdate,
     UploadInitResponse,
     UploadStatus,
@@ -712,6 +713,7 @@ async def start_analysis(
     match.player_names = None
     match.player_hands = None
     match.stroke_labels = None
+    match.hit_labels = None
     await db.flush()
     return await _read(db, match, user)
 
@@ -787,6 +789,19 @@ async def label_strokes(
     return {"stroke_labels": match.stroke_labels}
 
 
+@router.put("/{match_id}/hit-labels")
+async def label_hits(
+    match_id: str, payload: HitLabelsUpdate,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> dict:
+    """The hits a person marked watching the video, all of them."""
+    match = await _get_match(db, match_id, user)
+    hits = sorted([round(t, 2), p] for t, p in payload.hits)
+    match.hit_labels = hits or None
+    await db.flush()
+    return {"hit_labels": match.hit_labels}
+
+
 @router.get("/{match_id}/stats", response_model=MatchStatsRead)
 async def get_stats(
     match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(current_user)
@@ -830,6 +845,7 @@ async def get_stats(
         player_names=match.player_names,
         player_hands=match.player_hands,
         stroke_labels=match.stroke_labels,
+        hit_labels=match.hit_labels,
         per_player=per_player,
         heatmaps=stats.heatmaps,
         rallies=stats.rallies,

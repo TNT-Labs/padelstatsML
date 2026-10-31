@@ -31,6 +31,12 @@ class StrokeLabelsUpdate(BaseModel):
     labels: dict[Annotated[str, Field(max_length=32, pattern=r"^\d+:\d+(\.\d+)?$")], StrokeLabel | None] = Field(
         max_length=500)
 
+class HitLabelsUpdate(BaseModel):
+    """All the hits marked on a match: [seconds, player id] each."""
+    hits: list[tuple[Annotated[float, Field(ge=0, le=86400)], Annotated[int, Field(ge=0, le=3)]]] = Field(
+        max_length=5000)
+
+
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     player_names: list[PlayerName] | None = Field(default=None, max_length=4)
@@ -263,6 +269,7 @@ class MatchStatsRead(BaseModel):
     player_names: list[str] | None
     player_hands: list[PlayerHand] | None = None
     stroke_labels: dict[str, str] | None = None
+    hit_labels: list[list[float]] | None = None
     per_player: dict[str, PlayerStats]
     heatmaps: dict[str, list[list[float]]]
     rallies: list[RallyRead]

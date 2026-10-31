@@ -123,6 +123,9 @@ class Match(Base):
     # "<player id>:<seconds>" -> one of schemas.match.STROKE_LABELS: how the
     # strokes are checked, and the ground truth to tune them on.
     stroke_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The hits seen in the video, marked by a person: [[seconds, player id]],
+    # the truth the hits found from the ball are measured against.
+    hit_labels: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
