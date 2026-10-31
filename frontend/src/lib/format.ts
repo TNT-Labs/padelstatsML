@@ -95,3 +95,23 @@ const RIGHT_LABELS: Record<StrokeKind, string[]> = {
 export function strokeName(stroke: { kind: StrokeKind }): string {
   return stroke.kind === 'overhead' ? 'smash' : 'lob'
 }
+
+/** "52 min", "1 h 05 min", "40 s": how long something took. */
+export function elapsed(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s} s`
+  const minutes = Math.round(s / 60)
+  if (minutes < 60) return `${minutes} min`
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
+}
+
+/** The last analysis's duration, against the video it analysed, and when
+ *  it ended: what one would otherwise time by hand. */
+export function analysisTimeText(seconds: number, videoS: number, finishedAt: string): string {
+  const end = new Date(finishedAt)
+  const day = end.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
+  const hour = end.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+  const ratio = videoS > 0 ? ` (${(seconds / videoS).toLocaleString('it-IT', { maximumFractionDigits: 1 })}× la durata)` : ''
+  const video = videoS > 0 ? ` per ${elapsed(videoS)} di video${ratio}` : ''
+  return `Analisi eseguita in ${elapsed(seconds)}${video} · conclusa il ${day} alle ${hour}`
+}

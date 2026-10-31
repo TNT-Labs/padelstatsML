@@ -221,3 +221,25 @@ async def test_the_ball_found_by_the_analysis_is_served_as_flights(analysed_matc
     viewer = await signed_in("ball-track-viewer", "visualizzatore")
     async with viewer:
         assert (await viewer.get(url)).status_code == 200      # viewers see it too
+
+
+async def test_the_time_the_analysis_took_is_shown_with_the_statistics(analysed_match):
+    from datetime import datetime, timedelta
+
+    from app.core.database import sync_session
+    from app.models import Job, JobState
+
+    owner, match_id = analysed_match
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["analysis_time"] is None
+    start = datetime(2026, 10, 31, 18, 0, 0)
+    with sync_session() as session:
+        # An older run, then the last one: the last one is shown.
+        session.add(Job(match_id=match_id, state=JobState.DONE, started_at=start - timedelta(days=1),
+                        finished_at=start - timedelta(days=1) + timedelta(minutes=30)))
+        session.add(Job(match_id=match_id, state=JobState.DONE, started_at=start,
+                        finished_at=start + timedelta(minutes=52, seconds=10)))
+        session.add(Job(match_id=match_id, state=JobState.FAILED, started_at=start + timedelta(hours=2),
+                        finished_at=start + timedelta(hours=2, minutes=1)))
+    timing = (await owner.get(f"/api/matches/{match_id}/stats")).json()["analysis_time"]
+    assert timing["seconds"] == 52 * 60 + 10
+    assert timing["finished_at"].startswith("2026-10-31T18:52:10") and timing["finished_at"].endswith(("Z", "+00:00"))

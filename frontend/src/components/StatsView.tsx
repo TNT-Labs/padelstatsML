@@ -7,7 +7,7 @@ import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
 import { StrokesCard } from './StrokesCard'
-import { handLabel, kmh, playerPlace } from '../lib/format'
+import { analysisTimeText, handLabel, kmh, playerPlace } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
 
@@ -200,6 +200,11 @@ export const StatsView: FC<Props> = ({
       </div>
 
       <div style={{ marginBottom: '1.25rem' }}>
+        {stats.analysis_time && (
+          <p className="muted-note" style={{ margin: '0 0 .5rem' }}>
+            {analysisTimeText(stats.analysis_time.seconds, summary.analysed_s, stats.analysis_time.finished_at)}
+          </p>
+        )}
         <DataQualityPanel quality={stats.data_quality} matchId={stats.match_id} />
       </div>
 

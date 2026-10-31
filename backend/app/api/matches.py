@@ -811,6 +811,19 @@ async def get_stats(
             entry["crop_url"] = crop_url(match_id, int(player_id))
         per_player[player_id] = entry
 
+    job = await db.scalar(
+        select(Job)
+        .where(Job.match_id == match_id, Job.state == JobState.DONE,
+               Job.started_at.is_not(None), Job.finished_at.is_not(None))
+        .order_by(Job.finished_at.desc())
+        .limit(1)
+    )
+    analysis_time = None
+    if job is not None:
+        seconds = (job.finished_at - job.started_at).total_seconds()
+        if seconds >= 0:
+            analysis_time = {"seconds": round(seconds), "finished_at": job.finished_at}
+
     return MatchStatsRead(
         match_id=match_id,
         title=match.title,
@@ -822,6 +835,7 @@ async def get_stats(
         rallies=stats.rallies,
         summary=stats.summary,
         data_quality=stats.data_quality,
+        analysis_time=analysis_time,
     )
 
 
