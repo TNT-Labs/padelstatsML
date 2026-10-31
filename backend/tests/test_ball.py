@@ -72,3 +72,14 @@ def test_the_payload_has_each_flight():
     payload = track_payload(_flight(0, 8, 100, 100, 20, 0), 1920, 1080)
     assert payload["frame"] == [1920, 1080] and payload["seen"] == 8
     assert payload["flights"][0]["x"][:2] == [100, 120]
+
+
+def test_a_point_off_the_course_after_a_gap_starts_a_new_flight():
+    from app.ml.ball_track import flights
+
+    # Down to the right, then hidden 4 frames, then an answer far up and
+    # back: within reach of a fast ball, but not where this one was going.
+    ball = _flight(0, 10, 700, 300, 8, 10)
+    stray = _flight(14, 6, 760, 150, 6, -3)
+    out = flights(ball + stray, 1080)
+    assert [len(f.frames) for f in out] == [10, 6]

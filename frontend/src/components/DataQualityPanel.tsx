@@ -181,10 +181,11 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
 
           {quality.excluded_metrics.length > 0 && (
             <p className="quality-excluded">
-              <strong>Non misurato su questo hardware:</strong>{' '}
-              {quality.excluded_metrics.join(', ')}. Richiede il tracciamento della palla,
-              fuori portata per un Raspberry Pi 5 senza acceleratore. Preferiamo non
-              mostrare questi dati piuttosto che stimarli.
+              <strong>Non ancora misurato:</strong> {quality.excluded_metrics.join(', ')}.{' '}
+              {quality.ball
+                ? 'Si ricavano dalla palla, ora seguita: sono il prossimo passo.'
+                : 'Richiedono il tracciamento della palla, fuori portata per un Raspberry Pi 5 senza acceleratore.'}{' '}
+              Preferiamo non mostrare questi dati piuttosto che stimarli.
             </p>
           )}
         </div>

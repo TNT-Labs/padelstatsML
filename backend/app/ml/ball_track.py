@@ -27,6 +27,11 @@ MAX_STEP = 0.08
 MAX_GAP = 6                  # frames: 0.2 s at 30 fps
 MIN_POINTS = 5
 MIN_TRAVEL = 0.02            # of the height, end to end of the tracklet's extent
+# Once a flight has a direction, the next point must be where it was going:
+# within this much of the height, plus half of what it moves in the gap.
+# A hit or a bounce turns it more than that: there a new flight starts,
+# and a stray answer a few frames on is not taken for the ball.
+ON_COURSE = 0.03
 
 
 @dataclass
@@ -52,6 +57,13 @@ class Flight:
         return (self.xs[-1] + (self.xs[-1] - self.xs[-2]) * ahead,
                 self.ys[-1] + (self.ys[-1] - self.ys[-2]) * ahead)
 
+    def speed(self) -> float:
+        """Pixels per frame between its last two points."""
+        if len(self.frames) < 2:
+            return 0.0
+        span = max(self.frames[-1] - self.frames[-2], 1)
+        return math.hypot(self.xs[-1] - self.xs[-2], self.ys[-1] - self.ys[-2]) / span
+
     def travel(self) -> float:
         return math.hypot(max(self.xs) - min(self.xs), max(self.ys) - min(self.ys))
 
@@ -74,6 +86,8 @@ def flights(found: list[tuple[int, float, float, float, float]], height: int) ->
                 continue
             ex, ey = flight.expected(frame)
             d = math.hypot(x - ex, y - ey)
+            if len(flight.frames) >= 2 and d > ON_COURSE * height + 0.5 * flight.speed() * gap:
+                continue
             if d < best_d:
                 best, best_d = flight, d
         if best is None:
@@ -103,7 +117,7 @@ def track_payload(found: list[tuple[int, float, float, float, float]], width: in
 
 
 # Bump when the flights are made differently: older cached files are rebuilt.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def track_gz(directory, width: int, height: int) -> bytes | None:

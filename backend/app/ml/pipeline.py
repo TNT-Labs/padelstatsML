@@ -30,6 +30,7 @@ import numpy as np
 from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status, pose_models
 from app.ml.artifacts import ArtifactWriter
 from app.ml.ball import HailoBallDetector
+from app.ml.ball_hits import attach_hits
 from app.ml.ball import find_model as find_ball_model
 from app.ml.ball import small as ball_input
 from app.ml.court import CourtCalibration
@@ -387,6 +388,9 @@ class AnalysisPipeline:
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         apply_run_quality(result, run_quality)
+        if artifacts_dir is not None:
+            # The hits, from the ball's flights and the players' boxes.
+            attach_hits(result, identity, artifacts_dir, info.height)
 
         # ── 6. Thumbnails ────────────────────────────────────────────────────
         report(99, "Estrazione anteprime giocatori…")
