@@ -19,7 +19,11 @@ Poi premi **Scarica i dati annotati**: ottieni uno zip per partita.
 ## 2. Addestrare (Google Colab, GPU gratuita)
 
 1. Apri colab.research.google.com e crea un nuovo notebook. Scegli *Runtime → Cambia tipo di runtime → GPU T4*.
-2. Carica `train_tracknet.py` e gli zip, dall'icona cartella a sinistra.
+2. Carica `train_tracknet.py` e gli zip, dall'icona cartella a sinistra. **Aspetta che il
+   cerchio di caricamento in basso a sinistra sparisca**: uno zip di 100 MB richiede qualche
+   minuto, e se lanci prima lo script lo trova tronco. Per zip grandi è più sicuro metterli su
+   Google Drive e collegarlo (`from google.colab import drive; drive.mount('/content/drive')`).
+   Controllo: `!unzip -tq palla_*.zip` deve rispondere *No errors detected*.
 3. Esegui:
 
 ```
@@ -41,16 +45,46 @@ Alla fine scarica `ball.onnx` e `ball.pt`. Prepara anche l'insieme di calibrazio
 ## 3. Convertire per l'Hailo-8L (Windows, WSL2 con Ubuntu 22.04)
 
 1. Registrati su hailo.ai, nella Developer Zone.
-2. Scarica il **Dataflow Compiler** per Python 3.10 (file `hailo_dataflow_compiler-*.whl`), versione compatibile con HailoRT 4.20.
-3. In WSL2 crea l'ambiente con il compilatore:
+2. Scarica il **Dataflow Compiler** per Linux e Python 3.10, cioè un file
+   `hailo_dataflow_compiler-*-cp310-*.whl`. Deve essere la versione abbinata a HailoRT 4.20,
+   come indicato nella tabella di compatibilità della Developer Zone: un `.hef` compilato con
+   un'altra versione non si carica sul Raspberry.
+3. Il compilatore vuole **Ubuntu 22.04**, che ha Python 3.10. L'Ubuntu predefinito di WSL è il
+   24.04, con Python 3.12, e lì `python3.10-venv` non esiste. In PowerShell installa una seconda
+   distribuzione, accanto all'altra:
 
 ```
-sudo apt install python3.10-venv graphviz-dev
-python3.10 -m venv ~/hailo && source ~/hailo/bin/activate
-pip install hailo_dataflow_compiler-*.whl
+wsl --install -d Ubuntu-22.04
 ```
 
-4. Copia nella stessa cartella `ball.onnx`, `calib.npy`, `ball.alls` e `hailo_compile.sh`, poi lancia:
+   Poi aprila (menu Start → *Ubuntu 22.04*) e controlla con `lsb_release -rs` che risponda `22.04`.
+4. Lì crea l'ambiente con il compilatore, **un comando alla volta**. Il file `.whl` scaricato in
+   Windows si trova in `/mnt/c/Users/<nome>/Downloads/`.
+
+```
+sudo apt update
+sudo apt install -y python3.10-venv python3.10-dev python3-tk graphviz libgraphviz-dev
+python3.10 -m venv ~/hailo
+source ~/hailo/bin/activate
+pip install --upgrade pip
+pip install /mnt/c/Users/<nome>/Downloads/hailo_dataflow_compiler-*.whl
+hailo --version
+```
+
+   Il controllo iniziale chiede 16 GB di RAM, ma per questa rete piccola ne bastano meno. WSL
+   usa metà della RAM di Windows: per dargliene di più, e una memoria di scambio ampia, crea in
+   Windows il file `C:\Users\<nome>\.wslconfig` con:
+
+```
+[wsl2]
+memory=6GB
+swap=16GB
+```
+
+   Usa per `memory` la RAM del PC meno 2 GB (Gestione attività → Prestazioni → Memoria). Poi in
+   PowerShell esegui `wsl --shutdown` e riapri Ubuntu 22.04. Con `free -g` vedi la nuova memoria.
+
+5. Copia nella stessa cartella `ball.onnx`, `calib.npy`, `ball.alls` e `hailo_compile.sh`, poi lancia:
 
 ```
 ./hailo_compile.sh ball.onnx calib.npy

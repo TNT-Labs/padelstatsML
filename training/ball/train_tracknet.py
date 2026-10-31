@@ -76,9 +76,29 @@ def _heat(x: float, y: float) -> np.ndarray:
     return (((xs - x) ** 2 + (ys - y) ** 2) <= RADIUS ** 2).astype(np.float32)
 
 
+def _open(path: str) -> zipfile.ZipFile:
+    """An exported zip, or why the file is not one."""
+    file = Path(path)
+    if not file.is_file():
+        raise SystemExit(f"{path}: file non trovato.")
+    if zipfile.is_zipfile(file):
+        return zipfile.ZipFile(file)
+    size = file.stat().st_size
+    head = file.read_bytes()[:300]
+    if head.startswith(b"PK"):
+        why = ("lo zip è incompleto: il caricamento (barra in basso a sinistra in Colab) "
+               "o il download non era finito. Ricaricalo e aspetta la fine.")
+    elif head.lstrip().startswith((b"{", b"<")):
+        why = ("non è lo zip ma una risposta del server: "
+               + head.decode("utf-8", "replace").strip()[:200])
+    else:
+        why = "il file non è uno zip esportato da Annota palla."
+    raise SystemExit(f"{path} ({size / 1e6:.1f} MB): {why}")
+
+
 def load(zips: list[str]):
     """Samples per clip and an image reader over the zips."""
-    archives = {z: zipfile.ZipFile(z) for z in zips}
+    archives = {z: _open(z) for z in zips}
     cache: dict[tuple[str, str], np.ndarray] = {}
 
     def images(key):
@@ -174,6 +194,7 @@ def locate(heat: np.ndarray) -> tuple[float, float] | None:
 def score(model, loader, device) -> dict:
     """Precision and recall of the ball, TrackNet's way."""
     tp = fp = fn = tn = 0
+    near, peaks = 0, []
     model.eval()
     with torch.no_grad():
         for frames, _, visible, xy in loader:
@@ -181,6 +202,11 @@ def score(model, loader, device) -> dict:
             for h, v, p in zip(heat, visible.numpy(), xy.numpy()):
                 found = locate(h)
                 if v:
+                    # Before it dares answer over the threshold: is its
+                    # brightest point already on the ball, and how bright?
+                    iy, ix = np.unravel_index(int(h.argmax()), h.shape)
+                    near += np.hypot(ix - p[0], iy - p[1]) <= HIT_PX
+                    peaks.append(float(h.max()))
                     if found is not None and np.hypot(found[0] - p[0], found[1] - p[1]) <= HIT_PX:
                         tp += 1
                     elif found is not None:
@@ -194,7 +220,11 @@ def score(model, loader, device) -> dict:
     recall = tp / max(1, tp + fn)
     return {"precision": round(precision, 3), "recall": round(recall, 3),
             "f1": round(2 * precision * recall / max(1e-9, precision + recall), 3),
-            "samples": tp + fp + fn + tn}
+            "samples": tp + fp + fn + tn,
+            # Share of visible balls where the brightest point is the ball,
+            # and the median brightness there: both rise before the F1 does.
+            "vicino": round(float(near) / max(1, len(peaks)), 3),
+            "picco": round(float(np.median(peaks)), 3) if peaks else 0.0}
 
 
 class _OnChip(nn.Module):
@@ -237,6 +267,7 @@ def main() -> None:
         raise SystemExit("Nessun fotogramma annotato con i due precedenti: annota spezzoni interi.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Calcolo su {device}" + ("" if device == "cuda" else " · lento: in Colab scegli Runtime > Cambia tipo di runtime > GPU"))
     model = TrackNetLite(args.width).to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, args.epochs)
@@ -251,7 +282,7 @@ def main() -> None:
             loss = weighted_bce(model(frames.to(device)), heat.to(device))
             loss.backward()
             optimiser.step()
-            total += float(loss) * len(frames)
+            total += loss.item() * len(frames)
         schedule.step()
         result = score(model, val_loader, device) if val_loader else {"f1": 0.0}
         print(f"epoca {epoch + 1}/{args.epochs} · perdita {total / len(train):.4f} · validazione {result}")

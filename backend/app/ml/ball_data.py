@@ -176,7 +176,10 @@ class BallData:
         writer.writerow(["clip", "frame", "file", "visible", "x", "y"])
         target = Path(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_STORED) as archive:
+        # Written aside and moved in place: a download of the previous export
+        # still being sent keeps reading whole the file it opened.
+        part = target.with_name(target.name + ".part")
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_STORED) as archive:
             for clip in self.clips() or []:
                 frames = [clip.start_frame + i for i in range(clip.frames)]
                 if not any(str(f) in labels for f in frames) or not self.has_frames(clip):
@@ -203,4 +206,5 @@ class BallData:
                 "match": match_id, "source_size": [width, height], "size": [EXPORT_WIDTH, out_h],
                 "clip_frames": CLIP_FRAMES,
             }))
+        part.replace(target)
         return target

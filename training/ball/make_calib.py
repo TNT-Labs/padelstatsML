@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """The calibration set for the Hailo compiler: real inputs of the network.
 
-    python make_calib.py palla_1.zip --count 512 --out calib.npy
+    python make_calib.py palla_1.zip --count 64 --out calib.npy
 
 The compiler quantizes the network to 8 bits on the ranges of these inputs:
 stacks of three consecutive frames from the exported zips (512 x 288,
 9 channels 0-255, as the chip receives them), taken evenly over the clips.
+64 are what the compiler uses at optimization level 1 (each is 5 MB as
+float: 512 would not fit in a PC's WSL with 4-8 GB).
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from train_tracknet import HEIGHT, WIDTH, load
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("zips", nargs="+")
-    parser.add_argument("--count", type=int, default=512)
+    parser.add_argument("--count", type=int, default=64)
     parser.add_argument("--out", default="calib.npy")
     args = parser.parse_args()
 
