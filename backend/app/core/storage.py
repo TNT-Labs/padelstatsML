@@ -89,7 +89,8 @@ def delete_match_files(match_id: str) -> None:
     upload_part_path(match_id).unlink(missing_ok=True)
     keyframe_path(match_id).unlink(missing_ok=True)
     background_path(match_id).unlink(missing_ok=True)
-    for directory in (get_settings().crops_path / match_id, artifacts_dir(match_id)):
+    for directory in (get_settings().crops_path / match_id, artifacts_dir(match_id),
+                      get_settings().data_path / "ball" / match_id):
         if directory.exists():
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -111,7 +112,7 @@ def purge_orphan_files(known_ids: set[str]) -> list[str]:
             candidates.update(
                 f.stem for f in folder.iterdir() if f.is_file() and f.suffix in suffixes
             )
-    for folder in (settings.crops_path, settings.artifacts_path):
+    for folder in (settings.crops_path, settings.artifacts_path, settings.data_path / "ball"):
         if folder.is_dir():
             candidates.update(d.name for d in folder.iterdir() if d.is_dir())
     orphans = sorted(candidates - known_ids)

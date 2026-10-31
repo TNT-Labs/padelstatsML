@@ -20,6 +20,7 @@ interface Props {
   onBack: () => void
   onRename: () => void
   onVerify: () => void
+  onAnnotateBall: () => void
   /** `recalibrate`: place the court corners again before analysing. */
   onReanalyse: (recalibrate: boolean) => void | Promise<void>
   /** Recompute from the stored detections; rejects with the reason. */
@@ -34,7 +35,7 @@ function formatDuration(seconds: number): string {
 }
 
 export const StatsView: FC<Props> = ({
-  stats, readOnly = false, onBack, onRename, onVerify, onReanalyse, onRefresh,
+  stats, readOnly = false, onBack, onRename, onVerify, onAnnotateBall, onReanalyse, onRefresh,
 }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
@@ -44,8 +45,6 @@ export const StatsView: FC<Props> = ({
   // By position in `players`: the high strokes, classified by the server
   // with the racket hand; null without the posture.
   const playerStrokes = players.map(([, player]) => player.strokes ?? null)
-  const playerSwings = players.map(([, player]) => player.swings ?? null)
-  const anySwings = playerSwings.some(s => s !== null)
   const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -103,6 +102,13 @@ export const StatsView: FC<Props> = ({
               </button>
               <button className="btn btn-ghost btn-sm" onClick={onVerify}>
                 Verifica accuratezza
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={onAnnotateBall}
+                title="Segna la palla fotogramma per fotogramma: i dati per insegnare all'app a seguirla"
+              >
+                Annota palla
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setAsking(true)}>
                 Rianalizza
@@ -353,31 +359,6 @@ export const StatsView: FC<Props> = ({
           names={names}
           readOnly={readOnly}
           onSeek={seek}
-        />
-      )}
-
-      {anySwings && (
-        <StrokesCard
-          key={`ground:${stats.match_id}:${JSON.stringify(stats.stroke_labels ?? {})}`}
-          title="Dritti e rovesci · sperimentale"
-          info={
-            <>
-              Dallo scheletro dei giocatori stimato 15 volte al secondo: il colpo è il momento in cui il
-              polso della mano della racchetta si muove più veloce, dritto o rovescio dal lato del corpo
-              da cui parte, volée entro 3,5 m dalla rete. È una prima versione, non ancora verificata:
-              per questo non è contata nelle schede dei giocatori. Serve la mano indicata in «Rinomina
-              giocatori». Con «Verifica» indichi cosa è ciascuno nel video: le verifiche servono a
-              tararlo.
-            </>
-          }
-          stats={stats}
-          strokes={playerSwings}
-          players={players.map(([pid]) => pid)}
-          names={names}
-          readOnly={readOnly}
-          onSeek={seek}
-          emptyNote={index =>
-            stats.player_hands?.[index] ? 'nessuno' : 'indica la mano in «Rinomina giocatori»'}
         />
       )}
 

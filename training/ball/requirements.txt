@@ -1,0 +1,5 @@
+# Training (Colab has them all already but opencv-python-headless).
+torch>=2.2
+numpy
+opencv-python-headless
+onnx

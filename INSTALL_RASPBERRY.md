@@ -337,9 +337,9 @@ dell'analisi è identico. Senza la scheda l'app funziona come prima.
   ogni giocatore (rete `yolov8s_pose_*.hef` di `hailo-models`): nel video
   della partita l'interruttore **Scheletro** li disegna, e nel pannello
   "Affidabilità dei dati" la riga **Postura** dice in quanti fotogrammi.
-  `POSE=off` la disattiva. Fra un campione e l'altro la postura è stimata
-  15 volte al secondo (`POSE_HZ`), per dritti e rovesci: l'analisi si
-  allunga; `POSE_HZ=0` torna a 5 al secondo.
+  `POSE=off` la disattiva. Con `POSE_HZ=15` la postura è stimata anche fra
+  un campione e l'altro e salvata, per raccogliere dati: l'analisi si
+  allunga. Dritti e rovesci non si distinguono ancora (camera a 2 m).
 - **Disattivarla** senza toglierla: `ACCELERATOR=cpu` in `.env`.
 - **Stato:** `docker compose exec api curl -s localhost:8000/padel/api/health`
   alla voce `accelerator`.

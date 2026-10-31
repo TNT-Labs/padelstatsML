@@ -1,0 +1,5 @@
+# Hailo model script for the ball network (train_tracknet.py).
+# Frames arrive as bytes 0-255; the chip scales them to 0-1.
+normalization1 = normalization([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [255.0, 255.0, 255.0, 255.0, 255.0, 255.0, 255.0, 255.0, 255.0])
+# Without a GPU (WSL2 on a laptop) level 1; with one, 2 is a little better.
+model_optimization_flavor(optimization_level=1, compression_level=0)

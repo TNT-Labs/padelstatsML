@@ -66,7 +66,7 @@ def reproject(tracklet: Tracklet, calibration: CourtCalibration, feet: FootModel
 def recompute(directory, calibration_data: dict | None, config, max_speed_ms: float | None = None):
     """The post-detection stages on the stored run, through the match's
     current calibration: (result, identity, rallies, artifacts)."""
-    from app.ml.artifacts import load_artifacts, read_poses
+    from app.ml.artifacts import load_artifacts
     from app.ml.pipeline import analyse_tracklets, apply_run_quality
 
     artifacts = with_calibration(load_artifacts(directory), calibration_data)
@@ -78,7 +78,6 @@ def recompute(directory, calibration_data: dict | None, config, max_speed_ms: fl
         frames_sampled=artifacts.frames_sampled,
         analysed_s=artifacts.analysed_s,
         start_s=float(artifacts.meta.get("start_s") or 0.0),
-        dense_poses=read_poses(artifacts.directory),
     )
     apply_run_quality(result, run_quality(artifacts))
     return result, identity, rallies, artifacts

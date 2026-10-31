@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh, parseClock, playerPlace, strokeCheck, strokeName } from './format'
+import { apiAsset, kmh, parseClock, playerPlace, strokeCheck } from './format'
 
 describe('parseClock', () => {
   it('reads seconds, minutes and hours', () => {
@@ -64,21 +64,5 @@ describe('strokeCheck', () => {
     const labels = { '0:10': 'bandeja', '0:20': 'nulla', '1:30': 'smash' }
     expect(strokeCheck(strokes, labels)).toEqual({ checked: 3, real: 2, rightKind: 1 })
     expect(strokeCheck(strokes, null)).toEqual({ checked: 0, real: 0, rightKind: 0 })
-  })
-})
-
-describe('strokes on the ground', () => {
-  it('are named, volleys too', () => {
-    expect(strokeName({ kind: 'forehand' })).toBe('dritto')
-    expect(strokeName({ kind: 'backhand', volley: true })).toBe('rovescio volée')
-  })
-  it('agree with what a person saw', () => {
-    const strokes = [
-      { key: '0:1', kind: 'forehand' as const },
-      { key: '0:2', kind: 'backhand' as const, volley: true },
-      { key: '0:3', kind: 'backhand' as const },
-    ]
-    const labels = { '0:1': 'dritto', '0:2': 'volee', '0:3': 'dritto' }
-    expect(strokeCheck(strokes, labels)).toEqual({ checked: 3, real: 3, rightKind: 2 })
   })
 })

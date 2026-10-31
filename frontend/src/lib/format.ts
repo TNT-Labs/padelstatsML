@@ -67,34 +67,31 @@ export const STROKE_LABELS: Record<string, string> = {
  *  checked, how many were a stroke at all and how many of the right kind
  *  (smash or bandeja for "overhead", lob for "lob"). */
 export function strokeCheck(
-  strokes: { key: string; kind: StrokeKind; volley?: boolean }[],
+  strokes: { key: string; kind: StrokeKind }[],
   labels: Record<string, string> | null | undefined,
 ) {
   let checked = 0
   let real = 0
   let rightKind = 0
-  for (const { key, kind, volley } of strokes) {
+  for (const { key, kind } of strokes) {
     const label = labels?.[key]
     if (!label) continue
     checked++
     if (label !== 'nulla') real++
-    if (RIGHT_LABELS[kind].includes(label) || (volley && label === 'volee')) rightKind++
+    if (RIGHT_LABELS[kind].includes(label)) rightKind++
   }
   return { checked, real, rightKind }
 }
 
-export type StrokeKind = 'overhead' | 'lob' | 'forehand' | 'backhand'
+export type StrokeKind = 'overhead' | 'lob'
 
 /** What a person may call each kind found, and be in agreement with it. */
 const RIGHT_LABELS: Record<StrokeKind, string[]> = {
   overhead: ['smash', 'bandeja'],
   lob: ['lob'],
-  forehand: ['dritto'],
-  backhand: ['rovescio'],
 }
 
 /** The name on a stroke's chip. */
-export function strokeName(stroke: { kind: StrokeKind; volley?: boolean }): string {
-  const name = { overhead: 'smash', lob: 'lob', forehand: 'dritto', backhand: 'rovescio' }[stroke.kind]
-  return stroke.volley ? `${name} volée` : name
+export function strokeName(stroke: { kind: StrokeKind }): string {
+  return stroke.kind === 'overhead' ? 'smash' : 'lob'
 }
