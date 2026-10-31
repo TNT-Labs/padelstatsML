@@ -257,6 +257,7 @@ def main() -> None:
         raise SystemExit("Nessun fotogramma annotato con i due precedenti: annota spezzoni interi.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Calcolo su {device}" + ("" if device == "cuda" else " · lento: in Colab scegli Runtime > Cambia tipo di runtime > GPU"))
     model = TrackNetLite(args.width).to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, args.epochs)
@@ -271,7 +272,7 @@ def main() -> None:
             loss = weighted_bce(model(frames.to(device)), heat.to(device))
             loss.backward()
             optimiser.step()
-            total += float(loss) * len(frames)
+            total += loss.item() * len(frames)
         schedule.step()
         result = score(model, val_loader, device) if val_loader else {"f1": 0.0}
         print(f"epoca {epoch + 1}/{args.epochs} · perdita {total / len(train):.4f} · validazione {result}")
