@@ -978,7 +978,12 @@ def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calib
     # Every frame but the first two (three in a row are the input), in order.
     assert len(ball) == frames - 2
     assert [b[0] for b in ball] == list(range(2, frames))
-    assert result["data_quality"]["ball"] == {"model": "ball_h8l.hef", "frames": frames - 2, "found": frames - 2}
+    ball_quality = result["data_quality"]["ball"]
+    assert {k: ball_quality[k] for k in ("model", "frames", "found")} == {
+        "model": "ball_h8l.hef", "frames": frames - 2, "found": frames - 2}
+    # The hits read from it, with how the hit models measured.
+    assert "hits_measured" in ball_quality
+    assert all(isinstance(r.get("hits"), list) for r in result["rallies"])
 
     # The players are analysed on the same samples as without the ball.
     plain = _run_with(monkeypatch, synthetic_match, calibration, _usable())

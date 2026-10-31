@@ -390,7 +390,7 @@ class AnalysisPipeline:
         apply_run_quality(result, run_quality)
         if artifacts_dir is not None:
             # The hits, from the ball's flights and the players' boxes.
-            attach_hits(result, identity, artifacts_dir, info.height)
+            attach_hits(result, identity, artifacts_dir, calibration, info.height)
 
         # ── 6. Thumbnails ────────────────────────────────────────────────────
         report(99, "Estrazione anteprime giocatori…")

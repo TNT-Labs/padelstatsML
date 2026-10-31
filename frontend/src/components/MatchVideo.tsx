@@ -9,8 +9,10 @@ interface Props {
   /** Owned by the page, so the rally list can seek the same video. */
   videoRef: RefObject<HTMLVideoElement>
   onSeek: (seconds: number) => void
-  /** [seconds, player id] of the hits found from the ball, in time order. */
+  /** [seconds, player id] of hits, in time order: found from the ball
+   *  (shown with the ball), or marked by hand (`marked`, always shown). */
   hits?: [number, number][]
+  marked?: boolean
 }
 
 // Name tags: smaller on a phone, where the far players are a few pixels
@@ -33,7 +35,7 @@ const CHANGEOVER_LEAD_S = 10
  * laid over the native player, so seeking, full-speed playback and the
  * browser's own controls all keep working.
  */
-export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits = NO_HITS }) => {
+export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits = NO_HITS, marked = false }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [tracks, setTracks] = useState<PlayerTracks | null>(null)
   const [tracksNote, setTracksNote] = useState<string | null>(null)
@@ -167,15 +169,15 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
       ctx.fillText(label, x + 3, bottom - 2)
     })
 
-    // The hits just marked, a badge beside the hitter.
-    if (hits.length) {
+    // The hits just made, a badge beside the hitter.
+    if (hits.length && (marked || showingBall)) {
       const now = video.currentTime
       const last = lastAtOrBefore(hitTimes, now)
       for (let k = last; k >= 0 && now - hits[k][0] <= HIT_SHOW_S; k--) {
         const player = tracks.players.find(p => p.id === hits[k][1])
         const box = player && boxAt(player.t, player.box, hits[k][0], maxGap)
         if (!box) continue
-        const label = 'colpo'
+        const label = marked ? 'segnato' : 'colpo'
         const w = ctx.measureText(label).width + 8
         const x = offsetX + box[2] * scale + 2
         const y = offsetY + box[1] * scale + tag.height + 2
@@ -185,7 +187,7 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
         ctx.fillText(label, x + 4, y - 2)
       }
     }
-  }, [tracks, showBoxes, showSkeleton, ball, showBall, hits, hitTimes, names, videoRef])
+  }, [tracks, showBoxes, showSkeleton, ball, showBall, hits, hitTimes, marked, names, videoRef])
 
   useEffect(() => {
     const video = videoRef.current

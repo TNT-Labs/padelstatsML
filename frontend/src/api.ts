@@ -222,7 +222,14 @@ export interface DataQuality {
   /** The players' posture on the accelerator. */
   pose?: { model: string | null; frames: number } | null
   /** The ball, when followed: frames looked at, frames it was found in. */
-  ball?: { model: string | null; frames: number; found: number } | null
+  ball?: {
+    model: string | null
+    frames: number
+    found: number
+    /** How the hits found from the ball measured against hits marked by a
+     *  person, on rallies the models never saw (shares 0-1). */
+    hits_measured?: { marked: number; found: number; real: number; half: number; player: number }
+  } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */
   tracking?: { weak_detections: number; feet_below_net: number; scenery?: number } | null

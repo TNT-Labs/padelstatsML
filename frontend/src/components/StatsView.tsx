@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FC } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react'
 import { api, type MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
@@ -48,8 +48,20 @@ export const StatsView: FC<Props> = ({
   const playerStrokes = players.map(([, player]) => player.strokes ?? null)
   const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
-  // The hits a person marked in the video: what the hits found from the
-  // ball will be measured against (they are not shown until they measure up).
+  // Hits found from the ball (analyses that followed it), and how they
+  // measured against hits a person marked.
+  const withHits = stats.rallies.filter(r => r.hits != null)
+  const hitsPerRally = withHits.length
+    ? withHits.reduce((sum, r) => sum + (r.hits?.length ?? 0), 0) / withHits.length
+    : null
+  const foundHits = useMemo(
+    () => stats.rallies.flatMap(r => r.hits ?? []).sort((a, b) => a[0] - b[0]),
+    [stats.rallies],
+  )
+  const hitsMeasured = stats.data_quality.ball?.hits_measured
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  // The hits a person marked in the video: the truth the found ones are
+  // measured against, and the models trained on.
   const [hitLabels, setHitLabels] = useState<[number, number][]>(stats.hit_labels ?? [])
   const [markingHits, setMarkingHits] = useState(false)
   const [hitError, setHitError] = useState<string | null>(null)
@@ -231,7 +243,8 @@ export const StatsView: FC<Props> = ({
         names={names}
         videoRef={videoRef}
         onSeek={seek}
-        hits={markingHits ? hitLabels : undefined}
+        hits={markingHits ? hitLabels : foundHits}
+        marked={markingHits}
       />
       {!readOnly && (
         <div className="card" style={{ marginBottom: '1.25rem' }}>
@@ -377,6 +390,12 @@ export const StatsView: FC<Props> = ({
                     <td>Copertura del tracciamento</td>
                     <td>{Math.round(player.tracked_ratio * 100)}%</td>
                   </tr>
+                  {player.hits != null && (
+                    <tr>
+                      <td>Colpi</td>
+                      <td>{player.hits}</td>
+                    </tr>
+                  )}
                   {playerStrokes[index] && (
                     <tr>
                       <td>Smash e bandeja</td>
@@ -437,6 +456,21 @@ export const StatsView: FC<Props> = ({
                 La somma della durata degli scambi sulla durata analizzata: il resto sono pause,
                 cambi di campo, palline da raccogliere.
               </dd>
+              {hitsPerRally != null && (
+                <>
+                  <dt>Colpi</dt>
+                  <dd>
+                    Dalla palla e dai giocatori, con un modello addestrato sui colpi segnati a mano
+                    (Segna i colpi): dove la palla cambia strada, quale coppia e quale giocatore l'ha
+                    colpita. Nel video, con Palla attivo, ogni colpo compare accanto a chi colpisce
+                    (quelli della coppia lontana fino a mezzo secondo dopo).
+                    {hitsMeasured &&
+                      ` Misurato su ${hitsMeasured.marked} colpi segnati, in scambi esclusi dall'addestramento: ` +
+                        `trovati ${pct(hitsMeasured.found)}, giusti ${pct(hitsMeasured.real)} di quelli indicati, ` +
+                        `giocatore giusto ${pct(hitsMeasured.player)}. I conteggi sono quindi un po' bassi.`}
+                  </dd>
+                </>
+              )}
               <dt>Punto verde</dt>
               <dd>
                 Lo scambio è iniziato da una battuta riconosciuta. Uno scambio molto lungo senza
@@ -446,6 +480,11 @@ export const StatsView: FC<Props> = ({
               <dd>Il video va all'inizio dello scambio, un paio di secondi prima della battuta.</dd>
             </dl>
           </InfoHeading>
+          {hitsPerRally != null && (
+            <p className="muted-note rally-legend">
+              In media {hitsPerRally.toLocaleString('it-IT', { maximumFractionDigits: 1 })} colpi per scambio
+            </p>
+          )}
           {serveChecked && (
             <p className="muted-note rally-legend">
               <span className="rally-serve" aria-hidden="true" /> {served} su {stats.rallies.length} aperti
@@ -467,7 +506,10 @@ export const StatsView: FC<Props> = ({
                   #{rally.index + 1}
                   {rally.serve && <span className="rally-serve" aria-label="aperto da una battuta" />}
                 </span>
-                <span className="rally-dur">{formatDuration(rally.duration_s)}</span>
+                <span className="rally-dur">
+                  {formatDuration(rally.duration_s)}
+                  {rally.hits != null && ` · ${rally.hits.length} colpi`}
+                </span>
               </button>
             ))}
           </div>
