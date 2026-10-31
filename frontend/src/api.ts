@@ -163,8 +163,13 @@ export interface PlayerStats {
   crop_url?: string | null
   /** High strokes from the posture; absent without it. */
   strokes?: Stroke[] | null
-  /** Hits of the ball, when it was followed. */
+  /** Hits of the ball, when it was followed: how many, from where (counts
+   *  by distance from the net, as zone_pct), the court spots [x, y] in
+   *  metres, and how many rallies the player's hit closed. */
   hits?: number | null
+  hit_zones?: Record<'net' | 'mid' | 'back', number> | null
+  hit_spots?: [number, number][] | null
+  closing_hits?: number | null
 }
 
 /** A stroke with the racket up, classified with the racket hand: smash or

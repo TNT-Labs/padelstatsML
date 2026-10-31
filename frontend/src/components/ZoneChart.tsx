@@ -18,13 +18,22 @@ const ZONES = [
 ] as const
 
 
+type Shares = Record<'net' | 'mid' | 'back', number>
+
 interface Props {
   perPlayer: Record<string, PlayerStats>
   playerNames?: (string | null)[]
+  /** What to split by zone: the time in each (default), or anything else
+   *  given per player as shares 0-1; players without it are left out. */
+  shares?: (stats: PlayerStats) => Shares | null
 }
 
-export const ZoneChart: FC<Props> = ({ perPlayer, playerNames }) => {
-  const players = Object.entries(perPlayer).sort(([a], [b]) => Number(a) - Number(b))
+const timeShares = (stats: PlayerStats): Shares => stats.zone_pct
+
+export const ZoneChart: FC<Props> = ({ perPlayer, playerNames, shares = timeShares }) => {
+  const players = Object.entries(perPlayer)
+    .filter(([, stats]) => shares(stats) != null)
+    .sort(([a], [b]) => Number(a) - Number(b))
   const barH = 26
   const gap = 14
   const labelW = 80
@@ -53,7 +62,7 @@ export const ZoneChart: FC<Props> = ({ perPlayer, playerNames }) => {
             </text>
 
             {ZONES.map(zone => {
-              const share = stats.zone_pct[zone.key] ?? 0
+              const share = shares(stats)?.[zone.key] ?? 0
               const w = share * barW
               const segment = (
                 <g key={zone.key}>
