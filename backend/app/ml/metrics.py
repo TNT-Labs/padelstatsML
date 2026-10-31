@@ -265,7 +265,7 @@ def _data_quality(data: MetricsInput, per_player: dict[str, dict]) -> dict:
         "identity_cue": data.identity.appearance,
         "metrics_tier": 1,
         "excluded_metrics": [
-            "tipo di colpo",
+            "dritti, rovesci e volée",
             "vincenti/errori",
             "velocità palla",
             "punteggio",
