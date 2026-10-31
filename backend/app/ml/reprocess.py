@@ -83,7 +83,7 @@ def recompute(directory, calibration_data: dict | None, config, max_speed_ms: fl
     from app.ml.ball_hits import attach_hits
 
     height = (artifacts.meta.get("video") or {}).get("height") or artifacts.calibration.frame_size[1]
-    attach_hits(result, identity, directory, int(height or 0))
+    attach_hits(result, identity, directory, artifacts.calibration, int(height or 0))
     return result, identity, rallies, artifacts
 
 
