@@ -5,9 +5,10 @@ statistiche di **posizione e movimento** dei quattro giocatori: distanza
 percorsa, occupazione del campo, zone, scambi.
 
 Gira interamente su un Raspberry Pi 5. Nessun cloud, nessuna GPU, nessun
-dato che esce di casa. Con un AI HAT+ (Hailo) montato, il rilevatore dei
-giocatori gira sulla scheda, riconosciuta da sola; senza, sul processore
-(INSTALL_RASPBERRY.md §6b).
+dato che esce di casa. Con un AI HAT+ (Hailo) montato, riconosciuto da solo,
+il rilevatore dei giocatori gira sulla scheda e si aggiungono la **postura**
+(smash e bandeja) e la **palla**; senza, tutto il resto gira sul processore
+come prima (INSTALL_RASPBERRY.md §6b).
 
 ```
 ┌──────────────┐        ┌───────────────────────────────┐
@@ -40,13 +41,15 @@ Nulla viene stimato di nascosto.
 | Numero, durata e distribuzione degli scambi | segmentazione dal movimento dei giocatori, ogni scambio aperto dalla battuta |
 | Tempo di gioco effettivo | rapporto scambi / durata |
 | Copertura del tracciamento per giocatore | quanto della partita ciascuno è stato seguito |
+| Smash e bandeja *(con Hailo)* | braccio della racchetta sopra la spalla durante lo scambio, dalla postura; si distinguono dal braccio libero e dalla distanza dalla rete, secondo la mano di ciascuno (destro/mancino). Verificabili colpo per colpo nell'app: 29 su 30 giusti sulla partita di prova |
+| Palla *(con Hailo)* | rete addestrata sui fotogrammi annotati nell'app, su ogni fotogramma; visibile sul video della partita. Per ora solo traiettoria, le statistiche dalla palla sono il passo successivo |
 
 ### Non misurato — e perché
 
-Tipo di colpo (smash, bandeja, volée), vincenti ed errori, velocità della
-palla, punteggio.
+Dritti, rovesci e volée, vincenti ed errori, velocità della palla,
+punteggio.
 
-Tutte e quattro richiedono il **tracciamento della palla**. Un Pi 5 senza
+Richiedono il **tracciamento della palla**. Un Pi 5 senza
 acceleratore non lo può fare a un frame rate utile: una pallina da padel a
 90 km/h percorre 80 cm per frame a 30 fps e occupa pochi pixel, quindi serve
 inferenza su ogni frame — ore di elaborazione per ogni partita, con modelli
@@ -60,8 +63,14 @@ sette metriche vere che venti plausibili.**
 
 Con l'acceleratore (AI HAT+, Hailo) il tracciamento della palla torna alla
 portata e queste metriche possono rientrare — con un modello addestrato sui
-video veri e delle metriche di validazione, non con delle soglie. Oggi la
-scheda serve al rilevatore dei giocatori; la palla è il passo successivo.
+video veri e delle metriche di validazione, non con delle soglie. La palla
+oggi è seguita (vedi *Con l'acceleratore*); colpi per scambio, chi colpisce
+e fine dello scambio sono il passo successivo.
+
+Dritto e rovescio dalla sola postura sono stati provati e tolti: con la
+camera a 2 m il polso è coperto in metà dei colpi e la stima della postura
+trema quanto un'oscillazione della racchetta. Su 20 colpi verificati, 0
+erano giusti.
 
 ---
 
@@ -108,7 +117,8 @@ segnale. Quando non trova nulla di coerente non propone niente.
 
 ```
 decode (una volta, con frame-skip)
-   └─▶ detector persone (ONNX, ritagliato sul campo)
+   ├─▶ palla su ogni frame (solo con Hailo e la rete della palla)
+   └─▶ detector persone (ONNX o Hailo, ritagliato sul campo) + postura (Hailo)
         └─▶ tracking in metri sul piano del campo
              └─▶ identità: 4 giocatori da coppia e lato in campo
                   └─▶ segmentazione scambi dal movimento
@@ -136,6 +146,44 @@ Punti chiave:
   fondo, in diagonale) e poi il gioco che riparte. Lì inizia un nuovo
   scambio, anche se la pausa dal punto precedente era troppo breve per
   separarli.
+
+### Con l'acceleratore: postura e palla
+
+Con l'AI HAT+ montato (`scripts/hailo_setup.sh` sul Pi, INSTALL_RASPBERRY.md
+§6b) il worker lo trova da solo. Rilevatore dei giocatori e postura girano
+sulla scheda, e l'analisi dura meno della metà. Se la scheda manca o si
+blocca, l'analisi prosegue sul processore e lo scrive nel pannello di
+affidabilità. `docker exec padel-worker python scripts/hailo_check.py`
+diagnostica la scheda.
+
+**Postura.** Per ogni giocatore i 17 punti del corpo (YOLOv8 pose su un
+mosaico dei ritagli dei giocatori, così anche quelli lontani sono abbastanza
+grandi). Lo **scheletro** si vede sul video della partita. Da lì vengono gli
+smash e le bandeje, che si verificano colpo per colpo nell'app con
+**Verifica**. Destro o mancino si indica in **Rinomina giocatori**.
+
+**Palla.** Nessuna rete già pronta segue una pallina da padel in questi
+video, quindi se ne addestra una sui propri:
+
+1. **Annota palla** (statistiche, editor): un clic sulla palla per fotogramma,
+   in spezzoni da 2 s presi dentro gli scambi. Servono 25–40 spezzoni.
+2. **Scarica i dati annotati**, poi addestra su Google Colab e compila per
+   Hailo in WSL2: guida passo passo in `training/ball/README.md`.
+3. Copia `ball_h8l.hef` in `weights/`. Con
+   `docker exec padel-worker python scripts/ball_check.py --start 60` la provi
+   su 20 secondi di partita: velocità, quota di fotogrammi con la palla, e un
+   video `ball_check.mp4` con la palla cerchiata.
+
+Da lì ogni analisi la segue su **ogni** fotogramma (`BALL=auto`, `off` per
+spegnerla): tre fotogrammi consecutivi in, la posizione della palla out,
+17 ms sulla Hailo-8L. Le risposte grezze finiscono in `ball.jsonl`, e
+`ball_track.py` le unisce in traiettorie: scarta i punti isolati, i salti e
+le cose ferme come luci o palle a terra. Sul video della partita
+l'interruttore **Palla** mostra la palla e la sua scia.
+
+La rete di prova (26 spezzoni annotati) trova 3 palle visibili su 4 entro
+4 px, con l'80% delle risposte giuste. Annotare spezzoni di altre partite,
+con altra luce, è il modo di migliorarla.
 
 ### 3. Verifica e taratura
 
@@ -174,6 +222,11 @@ python scripts/diagnose_identity.py latest
 
 # Rifà le foto dei giocatori dal video, senza rianalizzare la partita
 python scripts/rethumb.py latest
+
+# Con l'AI HAT+: la scheda, la sua rete e una prova su un fotogramma
+python scripts/hailo_check.py [video]
+# La rete della palla su 20 s di partita, con video di controllo
+python scripts/ball_check.py [video o id] --start 60 --seconds 20
 ```
 
 Ogni script accetta `latest`, un prefisso dell'id (`4f21e100`) o l'id intero.
@@ -328,13 +381,19 @@ A `SAMPLE_HZ=5` l'analisi procede all'incirca in tempo reale: una partita di
 il risultato dopo. `SAMPLE_HZ=3` scende a ~35 minuti, al prezzo di una
 sottostima della distanza percorsa di circa il 15% (segnalata nei warning).
 
+Con l'AI HAT+ (Hailo-8L) l'analisi richiede meno della metà del tempo: una
+partita è stata analizzata in circa 30 minuti, con il Pi sotto gli 80 °C con
+una ventola. Seguire la palla allunga l'analisi, perché vanno letti tutti i
+fotogrammi e non solo quelli campionati. Il tempo con la palla è ancora da
+misurare sul Pi; `BALL=off` torna ai tempi senza palla.
+
 ---
 
 ## Sviluppo
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 246 backend + 34 frontend
+make test         # 398 backend + 52 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health
@@ -353,6 +412,8 @@ cd frontend && npm run dev
 ```
 
 I test coprono calibrazione e validazione geometrica, campionamento video,
+acceleratore (con una scheda finta), postura, colpi alti, palla e sue
+traiettorie,
 geometria del detector, tracking, ricostruzione identità, segmentazione
 scambi, metriche, semantica della coda, round-trip degli artefatti e il
 flusso API completo, più una prova end-to-end della pipeline su una partita
