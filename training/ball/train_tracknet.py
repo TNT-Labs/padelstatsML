@@ -194,6 +194,7 @@ def locate(heat: np.ndarray) -> tuple[float, float] | None:
 def score(model, loader, device) -> dict:
     """Precision and recall of the ball, TrackNet's way."""
     tp = fp = fn = tn = 0
+    near, peaks = 0, []
     model.eval()
     with torch.no_grad():
         for frames, _, visible, xy in loader:
@@ -201,6 +202,11 @@ def score(model, loader, device) -> dict:
             for h, v, p in zip(heat, visible.numpy(), xy.numpy()):
                 found = locate(h)
                 if v:
+                    # Before it dares answer over the threshold: is its
+                    # brightest point already on the ball, and how bright?
+                    iy, ix = np.unravel_index(int(h.argmax()), h.shape)
+                    near += np.hypot(ix - p[0], iy - p[1]) <= HIT_PX
+                    peaks.append(float(h.max()))
                     if found is not None and np.hypot(found[0] - p[0], found[1] - p[1]) <= HIT_PX:
                         tp += 1
                     elif found is not None:
@@ -214,7 +220,11 @@ def score(model, loader, device) -> dict:
     recall = tp / max(1, tp + fn)
     return {"precision": round(precision, 3), "recall": round(recall, 3),
             "f1": round(2 * precision * recall / max(1e-9, precision + recall), 3),
-            "samples": tp + fp + fn + tn}
+            "samples": tp + fp + fn + tn,
+            # Share of visible balls where the brightest point is the ball,
+            # and the median brightness there: both rise before the F1 does.
+            "vicino": round(float(near) / max(1, len(peaks)), 3),
+            "picco": round(float(np.median(peaks)), 3) if peaks else 0.0}
 
 
 class _OnChip(nn.Module):
