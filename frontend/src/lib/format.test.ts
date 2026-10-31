@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiAsset, kmh, parseClock, playerPlace, strokeCheck } from './format'
+import { analysisTimeText, apiAsset, elapsed, kmh, parseClock, playerPlace, strokeCheck } from './format'
 
 describe('parseClock', () => {
   it('reads seconds, minutes and hours', () => {
@@ -64,5 +64,15 @@ describe('strokeCheck', () => {
     const labels = { '0:10': 'bandeja', '0:20': 'nulla', '1:30': 'smash' }
     expect(strokeCheck(strokes, labels)).toEqual({ checked: 3, real: 2, rightKind: 1 })
     expect(strokeCheck(strokes, null)).toEqual({ checked: 0, real: 0, rightKind: 0 })
+  })
+})
+
+describe('analysisTimeText', () => {
+  it('says how long the analysis took against the video', () => {
+    expect(elapsed(40)).toBe('40 s')
+    expect(elapsed(52 * 60 + 10)).toBe('52 min')
+    expect(elapsed(3900)).toBe('1 h 05 min')
+    const text = analysisTimeText(3120, 3660, '2026-10-31T18:52:10Z')
+    expect(text).toMatch(/^Analisi eseguita in 52 min per 1 h 01 min di video \(0,9× la durata\) · conclusa il 31\/10 alle \d\d:52$/)
   })
 })

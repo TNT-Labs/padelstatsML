@@ -242,6 +242,17 @@ class RallyRead(BaseModel):
     serve: bool | None = None
 
 
+class AnalysisTime(BaseModel):
+    """How long the last analysis took, from the worker's own clock: when
+    it took the job and when it finished it (the wait in the queue left out)."""
+    seconds: float
+    finished_at: datetime
+
+    @field_serializer("finished_at")
+    def _serialise_finished(self, value: datetime) -> datetime:
+        return _as_utc(value)
+
+
 class MatchStatsRead(BaseModel):
     match_id: str
     title: str
@@ -253,6 +264,7 @@ class MatchStatsRead(BaseModel):
     rallies: list[RallyRead]
     summary: MatchSummary
     data_quality: DataQuality
+    analysis_time: AnalysisTime | None = None
 
 
 # ── Camera presets ───────────────────────────────────────────────────────────

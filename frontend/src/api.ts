@@ -316,6 +316,8 @@ export interface MatchStats {
   rallies: Rally[]
   summary: MatchSummary
   data_quality: DataQuality
+  /** How long the last analysis took (worker's clock), when known. */
+  analysis_time?: { seconds: number; finished_at: string } | null
 }
 
 /** Each player's box through the video, sampled a few times a second. */
