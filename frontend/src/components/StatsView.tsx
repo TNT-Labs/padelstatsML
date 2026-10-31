@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FC } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react'
 import type { MatchStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
@@ -47,6 +47,15 @@ export const StatsView: FC<Props> = ({
   const playerStrokes = players.map(([, player]) => player.strokes ?? null)
   const anyStrokes = playerStrokes.some(s => s !== null)
   const served = stats.rallies.filter(r => r.serve).length
+  // Hits come from the ball: only analyses that followed it have them.
+  const withHits = stats.rallies.filter(r => r.hits != null)
+  const hitsPerRally = withHits.length
+    ? withHits.reduce((sum, r) => sum + (r.hits?.length ?? 0), 0) / withHits.length
+    : null
+  const allHits = useMemo(
+    () => stats.rallies.flatMap(r => r.hits ?? []).sort((a, b) => a[0] - b[0]),
+    [stats.rallies],
+  )
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
   // Opening the calibration first reads the match from the Pi: seconds when
@@ -208,7 +217,7 @@ export const StatsView: FC<Props> = ({
         <DataQualityPanel quality={stats.data_quality} matchId={stats.match_id} />
       </div>
 
-      <MatchVideo matchId={stats.match_id} names={names} videoRef={videoRef} onSeek={seek} />
+      <MatchVideo matchId={stats.match_id} names={names} videoRef={videoRef} onSeek={seek} hits={allHits} />
 
       <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
         <div className="card">
@@ -326,6 +335,12 @@ export const StatsView: FC<Props> = ({
                     <td>Copertura del tracciamento</td>
                     <td>{Math.round(player.tracked_ratio * 100)}%</td>
                   </tr>
+                  {player.hits != null && (
+                    <tr>
+                      <td>Colpi (dalla palla)</td>
+                      <td>{player.hits}</td>
+                    </tr>
+                  )}
                   {playerStrokes[index] && (
                     <tr>
                       <td>Smash e bandeja</td>
@@ -386,6 +401,16 @@ export const StatsView: FC<Props> = ({
                 La somma della durata degli scambi sulla durata analizzata: il resto sono pause,
                 cambi di campo, palline da raccogliere.
               </dd>
+              {hitsPerRally != null && (
+                <>
+                  <dt>Colpi</dt>
+                  <dd>
+                    Dalla palla: un colpo è dove la sua traiettoria cambia di colpo vicino a un
+                    giocatore, che è chi colpisce. Nel video, con Palla attivo, ogni colpo compare
+                    sopra il giocatore. Sperimentale: da verificare guardando il video.
+                  </dd>
+                </>
+              )}
               <dt>Punto verde</dt>
               <dd>
                 Lo scambio è iniziato da una battuta riconosciuta. Uno scambio molto lungo senza
@@ -395,6 +420,12 @@ export const StatsView: FC<Props> = ({
               <dd>Il video va all'inizio dello scambio, un paio di secondi prima della battuta.</dd>
             </dl>
           </InfoHeading>
+          {hitsPerRally != null && (
+            <p className="muted-note rally-legend">
+              In media {hitsPerRally.toLocaleString('it-IT', { maximumFractionDigits: 1 })} colpi per
+              scambio, visti dalla palla
+            </p>
+          )}
           {serveChecked && (
             <p className="muted-note rally-legend">
               <span className="rally-serve" aria-hidden="true" /> {served} su {stats.rallies.length} aperti
@@ -416,7 +447,10 @@ export const StatsView: FC<Props> = ({
                   #{rally.index + 1}
                   {rally.serve && <span className="rally-serve" aria-label="aperto da una battuta" />}
                 </span>
-                <span className="rally-dur">{formatDuration(rally.duration_s)}</span>
+                <span className="rally-dur">
+                  {formatDuration(rally.duration_s)}
+                  {rally.hits != null && ` · ${rally.hits.length} colpi`}
+                </span>
               </button>
             ))}
           </div>

@@ -163,6 +163,8 @@ export interface PlayerStats {
   crop_url?: string | null
   /** High strokes from the posture; absent without it. */
   strokes?: Stroke[] | null
+  /** Hits of the ball, when it was followed. */
+  hits?: number | null
 }
 
 /** A stroke with the racket up, classified with the racket hand: smash or
@@ -236,6 +238,8 @@ export interface Rally {
   players_tracked: number
   // Opened by a recognised serve; absent on analyses older than the check.
   serve?: boolean | null
+  /** [seconds, player id] of each hit, from the ball; absent without it. */
+  hits?: [number, number][] | null
 }
 
 // ── Accuracy check ──────────────────────────────────────────────────────────

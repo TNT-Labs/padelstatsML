@@ -80,6 +80,10 @@ def recompute(directory, calibration_data: dict | None, config, max_speed_ms: fl
         start_s=float(artifacts.meta.get("start_s") or 0.0),
     )
     apply_run_quality(result, run_quality(artifacts))
+    from app.ml.ball_hits import attach_hits
+
+    height = (artifacts.meta.get("video") or {}).get("height") or artifacts.calibration.frame_size[1]
+    attach_hits(result, identity, directory, int(height or 0))
     return result, identity, rallies, artifacts
 
 

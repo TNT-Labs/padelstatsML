@@ -243,3 +243,18 @@ async def test_the_time_the_analysis_took_is_shown_with_the_statistics(analysed_
     timing = (await owner.get(f"/api/matches/{match_id}/stats")).json()["analysis_time"]
     assert timing["seconds"] == 52 * 60 + 10
     assert timing["finished_at"].startswith("2026-10-31T18:52:10") and timing["finished_at"].endswith(("Z", "+00:00"))
+
+
+async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_match):
+    from app.core.storage import artifacts_dir
+
+    owner, match_id = analysed_match
+    stats = (await owner.post(f"/api/matches/{match_id}/refresh")) and \
+        (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert all(r.get("hits") is None for r in stats["rallies"])          # no ball, no hits
+    (artifacts_dir(match_id) / "ball.jsonl").write_text(
+        "\n".join(f"[{f},{f / 30:.3f},{400 + 3 * f},{300 + 2 * f},0.8]" for f in range(30, 90)) + "\n")
+    assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert all(isinstance(r["hits"], list) for r in stats["rallies"])
+    assert all(isinstance(p["hits"], int) for p in stats["per_player"].values())

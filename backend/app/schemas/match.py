@@ -184,6 +184,8 @@ class PlayerStats(BaseModel):
     # High strokes from the posture (app.ml.strokes): candidates as stored,
     # [{"t", "kind"}] as read; None without the posture.
     strokes: list[dict] | None = None
+    # Hits of the ball, when it was followed.
+    hits: int | None = None
 
 
 class MatchSummary(BaseModel):
@@ -240,6 +242,8 @@ class RallyRead(BaseModel):
     players_tracked: int
     # Opened by a recognised serve; None for analyses older than the check.
     serve: bool | None = None
+    # [time, player id] of each hit, from the ball; None without the ball.
+    hits: list[list[float]] | None = None
 
 
 class AnalysisTime(BaseModel):

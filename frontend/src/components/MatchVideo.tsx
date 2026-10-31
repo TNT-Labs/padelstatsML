@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type FC, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FC, type RefObject } from 'react'
 import { api, type BallTrack, type PlayerTracks } from '../api'
 import { PLAYER_COLORS } from '../lib/players'
-import { MIN_VISIBLE, SKELETON, ballAt, boxAt, clock, fitRect, placeTags, pointsAt, type Tag } from '../lib/videoOverlay'
+import { MIN_VISIBLE, SKELETON, ballAt, boxAt, clock, fitRect, lastAtOrBefore, placeTags, pointsAt, type Tag } from '../lib/videoOverlay'
 
 interface Props {
   matchId: string
@@ -9,12 +9,18 @@ interface Props {
   /** Owned by the page, so the rally list can seek the same video. */
   videoRef: RefObject<HTMLVideoElement>
   onSeek: (seconds: number) => void
+  /** [seconds, player id] of the hits found from the ball, in time order. */
+  hits?: [number, number][]
 }
 
 // Name tags: smaller on a phone, where the far players are a few pixels
 // tall and a desktop-sized tag would cover them.
 const NARROW_PX = 600
 const TAG = { wide: { font: 12, height: 16 }, narrow: { font: 10, height: 13 } }
+// A hit is marked over the player for this long after it.
+const HIT_SHOW_S = 0.8
+const NO_HITS: [number, number][] = []
+
 // A changeover's time is when the pairs are found on their new ends: start
 // a little earlier, to see them walk there.
 const CHANGEOVER_LEAD_S = 10
@@ -27,7 +33,7 @@ const CHANGEOVER_LEAD_S = 10
  * laid over the native player, so seeking, full-speed playback and the
  * browser's own controls all keep working.
  */
-export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
+export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits = NO_HITS }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [tracks, setTracks] = useState<PlayerTracks | null>(null)
   const [tracksNote, setTracksNote] = useState<string | null>(null)
@@ -40,6 +46,7 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
   const hasSkeleton = !!tracks?.players.some(p => p.kp)
   const [videoError, setVideoError] = useState<string | null>(null)
   const src = api.videoUrl(matchId)
+  const hitTimes = useMemo(() => hits.map(h => h[0]), [hits])
 
   useEffect(() => {
     let cancelled = false
@@ -159,7 +166,26 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek }) => {
       ctx.fillStyle = '#fff'
       ctx.fillText(label, x + 3, bottom - 2)
     })
-  }, [tracks, showBoxes, showSkeleton, ball, showBall, names, videoRef])
+
+    // The hits just made, a badge at the hitter's racket side.
+    if (showingBall && hits.length) {
+      const now = video.currentTime
+      const last = lastAtOrBefore(hitTimes, now)
+      for (let k = last; k >= 0 && now - hits[k][0] <= HIT_SHOW_S; k--) {
+        const player = tracks.players.find(p => p.id === hits[k][1])
+        const box = player && boxAt(player.t, player.box, hits[k][0], maxGap)
+        if (!box) continue
+        const label = 'colpo'
+        const w = ctx.measureText(label).width + 8
+        const x = offsetX + box[2] * scale + 2
+        const y = offsetY + box[1] * scale + tag.height + 2
+        ctx.fillStyle = 'rgba(255, 214, 10, .95)'
+        ctx.fillRect(x, y - tag.height, w, tag.height)
+        ctx.fillStyle = '#111'
+        ctx.fillText(label, x + 4, y - 2)
+      }
+    }
+  }, [tracks, showBoxes, showSkeleton, ball, showBall, hits, hitTimes, names, videoRef])
 
   useEffect(() => {
     const video = videoRef.current
