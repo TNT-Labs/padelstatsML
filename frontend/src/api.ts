@@ -341,6 +341,25 @@ export interface PlayerTracks {
   matches_stats: boolean
 }
 
+/** Where the ball is in a frame, video pixels; "none": not in sight. */
+export type BallLabel = [number, number] | 'none'
+
+export interface BallClip {
+  id: number
+  start_frame: number
+  frames: number
+  start_s: number
+  labelled: number
+}
+
+export interface BallClips {
+  frame_size: [number | null, number | null]
+  fps: number | null
+  clips: BallClip[]
+  labelled: number
+  visible: number
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message)
@@ -405,6 +424,17 @@ export const api = {
   deleteMatch: (id: string) => req<void>(`/api/matches/${id}`, { method: 'DELETE' }),
 
   keyframeUrl: (id: string) => `${BASE}/api/matches/${id}/keyframe`,
+
+  ballClips: (id: string) => req<BallClips>(`/api/matches/${id}/ball/clips`),
+  ballFrameUrl: (id: string, clip: number, offset: number) =>
+    `${BASE}/api/matches/${id}/ball/clips/${clip}/frames/${offset}.jpg`,
+  ballLabels: (id: string) => req<{ labels: Record<string, BallLabel> }>(`/api/matches/${id}/ball/labels`),
+  labelBall: (id: string, labels: Record<string, BallLabel | null>) =>
+    req<{ labelled: number; visible: number }>(`/api/matches/${id}/ball/labels`, {
+      method: 'PATCH',
+      body: JSON.stringify({ labels }),
+    }),
+  ballExportUrl: (id: string) => `${BASE}/api/matches/${id}/ball/export.zip`,
 
   /** Statistics recomputed from the stored detections, in seconds. */
   labelStrokes: (id: string, labels: Record<string, StrokeLabel | null>) =>

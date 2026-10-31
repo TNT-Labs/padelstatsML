@@ -20,6 +20,7 @@ interface Props {
   onBack: () => void
   onRename: () => void
   onVerify: () => void
+  onAnnotateBall: () => void
   /** `recalibrate`: place the court corners again before analysing. */
   onReanalyse: (recalibrate: boolean) => void | Promise<void>
   /** Recompute from the stored detections; rejects with the reason. */
@@ -34,7 +35,7 @@ function formatDuration(seconds: number): string {
 }
 
 export const StatsView: FC<Props> = ({
-  stats, readOnly = false, onBack, onRename, onVerify, onReanalyse, onRefresh,
+  stats, readOnly = false, onBack, onRename, onVerify, onAnnotateBall, onReanalyse, onRefresh,
 }) => {
   const players = Object.entries(stats.per_player).sort(([a], [b]) => Number(a) - Number(b))
   const names = stats.player_names ?? []
@@ -101,6 +102,13 @@ export const StatsView: FC<Props> = ({
               </button>
               <button className="btn btn-ghost btn-sm" onClick={onVerify}>
                 Verifica accuratezza
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={onAnnotateBall}
+                title="Segna la palla fotogramma per fotogramma: i dati per insegnare all'app a seguirla"
+              >
+                Annota palla
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setAsking(true)}>
                 Rianalizza

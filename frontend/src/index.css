@@ -401,3 +401,16 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   .new-user .form-group { flex-basis: 100% !important; }
   .new-user .btn { width: 100%; }
 }
+
+/* Marking the ball (AnnotateBallView). */
+.ball-bar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; margin-bottom: .6rem; font-size: .88rem; }
+.ball-stage { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+.ball-frame { position: relative; flex: 1 1 640px; min-width: 0; background: #000; border-radius: 8px; overflow: hidden; }
+.ball-frame img { display: block; width: 100%; height: auto; user-select: none; }
+.ball-overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+.ball-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: .9rem; background: rgba(0,0,0,.35); }
+.ball-side { flex: 0 0 220px; display: flex; flex-direction: column; gap: .6rem; }
+.ball-lens { width: 220px; height: 220px; border-radius: 8px; border: 1px solid var(--border); background: #111; }
+.ball-state { font-size: .85rem; font-weight: 600; text-align: center; }
+.ball-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+@media (max-width: 700px) { .ball-side { flex: 1 1 100%; } .ball-lens { margin: 0 auto; } }

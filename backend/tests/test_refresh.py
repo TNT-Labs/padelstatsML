@@ -163,3 +163,41 @@ async def test_strokes_are_classified_with_the_racket_hand_when_read(analysed_ma
     # the left up but the right hanging: not one.
     assert stats["per_player"]["0"]["strokes"] == [{"t": 50.0, "kind": "overhead"}]
     assert stats["per_player"]["1"]["strokes"] == []
+
+
+async def test_the_ball_is_marked_frame_by_frame(analysed_match):
+    from conftest import signed_in
+
+    owner, match_id = analysed_match
+    clips = await owner.get(f"/api/matches/{match_id}/ball/clips")
+    assert clips.status_code == 200, clips.text
+    body = clips.json()
+    assert body["clips"] and body["labelled"] == 0
+    frame = body["clips"][0]["start_frame"]
+
+    url = f"/api/matches/{match_id}/ball/labels"
+    response = await owner.patch(url, json={"labels": {str(frame): [100.5, 50.0], str(frame + 1): "none"}})
+    assert response.json() == {"labelled": 2, "visible": 1}
+    assert (await owner.get(url)).json()["labels"] == {str(frame): [100.5, 50.0], str(frame + 1): "none"}
+    assert (await owner.patch(url, json={"labels": {"abc": [1, 1]}})).status_code == 422
+    assert (await owner.patch(url, json={"labels": {str(frame): [99999, 1]}})).status_code == 422
+    assert (await owner.get(f"/api/matches/{match_id}/ball/clips")).json()["clips"][0]["labelled"] == 2
+
+    viewer = await signed_in("ball-viewer", "visualizzatore")
+    async with viewer:
+        assert (await viewer.get(f"/api/matches/{match_id}/ball/clips")).status_code == 403
+
+
+async def test_the_marked_frames_are_exported_for_training(analysed_match):
+    import io
+    import zipfile
+
+    owner, match_id = analysed_match
+    assert (await owner.get(f"/api/matches/{match_id}/ball/export.zip")).status_code == 409   # nothing marked
+    clips = (await owner.get(f"/api/matches/{match_id}/ball/clips")).json()["clips"]
+    await owner.patch(f"/api/matches/{match_id}/ball/labels",
+                      json={"labels": {str(clips[0]["start_frame"]): [10, 10]}})
+    response = await owner.get(f"/api/matches/{match_id}/ball/export.zip")
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert {"labels.csv", "meta.json"} <= set(archive.namelist())
