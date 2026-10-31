@@ -184,9 +184,6 @@ class PlayerStats(BaseModel):
     # High strokes from the posture (app.ml.strokes): candidates as stored,
     # [{"t", "kind"}] as read; None without the posture.
     strokes: list[dict] | None = None
-    # Forehands and backhands (app.ml.strokes.detect_swings): candidates as
-    # stored, [{"t", "kind", "volley"}] as read; None without dense posture.
-    swings: list[dict] | None = None
 
 
 class MatchSummary(BaseModel):

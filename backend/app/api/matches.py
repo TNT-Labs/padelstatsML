@@ -70,7 +70,7 @@ from app.ml.court import (
     suggest_corners,
 )
 from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
-from app.ml.strokes import for_hand, ground_for_hand
+from app.ml.strokes import for_hand
 from app.ml.video import VideoError, extract_background, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
 from app.schemas.match import (
@@ -806,9 +806,7 @@ async def get_stats(
             # are named with it (app.ml.strokes).
             index = int(player_id)
             entry["strokes"] = for_hand(entry["strokes"], hands[index] if index < len(hands) else None)
-        if entry.get("swings") is not None:
-            index = int(player_id)
-            entry["swings"] = ground_for_hand(entry["swings"], hands[index] if index < len(hands) else None)
+
         if player_id in crops:
             entry["crop_url"] = crop_url(match_id, int(player_id))
         per_player[player_id] = entry

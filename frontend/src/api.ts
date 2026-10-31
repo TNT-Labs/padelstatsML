@@ -163,18 +163,13 @@ export interface PlayerStats {
   crop_url?: string | null
   /** High strokes from the posture; absent without it. */
   strokes?: Stroke[] | null
-  /** Forehands and backhands, from the posture between the samples; empty
-   *  without the racket hand, absent without that posture. */
-  swings?: Stroke[] | null
 }
 
 /** A stroke with the racket up, classified with the racket hand: smash or
  *  bandeja ("overhead"), or lob. */
 export interface Stroke {
   t: number
-  kind: 'overhead' | 'lob' | 'forehand' | 'backhand'
-  /** Forehands and backhands: near the net. */
-  volley?: boolean
+  kind: 'overhead' | 'lob'
 }
 
 export type StrokeLabel = 'smash' | 'bandeja' | 'lob' | 'volee' | 'dritto' | 'rovescio' | 'altro' | 'nulla'

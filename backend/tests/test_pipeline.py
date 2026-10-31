@@ -892,7 +892,7 @@ def _run_with_pose(monkeypatch, synthetic_match, calibration, artifacts, poser=_
     monkeypatch.setattr(pipeline_module, "hailo_status", lambda *_a, **_k: _usable())
     monkeypatch.setattr(pipeline_module, "pose_models", lambda *_a: ("/x/yolov8s_pose_h8l_pi.hef",))
     monkeypatch.setattr(pipeline_module, "_ACCELERATOR_FAILED", None)
-    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", pose="auto"))
+    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", pose="auto", pose_hz=15.0))
     return pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=artifacts)
 
 
@@ -909,7 +909,6 @@ def test_the_posture_is_stored_with_the_detections(monkeypatch, synthetic_match,
     between = read_poses(tmp_path / "run")
     assert len(between) > 1.5 * len(read_observations(tmp_path / "run"))
     assert all(p.shape == (17, 3) for _, _, p in between[:10])
-    assert all("swings" in player for player in result["per_player"].values())
     stored = [obs for _, obs in read_observations(tmp_path / "run")]
     with_points = [obs for obs in stored if obs.keypoints is not None]
     assert len(with_points) > 0.9 * len(stored)

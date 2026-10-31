@@ -112,9 +112,12 @@ class Settings(BaseSettings):
     # the accelerator there is none. HAILO_POSE_MODEL: a .hef of one's own.
     pose: str = "auto"
     hailo_pose_model: str = ""
-    # Posture a second, between the samples too: the swing of a forehand or
-    # a backhand lasts a third of a second. 0: only at the samples.
-    pose_hz: float = 15.0
+    # Posture a second between the samples too, stored in poses.jsonl. Off:
+    # forehand and backhand were not told apart from it on a real match with
+    # the camera at 2 m (the pose jitters as fast as a swing, the wrist is
+    # hidden at the stroke half the time), and it lengthens the analysis.
+    # Kept to gather data for a model trained on strokes.
+    pose_hz: float = 0.0
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

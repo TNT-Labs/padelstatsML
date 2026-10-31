@@ -24,10 +24,9 @@ interface Props {
 }
 
 /**
- * Strokes found from the posture, to watch and to check: the high ones
- * (smash and bandeja, lob) and the forehands and backhands. Checking them
- * stroke by stroke measures the precision on each match and gives the cases
- * to tune on.
+ * Strokes found from the posture, to watch and to check: smash and bandeja,
+ * lob. Checking them stroke by stroke measures the precision on each match
+ * and gives the cases to tune on.
  */
 export const StrokesCard: FC<Props> = ({
   title, info, stats, strokes, players, names, readOnly, onSeek, emptyNote,
