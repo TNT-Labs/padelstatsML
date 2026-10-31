@@ -63,13 +63,26 @@ wsl --install -d Ubuntu-22.04
 
 ```
 sudo apt update
-sudo apt install -y python3.10-venv python3-dev libgraphviz-dev
+sudo apt install -y python3.10-venv python3.10-dev python3-tk graphviz libgraphviz-dev
 python3.10 -m venv ~/hailo
 source ~/hailo/bin/activate
 pip install --upgrade pip
 pip install /mnt/c/Users/<nome>/Downloads/hailo_dataflow_compiler-*.whl
 hailo --version
 ```
+
+   Il controllo iniziale chiede 16 GB di RAM, ma per questa rete piccola ne bastano meno. WSL
+   usa metà della RAM di Windows: per dargliene di più, e una memoria di scambio ampia, crea in
+   Windows il file `C:\Users\<nome>\.wslconfig` con:
+
+```
+[wsl2]
+memory=6GB
+swap=16GB
+```
+
+   Usa per `memory` la RAM del PC meno 2 GB (Gestione attività → Prestazioni → Memoria). Poi in
+   PowerShell esegui `wsl --shutdown` e riapri Ubuntu 22.04. Con `free -g` vedi la nuova memoria.
 
 5. Copia nella stessa cartella `ball.onnx`, `calib.npy`, `ball.alls` e `hailo_compile.sh`, poi lancia:
 
