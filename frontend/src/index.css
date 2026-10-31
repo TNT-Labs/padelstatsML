@@ -414,3 +414,21 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .ball-state { font-size: .85rem; font-weight: 600; text-align: center; }
 .ball-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
 @media (max-width: 700px) { .ball-side { flex: 1 1 100%; } .ball-lens { margin: 0 auto; } }
+
+/* Marking the hits seen in the video */
+.hit-marker { margin-top: .75rem; }
+.hit-keys { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin-bottom: .75rem; }
+.hit-key { display: inline-flex; align-items: center; gap: .35rem; font-size: .9rem; }
+.hit-key kbd {
+  font: 600 .8rem ui-monospace, monospace; padding: .1rem .4rem; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg);
+}
+.hit-speed { display: inline-flex; align-items: center; gap: .3rem; margin-left: auto; font-size: .85rem; }
+.hit-list { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-bottom: .75rem; }
+.hit-chip {
+  display: inline-flex; align-items: center; border: 2px solid var(--border); border-radius: 999px;
+  overflow: hidden; font-size: .85rem;
+}
+.hit-chip button { background: none; border: 0; color: inherit; cursor: pointer; padding: .2rem .5rem; font: inherit; }
+.hit-chip-x { border-left: 1px solid var(--border) !important; font-weight: 700; }
+@media (max-width: 600px) { .hit-speed { margin-left: 0; } }

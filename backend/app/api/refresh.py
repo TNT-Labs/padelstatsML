@@ -77,6 +77,7 @@ async def refresh_stats(
     if not same_slots(stats.per_player, result["per_player"]):
         # The labels name strokes by player number too.
         match.stroke_labels = None
+        match.hit_labels = None
         # Other people under the same numbers: no picture until the new
         # ones are cut, rather than a face that names the wrong player.
         stats.player_crops = None

@@ -315,6 +315,8 @@ export interface MatchStats {
   player_hands?: Hand[] | null
   /** What each high stroke really was, as seen in the video: "<player id>:<seconds>" -> label. */
   stroke_labels?: Record<string, StrokeLabel> | null
+  /** Hits marked by a person watching the video: [seconds, player id]. */
+  hit_labels?: [number, number][] | null
   per_player: Record<string, PlayerStats>
   heatmaps: Record<string, [number, number, number][]>
   rallies: Rally[]
@@ -453,6 +455,13 @@ export const api = {
     }),
   ballExportUrl: (id: string) => `${BASE}/api/matches/${id}/ball/export.zip`,
   ballTrack: (id: string) => req<BallTrack>(`/api/matches/${id}/ball/track`),
+
+  /** All the hits marked watching the video: [seconds, player id]. */
+  labelHits: (id: string, hits: [number, number][]) =>
+    req<{ hit_labels: [number, number][] | null }>(`/api/matches/${id}/hit-labels`, {
+      method: 'PUT',
+      body: JSON.stringify({ hits }),
+    }),
 
   /** Statistics recomputed from the stored detections, in seconds. */
   labelStrokes: (id: string, labels: Record<string, StrokeLabel | null>) =>

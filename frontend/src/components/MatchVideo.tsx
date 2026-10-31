@@ -167,8 +167,8 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
       ctx.fillText(label, x + 3, bottom - 2)
     })
 
-    // The hits just made, a badge at the hitter's racket side.
-    if (showingBall && hits.length) {
+    // The hits just marked, a badge beside the hitter.
+    if (hits.length) {
       const now = video.currentTime
       const last = lastAtOrBefore(hitTimes, now)
       for (let k = last; k >= 0 && now - hits[k][0] <= HIT_SHOW_S; k--) {
