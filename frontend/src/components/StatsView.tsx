@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react'
-import { api, type MatchStats } from '../api'
+import { api, type MatchStats, type PlayerStats } from '../api'
 import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
 import { InfoHeading } from './InfoHeading'
 import { HitMarker } from './HitMarker'
+import { HitMap } from './HitMap'
 import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
 import { PlayerThumb } from './PlayerThumb'
@@ -35,6 +36,13 @@ function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`
 }
 
+/** A player's hits by zone as shares; null without hits. */
+function hitShares(player: PlayerStats): Record<'net' | 'mid' | 'back', number> | null {
+  const z = player.hit_zones
+  const total = z ? z.net + z.mid + z.back : 0
+  return z && total ? { net: z.net / total, mid: z.mid / total, back: z.back / total } : null
+}
+
 export const StatsView: FC<Props> = ({
   stats, readOnly = false, onBack, onRename, onVerify, onAnnotateBall, onReanalyse, onRefresh,
 }) => {
@@ -59,6 +67,7 @@ export const StatsView: FC<Props> = ({
     [stats.rallies],
   )
   const hitsMeasured = stats.data_quality.ball?.hits_measured
+  const hitsByZone = Object.values(stats.per_player).some(p => p.hit_zones)
   const pct = (v: number) => `${Math.round(v * 100)}%`
   // The hits a person marked in the video: the truth the found ones are
   // measured against, and the models trained on.
@@ -290,6 +299,31 @@ export const StatsView: FC<Props> = ({
         </div>
       </div>
 
+      {hitsByZone && (
+        <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
+          <div className="card">
+            <h2 style={{ marginBottom: '1rem' }}>Da dove colpiscono</h2>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <HitMap perPlayer={stats.per_player} playerNames={names} width={240} />
+            </div>
+          </div>
+          <div className="card">
+            <InfoHeading title="Colpi per zona">
+              <p style={{ margin: 0 }}>
+                Ogni colpo trovato dalla palla, con il punto del campo in cui si trovava chi l'ha
+                colpito: entro 3 m dalla rete, fra 3 e 6 m, oltre 6 m, come per la posizione in
+                campo. Circa un colpo su quattro sfugge (soprattutto con la palla coperta), quindi i
+                conteggi sono un po' bassi; le quote fra le zone sono più affidabili.
+              </p>
+            </InfoHeading>
+            <ZoneChart perPlayer={stats.per_player} playerNames={names} shares={hitShares} />
+            <p className="muted-note" style={{ marginTop: '.75rem' }}>
+              Quota dei colpi di ciascuno da rete, metà campo e fondo.
+            </p>
+          </div>
+        </div>
+      )}
+
       <InfoHeading title="Giocatori">
         <dl className="info-list">
           <dt>Distanza percorsa</dt>
@@ -396,6 +430,20 @@ export const StatsView: FC<Props> = ({
                       <td>{player.hits}</td>
                     </tr>
                   )}
+                  {player.hit_zones && (
+                    <tr>
+                      <td>Da rete · metà · fondo</td>
+                      <td>
+                        {player.hit_zones.net} · {player.hit_zones.mid} · {player.hit_zones.back}
+                      </td>
+                    </tr>
+                  )}
+                  {player.closing_hits != null && (
+                    <tr>
+                      <td>Ultimo colpo dello scambio</td>
+                      <td>{player.closing_hits}</td>
+                    </tr>
+                  )}
                   {playerStrokes[index] && (
                     <tr>
                       <td>Smash e bandeja</td>
@@ -443,9 +491,14 @@ export const StatsView: FC<Props> = ({
             <dl className="info-list">
               <dt>Come si riconosce uno scambio</dt>
               <dd>
-                Dal movimento dei giocatori, senza seguire la palla: durante un punto tutti si
-                muovono, fra un punto e l'altro no. Un nuovo scambio inizia anche dalla battuta,
-                riconosciuta dai giocatori fermi in posizione e dal gioco che riparte.
+                Dal movimento dei giocatori: durante un punto tutti si muovono, fra un punto e l'altro
+                no. Un nuovo scambio inizia anche dalla battuta, riconosciuta dai giocatori fermi in
+                posizione e dal gioco che riparte.
+                {hitsPerRally != null &&
+                  ' Con la palla seguita, lo scambio va dalla battuta all\'ultimo colpo (più un secondo): ' +
+                    'senza, finiva quando i giocatori smettevano di muoversi, in media 8 s dopo il punto. ' +
+                    'Dove la palla resta ferma a lungo lo scambio si divide; dove i colpi continuano, ' +
+                    'due pezzi si uniscono.'}
               </dd>
               <dt>Scambi</dt>
               <dd>Quanti punti giocati sono stati rilevati.</dd>
@@ -508,7 +561,7 @@ export const StatsView: FC<Props> = ({
                 </span>
                 <span className="rally-dur">
                   {formatDuration(rally.duration_s)}
-                  {rally.hits != null && ` · ${rally.hits.length} colpi`}
+                  {rally.hits != null && ` · ${rally.hits.length} ${rally.hits.length === 1 ? 'colpo' : 'colpi'}`}
                 </span>
               </button>
             ))}

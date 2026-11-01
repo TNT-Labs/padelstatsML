@@ -61,3 +61,54 @@ def test_hits_are_read_from_a_rally_of_ball_points():
     hits = bh.find_hits(t, x, y, players, [{"start_s": 0.5, "end_s": 6.0}], (888.0, 439.0), 1080, bh.load_model())
     assert all(0.0 <= h.t <= 6.0 and h.player in (0, 1, 2, 3) for h in hits)
     assert all(a.far != b.far for a, b in zip(hits, hits[1:]))      # the halves alternate
+
+
+def _rally(i, a, b, serve=False):
+    from app.ml.rallies import Rally
+
+    return Rally(index=i, start_s=a, end_s=b, players_tracked=4, serve=serve)
+
+
+def _refine(monkeypatch, rallies, times, back=lambda pid, t: 8.0):
+    hits = [bh.Hit(t, k % 2 * 2, bool(k % 2)) for k, t in enumerate(times)]
+    monkeypatch.setattr(bh, "find_hits", lambda *a, **k: hits)
+    ball = bh.BallInput(np.zeros(3), np.zeros(3), np.zeros(3), [], (0.0, 0.0), 1080, None)
+    return bh.refine_rallies(rallies, ball, back)
+
+
+def test_a_rally_runs_from_the_serve_to_the_last_hit(monkeypatch):
+    # Movement saw play from 9 s to 30 s; the ball was hit from 10 to 18 s.
+    out, hits = _refine(monkeypatch, [_rally(0, 9.0, 30.0)], [10.0, 11.5, 13.0, 15.0, 18.0])
+    assert [(r.start_s, r.end_s) for r in out] == [(10.0, 18.0 + bh.TAIL_S)]
+    assert out[0].serve and len(hits) == 5
+
+
+def test_hits_split_a_rally_and_join_two(monkeypatch):
+    # One movement rally with two points in it (the ball idle 10 s), and a
+    # point the movement cut in two (hits 2 s apart across the cut).
+    out, _ = _refine(monkeypatch, [_rally(0, 0.0, 30.0), _rally(1, 40.0, 45.0), _rally(2, 46.0, 52.0)],
+                     [1.0, 2.0, 3.0, 13.0, 14.0, 41.0, 43.0, 45.5, 47.0, 49.0])
+    assert [(r.start_s, r.end_s) for r in out] == [(1.0, 4.0), (13.0, 15.0), (41.0, 50.0)]
+    assert [r.index for r in out] == [0, 1, 2]
+
+
+def test_a_rally_without_the_ball_stays_as_movement_found_it(monkeypatch):
+    out, hits = _refine(monkeypatch, [_rally(0, 5.0, 12.0, serve=True), _rally(1, 20.0, 30.0)], [21.0, 23.0])
+    assert [(r.start_s, r.end_s, r.serve) for r in out] == [(5.0, 12.0, True), (21.0, 24.0, True)]
+    # A first hit from near the net is no serve.
+    out, _ = _refine(monkeypatch, [_rally(0, 20.0, 30.0)], [21.0, 23.0], back=lambda pid, t: 2.0)
+    assert not out[0].serve
+
+
+def test_each_player_hits_from_somewhere_and_closes_rallies():
+    result = {"rallies": [{"start_s": 10.0, "end_s": 20.0}, {"start_s": 30.0, "end_s": 40.0}],
+              "per_player": {"0": {}, "2": {}}, "data_quality": {}}
+    hits = [bh.Hit(10.0, 0, False), bh.Hit(11.0, 2, True), bh.Hit(30.0, 2, True), bh.Hit(31.0, 0, False)]
+    dist = {0: 2.0, 2: 7.0}
+    bh.hit_statistics(result, hits, lambda pid, t: dist[pid], lambda pid, t: (3.0, 10.0 - dist[pid]),
+                      {"found": 0.8})
+    assert result["rallies"][0]["hits"] == [[10.0, 0], [11.0, 2]]
+    assert result["per_player"]["0"] == {"hits": 2, "hit_zones": {"net": 2, "mid": 0, "back": 0},
+                                         "hit_spots": [[3.0, 8.0], [3.0, 8.0]], "closing_hits": 1}
+    assert result["per_player"]["2"]["hit_zones"] == {"net": 0, "mid": 0, "back": 2}
+    assert result["data_quality"]["ball"]["hits_measured"] == {"found": 0.8}

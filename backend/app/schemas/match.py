@@ -190,8 +190,13 @@ class PlayerStats(BaseModel):
     # High strokes from the posture (app.ml.strokes): candidates as stored,
     # [{"t", "kind"}] as read; None without the posture.
     strokes: list[dict] | None = None
-    # Hits of the ball, when it was followed.
+    # Hits of the ball, when it was followed: how many, from where (as
+    # zone_pct: net, mid, back — counts), the court spots [x, y] in metres,
+    # and how many rallies the player's hit closed.
     hits: int | None = None
+    hit_zones: dict[str, int] | None = None
+    hit_spots: list[list[float]] | None = None
+    closing_hits: int | None = None
 
 
 class MatchSummary(BaseModel):

@@ -30,10 +30,11 @@ import numpy as np
 from app.ml.accel import AcceleratorError, accelerator_mode, hailo_status, pose_models
 from app.ml.artifacts import ArtifactWriter
 from app.ml.ball import HailoBallDetector
-from app.ml.ball_hits import attach_hits
+from app.ml.ball_hits import ball_input as hits_input
+from app.ml.ball_hits import hit_statistics, refine_rallies
 from app.ml.ball import find_model as find_ball_model
 from app.ml.ball import small as ball_input
-from app.ml.court import CourtCalibration
+from app.ml.court import NET_Y_M, CourtCalibration
 from app.ml.detect import DetectorError, PersonDetector, merge_detections, within_crop
 from app.ml.detect_hailo import HailoPersonDetector, HailoPoseEstimator, HailoRuntimeError
 from app.ml.footpoint import FOOT_MODEL_VERSION
@@ -384,13 +385,12 @@ class AnalysisPipeline:
             analysed_s=analysed_s,
             identity_progress=identity_progress,
             start_s=sampler.start_s,
+            ball_dir=artifacts_dir,
+            frame_height=info.height,
         )
         report(95, f"{len(identity.players)} giocatori · {len(rallies)} scambi")
 
         apply_run_quality(result, run_quality)
-        if artifacts_dir is not None:
-            # The hits, from the ball's flights and the players' boxes.
-            attach_hits(result, identity, artifacts_dir, calibration, info.height)
 
         # ── 6. Thumbnails ────────────────────────────────────────────────────
         report(99, "Estrazione anteprime giocatori…")
@@ -586,7 +586,8 @@ def apply_run_quality(result: dict, run_quality: dict | None) -> None:
     if run_quality.get("pose_note"):
         quality["warnings"].append(run_quality["pose_note"])
     if run_quality.get("ball"):
-        quality["ball"] = run_quality["ball"]
+        # Beside what the hit models put there (hits_measured).
+        quality["ball"] = {**(quality.get("ball") or {}), **run_quality["ball"]}
     if run_quality.get("ball_note"):
         quality["warnings"].append(run_quality["ball_note"])
     if run_quality.get("accelerator_note"):
@@ -602,6 +603,8 @@ def analyse_tracklets(
     analysed_s: float,
     identity_progress: Callable[[int, int], None] | None = None,
     start_s: float = 0.0,
+    ball_dir: str | Path | None = None,
+    frame_height: int | None = None,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -633,6 +636,13 @@ def analyse_tracklets(
         max_speed_ms=config.max_player_speed_ms,
         paths=paths,
     )
+    # With the ball followed: rallies from the serve to the last hit, and
+    # the hits (app.ml.ball_hits).
+    where = _where_players(paths)
+    ball = hits_input(ball_dir, calibration, identity, int(frame_height or 0)) if ball_dir else None
+    hits = None
+    if ball is not None:
+        rallies, hits = refine_rallies(rallies, ball, where.net_distance)
 
     result = compute_metrics(
         MetricsInput(
@@ -653,6 +663,8 @@ def analyse_tracklets(
         for player_id, strokes in detect_strokes(identity.players, paths, rallies).items():
             if str(player_id) in result["per_player"]:
                 result["per_player"][str(player_id)]["strokes"] = strokes
+    if hits is not None:
+        hit_statistics(result, hits, where.net_distance, where.position, ball.model.measured)
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
     result["data_quality"]["rally_speed_threshold_ms"] = round(threshold, 2)
     # Counted on the players' samples, so a recomputed run reports it too:
@@ -664,6 +676,28 @@ def analyse_tracklets(
         "feet_below_net": sum(o.foot_px[1] > o.bbox[3] + 0.5 for o in samples),
     }
     return result, identity, rallies
+
+
+class _where_players:
+    """Where each player was at a time, on their filtered path: within
+    MAX_S of a sample, or not known."""
+    MAX_S = 1.0
+
+    def __init__(self, paths: dict) -> None:
+        self.paths = paths
+
+    def position(self, player_id: int, t: float) -> tuple[float, float] | None:
+        path = self.paths.get(player_id)
+        if path is None or not len(path.times):
+            return None
+        i = int(np.argmin(np.abs(path.times - t)))
+        if abs(path.times[i] - t) > self.MAX_S:
+            return None
+        return float(path.positions[i, 0]), float(path.positions[i, 1])
+
+    def net_distance(self, player_id: int, t: float) -> float | None:
+        xy = self.position(player_id, t)
+        return None if xy is None else abs(xy[1] - NET_Y_M)
 
 
 def _look(detector, image, roi, far_roi) -> tuple[list, int]:

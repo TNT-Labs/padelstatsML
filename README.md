@@ -43,6 +43,8 @@ Nulla viene stimato di nascosto.
 | Copertura del tracciamento per giocatore | quanto della partita ciascuno è stato seguito |
 | Smash e bandeja *(con Hailo)* | braccio della racchetta sopra la spalla durante lo scambio, dalla postura; si distinguono dal braccio libero e dalla distanza dalla rete, secondo la mano di ciascuno (destro/mancino). Verificabili colpo per colpo nell'app: 29 su 30 giusti sulla partita di prova |
 | Palla *(con Hailo)* | rete addestrata sui fotogrammi annotati nell'app, su ogni fotogramma; visibile sul video della partita |
+| Scambi dalla battuta all'ultimo colpo *(con Hailo)* | i colpi correggono gli scambi trovati dal movimento: prima finivano in media 8 s dopo l'ultimo colpo (i giocatori si muovono ancora), ora sull'ultimo colpo; uno scambio dove la palla resta ferma a lungo si divide, due pezzi con colpi continui si uniscono |
+| Da dove colpisce ogni giocatore *(con Hailo)* | per ogni colpo la posizione di chi lo fa: colpi da rete, metà campo e fondo, mappa dei punti, chi chiude lo scambio (ultimo colpo) |
 | Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); su scambi esclusi dall'addestramento: trovati 77%, giusti 91%, giocatore giusto 92% |
 
 ### Non misurato — e perché

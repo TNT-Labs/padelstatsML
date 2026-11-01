@@ -316,25 +316,155 @@ def vanishing_point(calibration) -> tuple[float, float]:
     return (float(v[0] / v[2]), float(v[1] / v[2]))
 
 
-def attach_hits(result: dict, identity, directory, calibration, height: int) -> None:
-    """Hits into the result, when the run followed the ball and a model is
-    there: per rally [time, player], per player the count, and the model's
-    measured accuracy in data_quality. Nothing otherwise."""
+# ── Rallies and hits for the statistics ─────────────────────────────────────
+
+# Rallies found from the players' movement are where the ball is looked for,
+# this far around them; a rally is then from its first hit (the serve) to its
+# last, plus TAIL_S for the ball's last flight. Players keep moving for
+# seconds after a point: from movement alone a rally ended 8 s after its
+# last hit (median, on the marked match), from the hits 0 s.
+EXTEND_S = 3.0
+# Inside one rally found from movement, the ball not hit for this long is a
+# point over and a new one: two rallies.
+SPLIT_GAP_S = 8.0
+# Two rallies whose hits follow on within this are one point that the
+# movement split (everyone still for a moment).
+MERGE_GAP_S = 3.0
+TAIL_S = 1.0
+# A first hit from this far behind the net is a serve.
+SERVE_BACK_M = 6.0
+
+
+@dataclass
+class BallInput:
+    T: np.ndarray
+    X: np.ndarray
+    Y: np.ndarray
+    players: list[PlayerTrack]
+    vp: tuple[float, float]
+    height: int
+    model: HitModel
+
+
+def ball_input(directory, calibration, identity, height: int) -> BallInput | None:
+    """What the hits are read from, when the run followed the ball and a
+    hit model is there; None otherwise."""
     from app.ml.artifacts import read_ball
 
     model = load_model()
+    if model is None or directory is None or not height:
+        return None
     found = read_ball(directory)
-    if model is None or not found or not height:
-        return
+    if not found:
+        return None
     T, X, Y = ball_points(found, height)
     if len(T) < 3:
-        return
+        return None
     players = [PlayerTrack.from_player(p) for p in identity.players if p.observations]
-    hits = find_hits(T, X, Y, players, result["rallies"], vanishing_point(calibration), height, model)
+    return BallInput(T, X, Y, players, vanishing_point(calibration), height, model)
+
+
+def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[list, list[Hit]]:
+    """The rallies from movement made to start at the serve and end at the
+    last hit, split and merged where the hits say so; and the hits in them.
+    Rallies where the ball was not seen hit stay as movement found them.
+    `net_distance(player id, t)`: metres from the net, to tell a serve."""
+    from app.ml.rallies import Rally
+
+    zones: list[list[float]] = []
+    for r in rallies:
+        a, b = r.start_s - EXTEND_S, r.end_s + EXTEND_S
+        if zones and a <= zones[-1][1]:
+            zones[-1][1] = max(zones[-1][1], b)
+        else:
+            zones.append([a, b])
+    found = find_hits(ball.T, ball.X, ball.Y, ball.players,
+                      [{"start_s": a + RALLY_LEAD_S, "end_s": b} for a, b in zones],
+                      ball.vp, ball.height, ball.model)
+    hits = sorted({h.t: h for h in found}.values(), key=lambda h: h.t)
+
+    spans: list[list] = []         # [start, end, hits or None, source rally]
+    used = 0
+    for r in rallies:
+        inside = []
+        while used < len(hits) and hits[used].t < r.start_s - EXTEND_S:
+            used += 1
+        k = used
+        while k < len(hits) and hits[k].t <= r.end_s:
+            inside.append(hits[k])
+            k += 1
+        if len(inside) < 2:
+            spans.append([r.start_s, r.end_s, None, r])
+            continue
+        used = k
+        parts = [[inside[0]]]
+        for h in inside[1:]:
+            if h.t - parts[-1][-1].t > SPLIT_GAP_S:
+                parts.append([h])
+            else:
+                parts[-1].append(h)
+        for part in parts:
+            if len(part) >= 2:
+                spans.append([part[0].t, part[-1].t + TAIL_S, part, r])
+    spans.sort(key=lambda x: x[0])
+    merged: list[list] = []
+    for span in spans:
+        last = merged[-1] if merged else None
+        if (last is not None and last[2] is not None and span[2] is not None
+                and span[0] - last[2][-1].t <= MERGE_GAP_S):
+            last[1] = max(last[1], span[1])
+            last[2] = last[2] + span[2]
+        else:
+            merged.append(span)
+
+    out, kept = [], []
+    for i, (start, end, part, source) in enumerate(merged):
+        serve = source.serve
+        if part is not None:
+            kept += part
+            first = part[0]
+            if net_distance is not None:
+                d = net_distance(first.player, first.t)
+                serve = serve or (d is not None and d >= SERVE_BACK_M)
+        out.append(Rally(index=i, start_s=float(start), end_s=float(end),
+                         players_tracked=source.players_tracked, serve=bool(serve)))
+    return out, kept
+
+
+def hit_zone(distance_m: float) -> str:
+    from app.ml.metrics import ZONE_MID_M, ZONE_NET_M
+
+    if distance_m <= ZONE_NET_M:
+        return "net"
+    return "mid" if distance_m <= ZONE_MID_M else "back"
+
+
+def hit_statistics(result: dict, hits: list[Hit], net_distance, position, measured: dict | None) -> None:
+    """Into the result: per rally its hits [time, player]; per player how
+    many, from where (net, mid, back: as zone_pct), the court positions they
+    hit from, and how many rallies their hit closed."""
     for rally in result["rallies"]:
         rally["hits"] = [[h.t, h.player] for h in hits
                          if rally["start_s"] - RALLY_LEAD_S <= h.t <= rally["end_s"]]
+    closing: dict[int, int] = {}
+    for rally in result["rallies"]:
+        if rally["hits"]:
+            closing[rally["hits"][-1][1]] = closing.get(rally["hits"][-1][1], 0) + 1
     for player_id, stats in result["per_player"].items():
-        stats["hits"] = sum(h.player == int(player_id) for h in hits)
-    if model.measured:
-        result["data_quality"].setdefault("ball", {})["hits_measured"] = model.measured
+        pid = int(player_id)
+        mine = [h for h in hits if h.player == pid]
+        zones = {"net": 0, "mid": 0, "back": 0}
+        spots = []
+        for h in mine:
+            d = net_distance(pid, h.t)
+            if d is not None:
+                zones[hit_zone(d)] += 1
+            xy = position(pid, h.t)
+            if xy is not None:
+                spots.append([round(xy[0], 1), round(xy[1], 1)])
+        stats["hits"] = len(mine)
+        stats["hit_zones"] = zones
+        stats["hit_spots"] = spots
+        stats["closing_hits"] = closing.get(pid, 0)
+    if measured:
+        result["data_quality"].setdefault("ball", {})["hits_measured"] = measured
