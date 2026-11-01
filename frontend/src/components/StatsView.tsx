@@ -561,7 +561,7 @@ export const StatsView: FC<Props> = ({
                 </span>
                 <span className="rally-dur">
                   {formatDuration(rally.duration_s)}
-                  {rally.hits != null && ` · ${rally.hits.length} colpi`}
+                  {rally.hits != null && ` · ${rally.hits.length} ${rally.hits.length === 1 ? 'colpo' : 'colpi'}`}
                 </span>
               </button>
             ))}
