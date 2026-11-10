@@ -245,7 +245,7 @@ async def test_the_time_the_analysis_took_is_shown_with_the_statistics(analysed_
     assert timing["finished_at"].startswith("2026-10-31T18:52:10") and timing["finished_at"].endswith(("Z", "+00:00"))
 
 
-async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_match):
+async def test_a_refresh_reads_the_ball_and_says_when_it_shows_no_hits(analysed_match):
     from app.core.storage import artifacts_dir
 
     owner, match_id = analysed_match
@@ -256,8 +256,10 @@ async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_mat
         "\n".join(f"[{f},{f / 30:.3f},{400 + 3 * f},{300 + 2 * f},0.8]" for f in range(30, 90)) + "\n")
     assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
     stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
-    assert all(isinstance(r["hits"], list) for r in stats["rallies"])
-    assert all(isinstance(p["hits"], int) for p in stats["per_player"].values())
+    # A ball going straight for two seconds: no hits in the rallies, so the
+    # ball is not used for them, and the panel says so.
+    assert all(r.get("hits") is None for r in stats["rallies"])
+    assert any("non sono stati ricavati dalla palla" in w for w in stats["data_quality"]["warnings"])
 
 
 async def test_the_hits_seen_in_the_video_are_marked(analysed_match):

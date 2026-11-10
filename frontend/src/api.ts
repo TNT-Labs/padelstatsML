@@ -233,6 +233,8 @@ export interface DataQuality {
     found: number
     /** How the hits found from the ball measured against hits marked by a
      *  person, on rallies the models never saw (shares 0-1). */
+    /** Stretches of movement left out as rallies: the ball was not hit twice. */
+    rallies_dropped?: number
     hits_measured?: { marked: number; found: number; real: number; half: number; player: number }
   } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose

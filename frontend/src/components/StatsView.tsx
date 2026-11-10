@@ -498,7 +498,9 @@ export const StatsView: FC<Props> = ({
                   ' Con la palla seguita, lo scambio va dalla battuta all\'ultimo colpo (più un secondo): ' +
                     'senza, finiva quando i giocatori smettevano di muoversi, in media 8 s dopo il punto. ' +
                     'Dove la palla resta ferma a lungo lo scambio si divide; dove i colpi continuano, ' +
-                    'due pezzi si uniscono.'}
+                    'due pezzi si uniscono. Un tratto di movimento senza almeno due colpi non è uno scambio ' +
+                    '(giocatori che si spostano, una palla ripassata): resta solo una battuta isolata, ' +
+                    'un ace o una risposta mancata.'}
               </dd>
               <dt>Scambi</dt>
               <dd>Quanti punti giocati sono stati rilevati.</dd>

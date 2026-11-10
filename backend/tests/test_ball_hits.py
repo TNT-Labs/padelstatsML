@@ -78,7 +78,7 @@ def _refine(monkeypatch, rallies, times, back=lambda pid, t: 8.0):
 
 def test_a_rally_runs_from_the_serve_to_the_last_hit(monkeypatch):
     # Movement saw play from 9 s to 30 s; the ball was hit from 10 to 18 s.
-    out, hits = _refine(monkeypatch, [_rally(0, 9.0, 30.0)], [10.0, 11.5, 13.0, 15.0, 18.0])
+    out, hits, _ = _refine(monkeypatch, [_rally(0, 9.0, 30.0)], [10.0, 11.5, 13.0, 15.0, 18.0])
     assert [(r.start_s, r.end_s) for r in out] == [(10.0, 18.0 + bh.TAIL_S)]
     assert out[0].serve and len(hits) == 5
 
@@ -86,18 +86,40 @@ def test_a_rally_runs_from_the_serve_to_the_last_hit(monkeypatch):
 def test_hits_split_a_rally_and_join_two(monkeypatch):
     # One movement rally with two points in it (the ball idle 10 s), and a
     # point the movement cut in two (hits 2 s apart across the cut).
-    out, _ = _refine(monkeypatch, [_rally(0, 0.0, 30.0), _rally(1, 40.0, 45.0), _rally(2, 46.0, 52.0)],
+    out, _, _ = _refine(monkeypatch, [_rally(0, 0.0, 30.0), _rally(1, 40.0, 45.0), _rally(2, 46.0, 52.0)],
                      [1.0, 2.0, 3.0, 13.0, 14.0, 41.0, 43.0, 45.5, 47.0, 49.0])
     assert [(r.start_s, r.end_s) for r in out] == [(1.0, 4.0), (13.0, 15.0), (41.0, 50.0)]
     assert [r.index for r in out] == [0, 1, 2]
 
 
-def test_a_rally_without_the_ball_stays_as_movement_found_it(monkeypatch):
-    out, hits = _refine(monkeypatch, [_rally(0, 5.0, 12.0, serve=True), _rally(1, 20.0, 30.0)], [21.0, 23.0])
-    assert [(r.start_s, r.end_s, r.serve) for r in out] == [(5.0, 12.0, True), (21.0, 24.0, True)]
-    # A first hit from near the net is no serve.
-    out, _ = _refine(monkeypatch, [_rally(0, 20.0, 30.0)], [21.0, 23.0], back=lambda pid, t: 2.0)
-    assert not out[0].serve
+def test_movement_without_two_hits_is_not_a_rally(monkeypatch):
+    # No hit at all; one hit that is no serve; then a real rally.
+    out, hits, dropped = _refine(monkeypatch, [_rally(0, 5.0, 12.0, serve=True), _rally(1, 14.0, 19.0),
+                                               _rally(2, 30.0, 40.0), _rally(3, 50.0, 60.0),
+                                               _rally(4, 70.0, 80.0)],
+                                 [15.0, 31.0, 33.0, 51.0, 53.0, 71.0, 73.0], back=lambda pid, t: 2.0)
+    assert [(r.start_s, r.end_s) for r in out] == [(31.0, 34.0), (51.0, 54.0), (71.0, 74.0)]
+    assert dropped == 2 and [h.t for h in hits][:2] == [31.0, 33.0]
+    assert not out[0].serve                       # a first hit from near the net
+
+
+def test_a_ball_that_shows_no_hits_leaves_the_rallies_alone(monkeypatch):
+    rallies = [_rally(0, 5.0, 12.0), _rally(1, 14.0, 19.0), _rally(2, 30.0, 40.0)]
+    out, hits, dropped = _refine(monkeypatch, rallies, [31.0, 33.0])
+    assert out == rallies and hits is None and dropped == 0
+
+
+def test_a_lone_serve_is_a_rally():
+    import pytest
+
+    # An ace: lined up for the serve, one hit from the back of the court.
+    mp = pytest.MonkeyPatch()
+    try:
+        out, hits, dropped = _refine(mp, [_rally(0, 20.0, 26.0, serve=True)], [21.0])
+    finally:
+        mp.undo()
+    assert [(r.start_s, r.end_s, r.serve) for r in out] == [(21.0, 21.0 + bh.TAIL_S, True)]
+    assert dropped == 0 and len(hits) == 1
 
 
 def test_each_player_hits_from_somewhere_and_closes_rallies():

@@ -331,6 +331,9 @@ SPLIT_GAP_S = 8.0
 # movement split (everyone still for a moment).
 MERGE_GAP_S = 3.0
 TAIL_S = 1.0
+# Rallies from movement without two hits are left out, unless they are more
+# than this share: then the ball is not to be trusted on this match.
+MAX_DROPPED_SHARE = 0.5
 # A first hit from this far behind the net is a serve.
 SERVE_BACK_M = 6.0
 
@@ -364,11 +367,22 @@ def ball_input(directory, calibration, identity, height: int) -> BallInput | Non
     return BallInput(T, X, Y, players, vanishing_point(calibration), height, model)
 
 
-def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[list, list[Hit]]:
+def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[list, list[Hit] | None, int]:
     """The rallies from movement made to start at the serve and end at the
-    last hit, split and merged where the hits say so; and the hits in them.
-    Rallies where the ball was not seen hit stay as movement found them.
-    `net_distance(player id, t)`: metres from the net, to tell a serve."""
+    last hit, split and merged where the hits say so; the hits in them; and
+    how many rallies were left out.
+
+    A rally from movement where the ball was not hit twice is not a point:
+    players walking to their places, a ball passed back between points, the
+    court emptying (on a real match, every one of them checked in the video
+    was that). It is left out — but for a lone serve, a hit from the back
+    of the court where the players were seen lining up for one: an ace, or
+    a return that never came.
+    `net_distance(player id, t)`: metres from the net, to tell a serve.
+
+    When more than MAX_DROPPED_SHARE of the rallies would be left out, the
+    ball is what is wrong (a court or a light its network does not know),
+    not the rallies: they are returned as they came, with None for the hits."""
     from app.ml.rallies import Rally
 
     zones: list[list[float]] = []
@@ -383,8 +397,9 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
                       ball.vp, ball.height, ball.model)
     hits = sorted({h.t: h for h in found}.values(), key=lambda h: h.t)
 
-    spans: list[list] = []         # [start, end, hits or None, source rally]
+    spans: list[list] = []         # [start, end, hits, source rally]
     used = 0
+    dropped = 0
     for r in rallies:
         inside = []
         while used < len(hits) and hits[used].t < r.start_s - EXTEND_S:
@@ -394,7 +409,13 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
             inside.append(hits[k])
             k += 1
         if len(inside) < 2:
-            spans.append([r.start_s, r.end_s, None, r])
+            lone = inside[0] if inside else None
+            d = net_distance(lone.player, lone.t) if lone is not None and net_distance is not None else None
+            if lone is not None and r.serve and d is not None and d >= SERVE_BACK_M:
+                used = k
+                spans.append([lone.t, lone.t + TAIL_S, [lone], r])
+            else:
+                dropped += 1
             continue
         used = k
         parts = [[inside[0]]]
@@ -406,6 +427,8 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
         for part in parts:
             if len(part) >= 2:
                 spans.append([part[0].t, part[-1].t + TAIL_S, part, r])
+    if dropped > MAX_DROPPED_SHARE * len(rallies):
+        return list(rallies), None, 0
     spans.sort(key=lambda x: x[0])
     merged: list[list] = []
     for span in spans:
@@ -428,7 +451,7 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
                 serve = serve or (d is not None and d >= SERVE_BACK_M)
         out.append(Rally(index=i, start_s=float(start), end_s=float(end),
                          players_tracked=source.players_tracked, serve=bool(serve)))
-    return out, kept
+    return out, kept, dropped
 
 
 def hit_zone(distance_m: float) -> str:
