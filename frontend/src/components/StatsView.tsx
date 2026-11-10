@@ -179,6 +179,8 @@ export const StatsView: FC<Props> = ({
             <p className="muted-note">
               Le statistiche attuali verranno sostituite e i nomi dei giocatori andranno
               reinseriti. Richiede circa quanto la durata del video.
+              {hitLabels.length > 0 &&
+                ` I ${hitLabels.length} colpi segnati nel video restano: reinserendo gli stessi nomi tornano ai giocatori giusti.`}
             </p>
             <p style={{ margin: '.75rem 0 1rem' }}>
               Vuoi prima <strong>ricalibrare il campo</strong>? Fallo se rete e linee proiettate

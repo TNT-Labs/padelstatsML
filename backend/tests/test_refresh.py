@@ -276,3 +276,25 @@ async def test_the_hits_seen_in_the_video_are_marked(analysed_match):
     viewer = await signed_in("hits-viewer", "visualizzatore")
     async with viewer:
         assert (await viewer.put(url, json={"hits": [[1.0, 1]]})).status_code == 403
+
+
+async def test_the_marked_hits_follow_the_names_through_a_new_numbering(analysed_match):
+    from app.core.database import sync_session
+    from app.models import Match
+
+    owner, match_id = analysed_match                     # named A, B, C, D
+    url = f"/api/matches/{match_id}/hit-labels"
+    await owner.put(url, json={"hits": [[10.0, 0], [11.0, 2], [12.0, 3]]})
+    # A new analysis: the names go, the marks stay.
+    with sync_session() as session:
+        match = session.get(Match, match_id)
+        match.player_names = None
+        assert match.hit_labels == [[10.0, 0], [11.0, 2], [12.0, 3]]
+    # The same people named again under other numbers: the marks move with them.
+    response = await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["c", "A ", "D", "B"]})
+    assert response.status_code == 200, response.text
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["hit_labels"] == [[10.0, 1], [11.0, 0], [12.0, 2]]
+    # Other people: nothing is guessed.
+    await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["X", "Y", "Z", "W"]})
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["hit_labels"] == [[10.0, 1], [11.0, 0], [12.0, 2]]

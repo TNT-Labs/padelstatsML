@@ -36,7 +36,7 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
           {hasWarnings ? '⚠️' : '✅'}{' '}
           <strong>
             {hasWarnings
-              ? `Affidabilità dei dati — ${quality.warnings.length} nota${quality.warnings.length > 1 ? 'e' : ''}`
+              ? `Affidabilità dei dati — ${quality.warnings.length} ${quality.warnings.length > 1 ? 'note' : 'nota'}`
               : 'Affidabilità dei dati — nessun problema rilevato'}
           </strong>
         </span>
