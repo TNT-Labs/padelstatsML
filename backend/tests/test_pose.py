@@ -229,3 +229,24 @@ def test_the_video_overlay_carries_the_points_only_when_there_are_any():
     assert first["kp"][0][:3] == [30, 61, 88] and len(first["kp"][0]) == 51
     assert first["kp"][1] is None
     assert "kp" not in second
+
+
+def test_the_overlay_comes_in_two_parts_the_skeleton_apart(tmp_path):
+    import gzip
+    import json
+
+    from app.ml import player_boxes as pb
+
+    (tmp_path / "tracks.jsonl").write_text("")
+    whole = {"sample_hz": 5.0, "frame": {"width": 1920, "height": 1080}, "changeovers": [], "matches_stats": True,
+             "players": [{"id": 0, "team": 0, "role": None, "t": [1.0], "box": [1, 2, 3, 4], "kp": [[5] * 51]},
+                         {"id": 1, "team": 0, "role": None, "t": [1.0], "box": [5, 6, 7, 8]}]}
+    pb._store(tmp_path, whole, None)
+    boxes = json.loads(gzip.decompress(pb.player_boxes_part_gz(tmp_path, None, 8.0, part="boxes")))
+    assert boxes["skeleton"] is True and all("kp" not in p for p in boxes["players"])
+    assert boxes["players"][0]["box"] == [1, 2, 3, 4]
+    skeleton = json.loads(gzip.decompress(pb.player_boxes_part_gz(tmp_path, None, 8.0, part="skeleton")))
+    assert skeleton == {"players": [{"id": 0, "kp": [[5] * 51]}]}
+    # Rebuilt boxes take their parts with them.
+    pb._store(tmp_path, whole, None)
+    assert len(list(tmp_path.glob("players-*.json.gz"))) == 1

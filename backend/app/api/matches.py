@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import logging
+from typing import Literal
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -69,7 +70,7 @@ from app.ml.court import (
     build_from_reference,
     suggest_corners,
 )
-from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
+from app.ml.player_boxes import BoxesUnavailable, player_boxes_part_gz
 from app.ml.strokes import for_hand
 from app.ml.video import VideoError, extract_background, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
@@ -903,10 +904,11 @@ async def get_video(
 
 @router.get("/{match_id}/tracks")
 async def get_player_tracks(
-    match_id: str, request: Request,
+    match_id: str, request: Request, part: Literal["boxes", "skeleton"] = "boxes",
     db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> Response:
-    """Each player's box through the video, for the web player's overlay:
+    """Each player's box through the video, for the web player's overlay;
+    with part=skeleton, the body points alone, asked for only when shown:
     see app/ml/player_boxes.py."""
     match = await _get_match(db, match_id, user)
     stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
@@ -914,8 +916,8 @@ async def get_player_tracks(
     try:
         async with _BOXES_LOCK:
             data = await run_in_threadpool(
-                player_boxes_gz, artifacts_dir(match_id), per_player,
-                get_settings().max_player_speed_ms, match.calibration,
+                player_boxes_part_gz, artifacts_dir(match_id), per_player,
+                get_settings().max_player_speed_ms, match.calibration, part,
             )
     except BoxesUnavailable as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc

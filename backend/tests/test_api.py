@@ -522,8 +522,9 @@ async def test_the_players_boxes_are_cached_and_sent_plain_on_request(uploaded_m
     from app.core.storage import artifacts_dir
 
     first = await client.get(f"/api/matches/{match_id}/tracks")
-    cached = list(artifacts_dir(match_id).glob("players-*.json.gz"))
-    assert len(cached) == 1
+    # The whole payload, and the part sent (the boxes without the skeleton).
+    cached = sorted(artifacts_dir(match_id).glob("players-*.json.gz"))
+    assert len(cached) == 2 and cached[0].name == cached[1].name.replace(".json.gz", "-boxes.json.gz")
 
     plain = await client.get(f"/api/matches/{match_id}/tracks", headers={"Accept-Encoding": "identity"})
     assert "content-encoding" not in plain.headers
@@ -532,8 +533,8 @@ async def test_the_players_boxes_are_cached_and_sent_plain_on_request(uploaded_m
     # New statistics make a new cache file, and the old one goes.
     _store_stats(match_id, {"0": 1})
     await client.get(f"/api/matches/{match_id}/tracks")
-    assert [p.name for p in artifacts_dir(match_id).glob("players-*.json.gz")] != [cached[0].name]
-    assert len(list(artifacts_dir(match_id).glob("players-*.json.gz"))) == 1
+    now = sorted(p.name for p in artifacts_dir(match_id).glob("players-*.json.gz"))
+    assert len(now) == 2 and not set(now) & {c.name for c in cached}
 
 
 async def test_without_artifacts_the_boxes_are_missing_with_a_reason(uploaded_match, client):

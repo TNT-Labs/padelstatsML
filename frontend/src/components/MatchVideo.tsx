@@ -19,6 +19,25 @@ interface Props {
 // tall and a desktop-sized tag would cover them.
 const NARROW_PX = 600
 const TAG = { wide: { font: 12, height: 16 }, narrow: { font: 10, height: 13 } }
+const SKELETON_KEY = 'padel.video.skeleton'
+
+/** A remembered choice; none where storage is not available. */
+function stored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function store(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // Private windows: the choice lasts as long as the page.
+  }
+}
+
 // A hit is marked over the player for this long after it.
 const HIT_SHOW_S = 0.8
 const NO_HITS: [number, number][] = []
@@ -41,11 +60,14 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
   const [tracksNote, setTracksNote] = useState<string | null>(null)
   const [loadingTracks, setLoadingTracks] = useState(true)
   const [showBoxes, setShowBoxes] = useState(true)
-  const [showSkeleton, setShowSkeleton] = useState(true)
+  // Off until asked for: the body points are nine tenths of what the
+  // overlay downloads. The choice is remembered on this device.
+  const [showSkeleton, setShowSkeleton] = useState(() => stored(SKELETON_KEY) === '1')
+  const [skeletonState, setSkeletonState] = useState<'none' | 'loading' | 'ready' | 'failed'>('none')
   // The ball, when the analysis followed it (ball network on the accelerator).
   const [ball, setBall] = useState<BallTrack | null>(null)
   const [showBall, setShowBall] = useState(true)
-  const hasSkeleton = !!tracks?.players.some(p => p.kp)
+  const hasSkeleton = !!tracks?.skeleton || !!tracks?.players.some(p => p.kp)
   const [videoError, setVideoError] = useState<string | null>(null)
   const src = api.videoUrl(matchId)
   const hitTimes = useMemo(() => hits.map(h => h[0]), [hits])
@@ -55,6 +77,7 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
     setTracks(null)
     setTracksNote(null)
     setLoadingTracks(true)
+    setSkeletonState('none')
     api
       .getPlayerTracks(matchId)
       .then(result => !cancelled && setTracks(result))
@@ -69,6 +92,28 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
       cancelled = true
     }
   }, [matchId])
+
+  // The body points, fetched the first time the skeleton is shown.
+  useEffect(() => {
+    if (!showSkeleton || !tracks?.skeleton || skeletonState !== 'none') return
+    let cancelled = false
+    setSkeletonState('loading')
+    api
+      .getPlayerSkeleton(matchId)
+      .then(result => {
+        if (cancelled) return
+        const points = new Map(result.players.map(p => [p.id, p.kp]))
+        setTracks(current =>
+          current && { ...current, players: current.players.map(p => ({ ...p, kp: points.get(p.id) ?? p.kp })) })
+        setSkeletonState('ready')
+      })
+      .catch(() => !cancelled && setSkeletonState('failed'))
+    return () => {
+      cancelled = true
+    }
+    // skeletonState is left out on purpose: setting it to 'loading' must not cancel the fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSkeleton, tracks?.skeleton, matchId])
 
   const draw = useCallback(() => {
     const video = videoRef.current
@@ -259,10 +304,15 @@ export const MatchVideo: FC<Props> = ({ matchId, names, videoRef, onSeek, hits =
               <input
                 type="checkbox"
                 checked={showSkeleton}
-                onChange={e => setShowSkeleton(e.target.checked)}
+                onChange={e => {
+                  setShowSkeleton(e.target.checked)
+                  store(SKELETON_KEY, e.target.checked ? '1' : '0')
+                }}
                 disabled={!showBoxes}
               />
               Scheletro
+              {showSkeleton && skeletonState === 'loading' && '…'}
+              {showSkeleton && skeletonState === 'failed' && ' (non caricato)'}
             </label>
           )}
           {ball && (
