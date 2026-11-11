@@ -36,7 +36,7 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
           {hasWarnings ? '⚠️' : '✅'}{' '}
           <strong>
             {hasWarnings
-              ? `Affidabilità dei dati — ${quality.warnings.length} nota${quality.warnings.length > 1 ? 'e' : ''}`
+              ? `Affidabilità dei dati — ${quality.warnings.length} ${quality.warnings.length > 1 ? 'note' : 'nota'}`
               : 'Affidabilità dei dati — nessun problema rilevato'}
           </strong>
         </span>
@@ -99,6 +99,8 @@ export const DataQualityPanel: FC<Props> = ({ quality, matchId }) => {
                   vista in {Math.round((100 * quality.ball.found) / quality.ball.frames)}% dei{' '}
                   {quality.ball.frames.toLocaleString('it-IT')} fotogrammi
                   {quality.ball.model && ` · ${quality.ball.model}`}
+                  {!!quality.ball.rallies_dropped &&
+                    ` · ${quality.ball.rallies_dropped} ${quality.ball.rallies_dropped === 1 ? 'tratto' : 'tratti'} di movimento senza colpi non contati come scambi`}
                 </dd>
               </div>
             )}

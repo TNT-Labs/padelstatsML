@@ -245,7 +245,7 @@ async def test_the_time_the_analysis_took_is_shown_with_the_statistics(analysed_
     assert timing["finished_at"].startswith("2026-10-31T18:52:10") and timing["finished_at"].endswith(("Z", "+00:00"))
 
 
-async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_match):
+async def test_a_refresh_reads_the_ball_and_says_when_it_shows_no_hits(analysed_match):
     from app.core.storage import artifacts_dir
 
     owner, match_id = analysed_match
@@ -256,8 +256,10 @@ async def test_a_refresh_counts_the_hits_when_the_ball_was_followed(analysed_mat
         "\n".join(f"[{f},{f / 30:.3f},{400 + 3 * f},{300 + 2 * f},0.8]" for f in range(30, 90)) + "\n")
     assert (await owner.post(f"/api/matches/{match_id}/refresh")).status_code == 200
     stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
-    assert all(isinstance(r["hits"], list) for r in stats["rallies"])
-    assert all(isinstance(p["hits"], int) for p in stats["per_player"].values())
+    # A ball going straight for two seconds: no hits in the rallies, so the
+    # ball is not used for them, and the panel says so.
+    assert all(r.get("hits") is None for r in stats["rallies"])
+    assert any("non sono stati ricavati dalla palla" in w for w in stats["data_quality"]["warnings"])
 
 
 async def test_the_hits_seen_in_the_video_are_marked(analysed_match):
@@ -274,3 +276,25 @@ async def test_the_hits_seen_in_the_video_are_marked(analysed_match):
     viewer = await signed_in("hits-viewer", "visualizzatore")
     async with viewer:
         assert (await viewer.put(url, json={"hits": [[1.0, 1]]})).status_code == 403
+
+
+async def test_the_marked_hits_follow_the_names_through_a_new_numbering(analysed_match):
+    from app.core.database import sync_session
+    from app.models import Match
+
+    owner, match_id = analysed_match                     # named A, B, C, D
+    url = f"/api/matches/{match_id}/hit-labels"
+    await owner.put(url, json={"hits": [[10.0, 0], [11.0, 2], [12.0, 3]]})
+    # A new analysis: the names go, the marks stay.
+    with sync_session() as session:
+        match = session.get(Match, match_id)
+        match.player_names = None
+        assert match.hit_labels == [[10.0, 0], [11.0, 2], [12.0, 3]]
+    # The same people named again under other numbers: the marks move with them.
+    response = await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["c", "A ", "D", "B"]})
+    assert response.status_code == 200, response.text
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["hit_labels"] == [[10.0, 1], [11.0, 0], [12.0, 2]]
+    # Other people: nothing is guessed.
+    await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["X", "Y", "Z", "W"]})
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["hit_labels"] == [[10.0, 1], [11.0, 0], [12.0, 2]]

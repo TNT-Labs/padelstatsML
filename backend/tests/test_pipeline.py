@@ -981,13 +981,15 @@ def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calib
     ball_quality = result["data_quality"]["ball"]
     assert {k: ball_quality[k] for k in ("model", "frames", "found")} == {
         "model": "ball_h8l.hef", "frames": frames - 2, "found": frames - 2}
-    # The hits read from it, with how the hit models measured.
-    assert "hits_measured" in ball_quality
-    assert all(isinstance(r.get("hits"), list) for r in result["rallies"])
+    # This ball never turns: no hits in any rally, so the rallies stay as
+    # movement found them and the panel says the ball was of no use for them.
+    assert any("non sono stati ricavati dalla palla" in w for w in result["data_quality"]["warnings"])
+    assert all(r.get("hits") is None for r in result["rallies"])
 
     # The players are analysed on the same samples as without the ball.
     plain = _run_with(monkeypatch, synthetic_match, calibration, _usable())
     assert result["summary"] == plain["summary"]
+    assert result["rallies"] == plain["rallies"]
 
 
 def test_a_ball_network_failing_leaves_the_players_analysed(monkeypatch, synthetic_match, calibration, tmp_path):

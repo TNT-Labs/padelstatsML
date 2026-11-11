@@ -233,6 +233,8 @@ export interface DataQuality {
     found: number
     /** How the hits found from the ball measured against hits marked by a
      *  person, on rallies the models never saw (shares 0-1). */
+    /** Stretches of movement left out as rallies: the ball was not hit twice. */
+    rallies_dropped?: number
     hits_measured?: { marked: number; found: number; real: number; half: number; player: number }
   } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
@@ -361,6 +363,9 @@ export interface PlayerTracks {
   /** False when the boxes were recomputed with a newer version of the code
    *  than the statistics on screen: the numbering may differ. */
   matches_stats: boolean
+  /** Whether the analysis has the players' body points: they come apart
+   *  (getPlayerSkeleton), being most of the weight. */
+  skeleton?: boolean
 }
 
 /** The ball found by the analysis: its flights, each its times and points
@@ -506,6 +511,9 @@ export const api = {
     }),
   videoUrl: (id: string) => `${BASE}/api/matches/${id}/video`,
   getPlayerTracks: (id: string) => req<PlayerTracks>(`/api/matches/${id}/tracks`),
+  /** The body points of each player's samples, in the order of the boxes. */
+  getPlayerSkeleton: (id: string) =>
+    req<{ players: { id: number; kp: (number[] | null)[] }[] }>(`/api/matches/${id}/tracks?part=skeleton`),
 
   getSuggestion: (id: string) =>
     req<CalibrationSuggestion>(`/api/matches/${id}/calibration/suggestion`),

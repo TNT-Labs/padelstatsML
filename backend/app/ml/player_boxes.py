@@ -50,6 +50,35 @@ def player_boxes_gz(
                   stats_per_player)
 
 
+def player_boxes_part_gz(
+    directory: Path, stats_per_player: dict | None, default_speed_ms: float,
+    calibration_data: dict | None = None, part: str = "boxes",
+) -> bytes:
+    """The payload in two parts, each cached: "boxes" — everything but the
+    body points, with `skeleton` saying whether there are any — and
+    "skeleton", the body points per player alone. The points are nine
+    tenths of the whole (2 MB against 0.2 for half an hour of play): the
+    web player asks for them only when the skeleton is switched on."""
+    if part not in ("boxes", "skeleton"):
+        raise ValueError(part)
+    whole = player_boxes_gz(directory, stats_per_player, default_speed_ms, calibration_data)
+    main = _cache_path(directory, stats_per_player)
+    cache = main.with_name(main.name.replace(".json.gz", f"-{part}.json.gz"))
+    if cache.exists():
+        return cache.read_bytes()
+    payload = json.loads(gzip.decompress(whole))
+    if part == "boxes":
+        payload["skeleton"] = any("kp" in p for p in payload["players"])
+        payload["players"] = [{k: v for k, v in p.items() if k != "kp"} for p in payload["players"]]
+    else:
+        payload = {"players": [{"id": p["id"], "kp": p["kp"]} for p in payload["players"] if "kp" in p]}
+    data = gzip.compress(json.dumps(payload, separators=(",", ":")).encode("utf-8"), compresslevel=6)
+    tmp = cache.with_name(cache.name + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(cache)
+    return data
+
+
 def save_player_boxes(
     directory: Path, identity: IdentityResult, sample_hz: float, frame: dict, stats_per_player: dict,
 ) -> None:

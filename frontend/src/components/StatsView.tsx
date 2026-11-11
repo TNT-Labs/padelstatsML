@@ -179,6 +179,8 @@ export const StatsView: FC<Props> = ({
             <p className="muted-note">
               Le statistiche attuali verranno sostituite e i nomi dei giocatori andranno
               reinseriti. Richiede circa quanto la durata del video.
+              {hitLabels.length > 0 &&
+                ` I ${hitLabels.length} colpi segnati nel video restano: reinserendo gli stessi nomi tornano ai giocatori giusti.`}
             </p>
             <p style={{ margin: '.75rem 0 1rem' }}>
               Vuoi prima <strong>ricalibrare il campo</strong>? Fallo se rete e linee proiettate
@@ -498,7 +500,9 @@ export const StatsView: FC<Props> = ({
                   ' Con la palla seguita, lo scambio va dalla battuta all\'ultimo colpo (più un secondo): ' +
                     'senza, finiva quando i giocatori smettevano di muoversi, in media 8 s dopo il punto. ' +
                     'Dove la palla resta ferma a lungo lo scambio si divide; dove i colpi continuano, ' +
-                    'due pezzi si uniscono.'}
+                    'due pezzi si uniscono. Un tratto di movimento senza almeno due colpi non è uno scambio ' +
+                    '(giocatori che si spostano, una palla ripassata): resta solo una battuta isolata, ' +
+                    'un ace o una risposta mancata.'}
               </dd>
               <dt>Scambi</dt>
               <dd>Quanti punti giocati sono stati rilevati.</dd>

@@ -93,7 +93,7 @@ const RIGHT_LABELS: Record<StrokeKind, string[]> = {
 
 /** The name on a stroke's chip. */
 export function strokeName(stroke: { kind: StrokeKind }): string {
-  return stroke.kind === 'overhead' ? 'smash' : 'lob'
+  return stroke.kind === 'overhead' ? 'smash o bandeja' : 'lob'
 }
 
 /** "52 min", "1 h 05 min", "40 s": how long something took. */

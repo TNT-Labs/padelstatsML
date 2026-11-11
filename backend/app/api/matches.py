@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import logging
+from typing import Literal
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -69,7 +70,7 @@ from app.ml.court import (
     build_from_reference,
     suggest_corners,
 )
-from app.ml.player_boxes import BoxesUnavailable, player_boxes_gz
+from app.ml.player_boxes import BoxesUnavailable, player_boxes_part_gz
 from app.ml.strokes import for_hand
 from app.ml.video import VideoError, extract_background, extract_keyframe, probe
 from app.models import CameraPreset, Job, JobState, Match, MatchStats, MatchStatus, User
@@ -713,7 +714,9 @@ async def start_analysis(
     match.player_names = None
     match.player_hands = None
     match.stroke_labels = None
-    match.hit_labels = None
+    # The hits marked in the video stay: they are half an hour of someone's
+    # work, at times of a video that does not change. They follow the
+    # players' names when these are given again (_follow_names).
     await db.flush()
     return await _read(db, match, user)
 
@@ -763,6 +766,7 @@ async def update_match(
         match.title = payload.title
     if payload.player_names is not None:
         match.player_names = [n.strip() for n in payload.player_names]
+        _follow_names(match)
     if payload.player_hands is not None:
         match.player_hands = list(payload.player_hands)
     await db.flush()
@@ -789,6 +793,22 @@ async def label_strokes(
     return {"stroke_labels": match.stroke_labels}
 
 
+def _follow_names(match: Match) -> None:
+    """After the players were named: the marked hits moved to the numbers
+    the same names have now. Only when the names then and now are the same
+    people, each said once; otherwise the marks stay as they are."""
+    then, now = match.hit_label_names, match.player_names
+    if not match.hit_labels or not then or not now:
+        return
+    key = lambda name: (name or "").strip().casefold()          # noqa: E731
+    old, new = [key(n) for n in then], [key(n) for n in now]
+    if "" in old or len(set(old)) != len(old) or sorted(old) != sorted(new):
+        return
+    moved = {i: new.index(name) for i, name in enumerate(old)}
+    match.hit_labels = sorted([t, moved.get(int(p), int(p))] for t, p in match.hit_labels)
+    match.hit_label_names = list(now)
+
+
 @router.put("/{match_id}/hit-labels")
 async def label_hits(
     match_id: str, payload: HitLabelsUpdate,
@@ -798,6 +818,7 @@ async def label_hits(
     match = await _get_match(db, match_id, user)
     hits = sorted([round(t, 2), p] for t, p in payload.hits)
     match.hit_labels = hits or None
+    match.hit_label_names = list(match.player_names) if hits and match.player_names else None
     await db.flush()
     return {"hit_labels": match.hit_labels}
 
@@ -883,10 +904,11 @@ async def get_video(
 
 @router.get("/{match_id}/tracks")
 async def get_player_tracks(
-    match_id: str, request: Request,
+    match_id: str, request: Request, part: Literal["boxes", "skeleton"] = "boxes",
     db: AsyncSession = Depends(get_db), user: User = Depends(current_user),
 ) -> Response:
-    """Each player's box through the video, for the web player's overlay:
+    """Each player's box through the video, for the web player's overlay;
+    with part=skeleton, the body points alone, asked for only when shown:
     see app/ml/player_boxes.py."""
     match = await _get_match(db, match_id, user)
     stats = await db.scalar(select(MatchStats).where(MatchStats.match_id == match_id))
@@ -894,8 +916,8 @@ async def get_player_tracks(
     try:
         async with _BOXES_LOCK:
             data = await run_in_threadpool(
-                player_boxes_gz, artifacts_dir(match_id), per_player,
-                get_settings().max_player_speed_ms, match.calibration,
+                player_boxes_part_gz, artifacts_dir(match_id), per_player,
+                get_settings().max_player_speed_ms, match.calibration, part,
             )
     except BoxesUnavailable as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc

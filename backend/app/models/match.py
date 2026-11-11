@@ -126,6 +126,9 @@ class Match(Base):
     # The hits seen in the video, marked by a person: [[seconds, player id]],
     # the truth the hits found from the ball are measured against.
     hit_labels: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # The players' names when the hits were marked: a new analysis may
+    # number the people differently, and the marks follow the names.
+    hit_label_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
