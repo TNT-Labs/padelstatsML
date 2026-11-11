@@ -134,3 +134,56 @@ def test_the_duration_cap_counts_from_the_start(sample_video):
     frames = list(FrameSampler(sample_video, target_hz=10.0, start_s=1.0, max_duration_s=1.0))
     assert frames[0].timestamp_s == pytest.approx(1.0)
     assert max(f.timestamp_s for f in frames) < 2.05
+
+
+# ── Reading ahead on a thread of its own ────────────────────────────────────
+
+def test_frames_read_ahead_come_in_order_with_what_was_prepared():
+    from app.ml.video import ahead
+
+    out = list(ahead(iter(range(50)), prepare=lambda n: n * n, size=4))
+    assert out == [(n, n * n) for n in range(50)]
+    assert list(ahead(iter([]))) == []
+    assert list(ahead(iter("ab"))) == [("a", None), ("b", None)]
+
+
+def test_an_error_while_reading_reaches_the_consumer_where_it_happened():
+    import pytest
+
+    from app.ml.video import ahead
+
+    def broken():
+        yield 1
+        yield 2
+        raise OSError("disco staccato")
+
+    seen = []
+    with pytest.raises(OSError, match="disco staccato"):
+        for item, _ in ahead(broken()):
+            seen.append(item)
+    assert seen == [1, 2]
+
+
+def test_a_consumer_that_stops_early_stops_the_reader():
+    import threading
+    import time
+
+    from app.ml.video import ahead
+
+    produced = []
+
+    def endless():
+        n = 0
+        while True:
+            produced.append(n)
+            yield n
+            n += 1
+
+    reading = ahead(endless(), size=2)
+    assert next(reading) == (0, None)
+    reading.close()
+    time.sleep(0.5)
+    count = len(produced)
+    time.sleep(0.3)
+    assert len(produced) == count                     # nothing read after the stop
+    assert not any(t.name == "frame-reader" and t.is_alive() for t in threading.enumerate())

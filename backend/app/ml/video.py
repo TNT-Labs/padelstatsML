@@ -277,3 +277,55 @@ def _frame_time(cap, index: int, fps: float, previous: float | None) -> float:
     if previous is not None and estimate <= previous:
         estimate = previous + 1.0 / fps
     return estimate
+
+
+def ahead(frames, prepare=None, size: int = 8):
+    """`frames` read by a thread of its own, up to `size` ahead of whoever
+    consumes them: (frame, prepare(frame)) in the same order.
+
+    Decoding a frame and scaling it down are a third of the time of an
+    analysis that looks at every frame (the ball); OpenCV does both outside
+    Python's lock, so they run on another core while this one waits for
+    the accelerator. `size` bounds the memory: eight 1080p frames are 50 MB.
+
+    An error while reading is raised to the consumer at the frame where it
+    happened; a consumer that stops early stops the reader.
+    """
+    import queue
+    import threading
+
+    done = object()
+    pending: queue.Queue = queue.Queue(maxsize=max(1, size))
+    stop = threading.Event()
+
+    def put(item) -> bool:
+        while not stop.is_set():
+            try:
+                pending.put(item, timeout=0.2)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def read() -> None:
+        try:
+            for frame in frames:
+                if not put((frame, prepare(frame) if prepare is not None else None)):
+                    return
+            put(done)
+        except BaseException as exc:          # noqa: BLE001 - handed to the consumer
+            put(exc)
+
+    reader = threading.Thread(target=read, name="frame-reader", daemon=True)
+    reader.start()
+    try:
+        while True:
+            item = pending.get()
+            if item is done:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        stop.set()
+        reader.join(timeout=5.0)

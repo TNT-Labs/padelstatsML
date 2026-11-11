@@ -47,7 +47,7 @@ from app.ml.rallies import Rally, activity_threshold, detect_rallies
 from app.ml.thumbnails import choose_pictures, crop_score, thumbnail
 from app.ml.reid import ReidEmbedder
 from app.ml.tracking import CourtTracker, Observation, Tracklet
-from app.ml.video import FrameSampler, VideoInfo, probe, video_background
+from app.ml.video import FrameSampler, VideoInfo, ahead, probe, video_background
 
 logger = logging.getLogger("padel.pipeline")
 
@@ -206,6 +206,7 @@ class AnalysisPipeline:
         started = time.monotonic()
 
         writer: ArtifactWriter | None = None
+        reading = None
         try:
             if artifacts_dir is not None:
                 writer = ArtifactWriter(artifacts_dir).__enter__()
@@ -214,12 +215,16 @@ class AnalysisPipeline:
                 # con il tracks.jsonl in corso, marcato come incompleto.
                 writer.write_meta(self._meta(video_path, info, calibration, sampler))
 
-            for frame in sampler:
+            # With the ball every frame is read: a thread decodes and scales
+            # them ahead while this one runs the networks (video.ahead).
+            reading = ahead(sampler, lambda f: ball_input(f.image)) if baller is not None else (
+                (f, None) for f in sampler)
+            for frame, small in reading:
                 if baller is not None:
                     if frame.index != last_index + 1:
                         recent.clear()
                     last_index = frame.index
-                    recent.append(ball_input(frame.image))
+                    recent.append(small if small is not None else ball_input(frame.image))
                     if len(recent) == 3:
                         try:
                             ball = baller.find(list(recent), (info.width, info.height))
@@ -352,6 +357,8 @@ class AnalysisPipeline:
                     )
                 )
         finally:
+            if reading is not None:
+                reading.close()               # stops the reading thread
             if writer is not None:
                 writer.__exit__(None, None, None)
             _close(baller)
