@@ -107,6 +107,7 @@ class PipelineConfig:
     # detector, and a network of one's own (see app/ml/ball.py).
     ball: str = "off"
     hailo_ball_model: str | None = None
+    ball_threshold: float = 0.5
 
 
 @dataclass
@@ -472,7 +473,7 @@ class AnalysisPipeline:
         if model is None:
             return None, None
         try:
-            baller = HailoBallDetector(model)
+            baller = HailoBallDetector(model, self.config.ball_threshold)
         except Exception as exc:              # noqa: BLE001 - any HailoRT failure means: no ball
             logger.warning("Palla non disponibile con %s: %s", Path(model).name, exc)
             return None, f"Rete della palla {Path(model).name} non caricata ({exc}): analisi senza palla."
