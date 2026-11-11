@@ -123,6 +123,10 @@ class Settings(BaseSettings):
     # there and the detector runs on the accelerator, "off" never.
     ball: str = "auto"
     hailo_ball_model: str = ""
+    # How sure the network must be that a point is the ball (0-1). Lower
+    # finds more balls and more that are not: the flights drop the strays.
+    # train_tracknet.py prints precision and recall at several values.
+    ball_threshold: float = 0.5
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

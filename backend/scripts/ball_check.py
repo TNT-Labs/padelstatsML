@@ -44,6 +44,7 @@ def main() -> int:
     parser.add_argument("--start", type=float, default=60.0, help="secondo di partenza")
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--model")
+    parser.add_argument("--threshold", type=float, default=get_settings().ball_threshold)
     parser.add_argument("--out", default=str(Path(get_settings().data_dir) / "ball_check.mp4"))
     args = parser.parse_args()
 
@@ -57,11 +58,11 @@ def main() -> int:
         return 1
 
     try:
-        detector = HailoBallDetector(model)
+        detector = HailoBallDetector(model, args.threshold)
     except Exception as exc:              # noqa: BLE001
         print(f"La scheda non carica {Path(model).name}: {exc}")
         return 1
-    print(f"Rete:    {detector.name} · ingresso {detector.input_shape}")
+    print(f"Rete:    {detector.name} · ingresso {detector.input_shape} · soglia {args.threshold}")
 
     capture = cv2.VideoCapture(str(video))
     fps = capture.get(cv2.CAP_PROP_FPS) or 30.0

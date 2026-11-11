@@ -179,11 +179,11 @@ def weighted_bce(pred, heat):
     return -((1 - pred) ** 2 * heat * torch.log(pred) + pred ** 2 * (1 - heat) * torch.log(1 - pred)).mean()
 
 
-def locate(heat: np.ndarray) -> tuple[float, float] | None:
+def locate(heat: np.ndarray, threshold: float = THRESHOLD) -> tuple[float, float] | None:
     """Where the ball is in a heat map: the centre of its brightest blob."""
-    if heat.max() < THRESHOLD:
+    if heat.max() < threshold:
         return None
-    mask = (heat >= THRESHOLD).astype(np.uint8)
+    mask = (heat >= threshold).astype(np.uint8)
     count, labels, stats, centres = cv2.connectedComponentsWithStats(mask)
     if count < 2:
         return None
@@ -191,7 +191,7 @@ def locate(heat: np.ndarray) -> tuple[float, float] | None:
     return float(centres[best][0]), float(centres[best][1])
 
 
-def score(model, loader, device) -> dict:
+def score(model, loader, device, threshold: float = THRESHOLD) -> dict:
     """Precision and recall of the ball, TrackNet's way."""
     tp = fp = fn = tn = 0
     near, peaks = 0, []
@@ -200,7 +200,7 @@ def score(model, loader, device) -> dict:
         for frames, _, visible, xy in loader:
             heat = model(frames.to(device)).cpu().numpy()
             for h, v, p in zip(heat, visible.numpy(), xy.numpy()):
-                found = locate(h)
+                found = locate(h, threshold)
                 if v:
                     # Before it dares answer over the threshold: is its
                     # brightest point already on the ball, and how bright?
@@ -252,6 +252,8 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=32, help="canali del primo livello")
     parser.add_argument("--out", default="ball")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--compare", metavar="PT", help="un modello precedente (.pt) da misurare sugli stessi "
+                        "spezzoni di validazione: il confronto fra due addestramenti vale solo così")
     args = parser.parse_args()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -291,6 +293,21 @@ def main() -> None:
             torch.save(model.state_dict(), f"{args.out}.pt")
 
     model.load_state_dict(torch.load(f"{args.out}.pt", map_location=device))
+    if val_loader:
+        # The same network read at other thresholds: a lower one finds more
+        # balls and takes more of what is not one. In the analysis stray
+        # answers are dropped by the flights (ball_track), so recall is
+        # worth more there than here: BALL_THRESHOLD in the Pi's .env.
+        print("Soglia · precisione · richiamo · F1 (modello migliore, validazione)")
+        for threshold in (0.2, 0.3, 0.4, 0.5, 0.6):
+            r = score(model, val_loader, device, threshold)
+            print(f"  {threshold:.1f} · {r['precision']:.3f} · {r['recall']:.3f} · {r['f1']:.3f}")
+        if args.compare:
+            old = TrackNetLite(args.width).to(device)
+            old.load_state_dict(torch.load(args.compare, map_location=device))
+            r = score(old, val_loader, device)
+            print(f"Modello precedente ({args.compare}) sugli stessi spezzoni, soglia 0.5: "
+                  f"precisione {r['precision']:.3f} · richiamo {r['recall']:.3f} · F1 {r['f1']:.3f}")
     export_onnx(model.eval().cpu(), f"{args.out}.onnx")
     print(f"Salvati {args.out}.pt e {args.out}.onnx · miglior F1 in validazione {best}")
 

@@ -57,10 +57,11 @@ class HailoBallDetector:
     """The ball network on the AI HAT+, on the device the players' networks
     share (detect_hailo.shared_device)."""
 
-    def __init__(self, model_path: str) -> None:
+    def __init__(self, model_path: str, threshold: float = THRESHOLD) -> None:
         from app.ml.detect_hailo import TIMEOUT_MS, _output_names, shared_device
 
         self.model_path = model_path
+        self.threshold = float(threshold)
         self._timeout = TIMEOUT_MS
         self._stack = contextlib.ExitStack()
         try:
@@ -99,7 +100,7 @@ class HailoBallDetector:
     def find(self, frames: list[np.ndarray], frame_size: tuple[int, int]) -> tuple[float, float, float] | None:
         """The ball in the last of three small frames, in video pixels
         (frame_size = width, height of the video): (x, y, peak) or None."""
-        found = locate(self.heat(stack(frames)))
+        found = locate(self.heat(stack(frames)), self.threshold)
         if found is None:
             return None
         width, height = frame_size
