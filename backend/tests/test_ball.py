@@ -103,6 +103,14 @@ def test_the_weaker_peaks_are_the_other_local_maxima_brightest_first():
     assert weak_peaks(np.zeros((HEIGHT, WIDTH), np.float32), None) == []
 
 
+def _full():
+    from app.ml.ball_track import Recovery
+    return Recovery(min_peak=0.15, gaps=True, ends=True, tolerance=1.0)
+
+
+FULL = _full()
+
+
 def _weak(records):
     out = {}
     for frame, t, x, y, p in records:
@@ -127,7 +135,7 @@ def test_a_flight_is_followed_past_its_ends_onto_weak_peaks_where_it_was_heading
     strong = _flight(10, 10, 400, 500, 10, -6)
     weak = (_flight(2, 8, 320, 548, 10, -6) + _flight(20, 30, 500, 440, 10, -6)
             + [(f, f / 30, 1500, 200 + 3 * f, 0.2) for f in range(0, 50)])
-    out = flights(strong, 1080, _weak(weak))
+    out = flights(strong, 1080, _weak(weak), FULL)
     assert len(out) == 1
     frames = out[0].frames
     assert frames[0] == 2                                  # back to where the weak track starts
@@ -145,7 +153,7 @@ def test_a_gap_is_filled_from_the_line_between_its_ends():
     weak = _weak([(8, 8 / 30, 380, 516, 0.2),          # on the line: the ball
                   (9, 9 / 30, 390, 600, 0.3),          # 80 px off: not it
                   (10, 10 / 30, 401, 520, 0.2)])
-    out = flights(found, 1080, weak)
+    out = flights(found, 1080, weak, FULL)
     assert 8 in out[0].frames and 10 in out[0].frames and 9 not in out[0].frames
 
 
@@ -158,7 +166,7 @@ def test_an_answer_the_chaining_left_out_is_taken_when_on_course():
     found = sorted([(0, 0.0, 300, 488, 0.6), (1, 1 / 30, 310, 502, 0.6), (2, 2 / 30, 320, 478, 0.6)]
                    + _flight(6, 10, 360, 500, 10, 2))
     assert [f.frames[0] for f in flights(found, 1080)] == [6]
-    out = flights(found, 1080, {})
+    out = flights(found, 1080, {}, FULL)
     assert [f.frames[:4] for f in out] == [[0, 1, 2, 6]]
 
 
@@ -188,3 +196,29 @@ def test_the_detector_gives_the_ball_and_the_weaker_peaks_in_video_pixels():
     heat[:] = 0
     heat[250, 400] = 0.3
     assert detector.find_all(frames, (1920, 1080)) == (None, [(1500.0, 937.5, 0.3)])
+
+
+def test_the_recovery_is_off_until_a_setting_is_measured():
+    from app.ml.ball_track import RECOVERY, flights
+
+    assert not RECOVERY.gaps and not RECOVERY.ends
+    found = _flight(10, 10, 400, 500, 10, -6)
+    weak = _weak(_flight(2, 8, 320, 548, 10, -6))
+    assert flights(found, 1080, weak)[0].frames == flights(found, 1080)[0].frames
+
+
+def test_each_part_of_the_recovery_is_chosen_apart():
+    from app.ml.ball_track import Recovery, flights
+
+    ball = _flight(0, 20, 300, 500, 10, 2)
+    found = [r for r in ball if r[0] not in (8, 10)]
+    weak = _weak([(8, 8 / 30, 380, 516, 0.25), (10, 10 / 30, 400, 520, 0.18),
+                  (20, 20 / 30, 500, 540, 0.4), (21, 21 / 30, 510, 542, 0.4)])
+    def frames(how):
+        return set(flights(found, 1080, weak, how)[0].frames)
+    gaps = frames(Recovery(gaps=True, ends=False))
+    assert {8, 10} <= gaps and 20 not in gaps
+    ends = frames(Recovery(gaps=False, ends=True))
+    assert {20, 21} <= ends and 8 not in ends
+    assert 10 not in frames(Recovery(min_peak=0.2, gaps=True, ends=False))   # 0.18: too weak
+    assert 8 in frames(Recovery(min_peak=0.2, gaps=True, ends=False))

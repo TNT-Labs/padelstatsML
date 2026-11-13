@@ -68,8 +68,11 @@ annotati, con la rete che hai già, carica anche `peaks_check.py`, `ball.py` e `
 
 Stampa tre cose sugli spezzoni di validazione: la misura di sempre fotogramma per fotogramma; quante
 volte la palla non presa è fra i picchi deboli e quanti picchi deboli ha in media un fotogramma; e
-precisione e richiamo delle traiettorie (quelle che usano le statistiche) senza e con i picchi deboli.
-La terza riga è quella che conta. Senza `--holdout` gli spezzoni di validazione sono delle stesse
+precisione e richiamo delle traiettorie (quelle che usano le statistiche) senza picchi deboli e con
+ciascuna regolazione del recupero (solo nei buchi, solo oltre i capi, entrambi; soglia; tolleranza),
+con i punti aggiunti divisi in giusti, nel posto sbagliato e messi dove la palla era coperta. Il
+recupero si accende (`RECOVERY` in `ball_track.py`) solo con una regolazione che aggiunge richiamo
+senza togliere precisione. Senza `--holdout` gli spezzoni di validazione sono delle stesse
 partite dell'addestramento (misura ottimista); con `--holdout palla_X.zip` vale solo per un `ball.pt`
 addestrato anch'esso con `--holdout palla_X.zip`.
 

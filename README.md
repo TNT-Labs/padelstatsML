@@ -183,10 +183,12 @@ spegnerla): tre fotogrammi consecutivi in, la posizione della palla out,
 `ball_track.py` le unisce in traiettorie: scarta i punti isolati, i salti e
 le cose ferme come luci o palle a terra. Accanto alla palla l'analisi tiene i
 picchi più deboli della mappa (`ball_weak.jsonl`): da soli sono quasi tutti
-rumore, ma uno dove una traiettoria stava andando è la palla, e la traiettoria
-prosegue (fino a mezzo secondo per lato, e nei buchi). Serve soprattutto alla
-palla lontana, due pixel, spesso il secondo punto più acceso. Vale per le
-partite analizzate da questa versione; le altre restano come prima. Sul video della partita
+rumore, ma uno dove una traiettoria stava andando può essere la palla. Il
+recupero lungo la traiettoria è **spento** finché una regolazione non si
+dimostra utile sui fotogrammi annotati (`training/ball/peaks_check.py`): la
+prima provata aggiungeva più punti sbagliati che giusti. I picchi si salvano
+comunque, così la regolazione scelta arriverà alle partite già analizzate con
+Aggiorna statistiche. Sul video della partita
 l'interruttore **Palla** mostra la palla e la sua scia.
 
 La rete di prova (26 spezzoni annotati) trova 3 palle visibili su 4 entro
@@ -412,7 +414,7 @@ misurare sul Pi; `BALL=off` torna ai tempi senza palla.
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 437 backend + 61 frontend
+make test         # 439 backend + 61 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health
