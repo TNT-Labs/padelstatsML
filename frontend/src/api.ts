@@ -235,7 +235,11 @@ export interface DataQuality {
      *  person, on rallies the models never saw (shares 0-1). */
     /** Stretches of movement left out as rallies: the ball was not hit twice. */
     rallies_dropped?: number
-    hits_measured?: { marked: number; found: number; real: number; half: number; player: number }
+    hits_measured?: {
+      marked: number; found: number; real: number; half: number; player: number
+      /** Measured on matches left out of training whole, and how many. */
+      unseen_match?: boolean; matches?: number
+    }
   } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */

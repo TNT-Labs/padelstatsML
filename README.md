@@ -45,7 +45,7 @@ Nulla viene stimato di nascosto.
 | Palla *(con Hailo)* | rete addestrata sui fotogrammi annotati nell'app, su ogni fotogramma; visibile sul video della partita |
 | Scambi dalla battuta all'ultimo colpo *(con Hailo)* | i colpi correggono gli scambi trovati dal movimento: prima finivano in media 8 s dopo l'ultimo colpo (i giocatori si muovono ancora), ora sull'ultimo colpo; uno scambio dove la palla resta ferma a lungo si divide, due pezzi con colpi continui si uniscono |
 | Da dove colpisce ogni giocatore *(con Hailo)* | per ogni colpo la posizione di chi lo fa: colpi da rete, metà campo e fondo, mappa dei punti, chi chiude lo scambio (ultimo colpo) |
-| Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); su scambi esclusi dall'addestramento: trovati 77%, giusti 91%, giocatore giusto 92% |
+| Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); misurati su 180 colpi di due partite, ciascuna con modelli che non l'avevano vista: trovati 76%, giusti 74%, giocatore giusto 85% |
 
 ### Non misurato — e perché
 
