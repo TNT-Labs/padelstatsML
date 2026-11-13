@@ -473,9 +473,10 @@ export const StatsView: FC<Props> = ({
             <>
               Dallo scheletro dei giocatori, con la mano della racchetta. <strong>Smash e bandeja</strong>:
               entro 6,5 m dalla rete, la racchetta e il braccio libero entrambi alzati, come per puntare
-              la palla; verificati colpo per colpo su una partita, giusti 29 su 30 e trovati 29 su 34.
-              <strong> Lob</strong>: la racchetta alta più indietro, quasi fermi; giusti 7 su 8, ma su
-              pochi casi, per questo non è contato nelle schede. Con «Verifica» indichi cosa è ciascuno
+              la palla. Verificati colpo per colpo su due set: giusti 54 dei 60 indicati (29 su 30 nel
+              primo, 25 su 30 nel secondo: fra gli sbagliati una volée, due lob e due gesti che non
+              erano colpi). I lob non sono più indicati: nel secondo set ne era giusto 1 su 7, gli altri
+              erano colpi da fondo con la racchetta che finisce alta. Con «Verifica» indichi cosa è ciascuno
               nel video: la precisione si misura qui sotto e le verifiche servono a migliorarlo.
             </>
           }

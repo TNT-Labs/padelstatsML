@@ -59,7 +59,13 @@ def test_the_racket_up_with_the_free_arm_down_is_not_a_smash():
     assert _strokes(6.0, {4.0: _pose(up="R")}) == []
 
 
-def test_further_back_and_nearly_still_it_is_a_lob():
+def test_the_racket_up_further_back_is_no_longer_called_a_lob(monkeypatch):
+    """On a second set checked, 1 of the 7 so called was a lob."""
+    from app.ml import strokes
+
+    assert _strokes(1.0, {8.0: _pose(up="R")}) == []
+    # The rule is kept behind a switch, for when it can be told apart.
+    monkeypatch.setattr(strokes, "SHOW_LOBS", True)
     assert _strokes(1.0, {8.0: _pose(up="R")}) == [{"t": 8.0, "kind": "lob"}]
     # Running back there: a stroke on the run, or nothing; not counted.
     assert _strokes(1.0, {8.0: _pose(up="R")}, speed=3.0) == []
