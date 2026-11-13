@@ -266,6 +266,12 @@ def test_the_two_looks_are_one_answer_a_frame():
     assert merge_far(found, far, crop, FarMerge(prefer="full"))[0] == found[0]
     # The rule in use (measured best): inside the crop, only what the closer
     # look saw — the whole frame's answers there alone are left out.
+    # (frame 3 inside it, unconfirmed: out; frame 5 after the closer look's
+    # last answer: kept).
     strict = merge_far(found, far, crop)
-    assert [r[0] for r in strict] == [1, 2, 4] and strict[0] == far[0]
+    assert [r[0] for r in strict] == [1, 2, 4, 5] and strict[0] == far[0]
     assert merge_far(found, [], crop) == found
+    # Before or after the closer look ran (a run cut short), the whole
+    # frame's answers inside the crop stand.
+    late = found + [(9, 0.9, 150, 150, 0.6)]
+    assert merge_far(late, far, crop)[-1] == late[-1]

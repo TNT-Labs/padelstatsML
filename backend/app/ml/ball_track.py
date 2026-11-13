@@ -329,13 +329,17 @@ def merge_far(found, far, crop, how: FarMerge = FAR_MERGE) -> list[tuple[int, fl
 
     full = {r[0]: r for r in found}
     closer = {r[0]: r for r in far}
+    if not closer:
+        return list(found)
+    # Only where the closer look was running can its silence count.
+    first, last = min(closer), max(closer)
     out = []
     for frame in sorted(full.keys() | closer.keys()):
         a, b = full.get(frame), closer.get(frame)
         if a is None:
             out.append(b)
         elif b is None:
-            if not (how.drop_unconfirmed and inside(a)):
+            if not (how.drop_unconfirmed and inside(a) and first <= frame <= last):
                 out.append(a)
         elif not inside(a):
             out.append(a)
