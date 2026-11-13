@@ -314,8 +314,9 @@ export const StatsView: FC<Props> = ({
               <p style={{ margin: 0 }}>
                 Ogni colpo trovato dalla palla, con il punto del campo in cui si trovava chi l'ha
                 colpito: entro 3 m dalla rete, fra 3 e 6 m, oltre 6 m, come per la posizione in
-                campo. Circa un colpo su quattro sfugge (soprattutto con la palla coperta), quindi i
-                conteggi sono un po' bassi; le quote fra le zone sono più affidabili.
+                campo. Circa un colpo su quattro sfugge (soprattutto con la palla coperta) e circa
+                uno su quattro di quelli indicati non è un colpo: le quote fra le zone sono più
+                affidabili dei conteggi.
               </p>
             </InfoHeading>
             <ZoneChart perPlayer={stats.per_player} playerNames={names} shares={hitShares} />
@@ -522,9 +523,13 @@ export const StatsView: FC<Props> = ({
                     colpita. Nel video, con Palla attivo, ogni colpo compare accanto a chi colpisce
                     (quelli della coppia lontana fino a mezzo secondo dopo).
                     {hitsMeasured &&
-                      ` Misurato su ${hitsMeasured.marked} colpi segnati, in scambi esclusi dall'addestramento: ` +
-                        `trovati ${pct(hitsMeasured.found)}, giusti ${pct(hitsMeasured.real)} di quelli indicati, ` +
-                        `giocatore giusto ${pct(hitsMeasured.player)}. I conteggi sono quindi un po' bassi.`}
+                      ` Misurato su ${hitsMeasured.marked} colpi segnati, ` +
+                        (hitsMeasured.unseen_match
+                          ? 'ogni partita con un modello che non l\'aveva mai vista: '
+                          : 'in scambi esclusi dall\'addestramento: ') +
+                        `trovati ${pct(hitsMeasured.found)} dei colpi veri, giusti ${pct(hitsMeasured.real)} di quelli ` +
+                        `indicati, giocatore giusto ${pct(hitsMeasured.player)}. Colpi persi e colpi in più quasi ` +
+                        'si compensano nei totali, ma il singolo colpo va preso come indicazione.'}
                   </dd>
                 </>
               )}

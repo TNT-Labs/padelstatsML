@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Train the hit models on hits marked in the app ("Segna i colpi").
 
-    python training/hits/train_hits.py RUN LABELS [--out backend/app/ml/hit_model.json]
+    python training/hits/train_hits.py RUN LABELS [RUN LABELS ...] [--out backend/app/ml/hit_model.json]
 
 RUN: the run's folder (meta.json, tracks.jsonl, ball.jsonl) or a .tgz of it,
 as made on the Pi with
@@ -10,8 +10,10 @@ LABELS: the text "Copia i colpi segnati" gives (minute:seconds, name, player id)
 
 Marked hits close together (under GROUP_GAP_S) make a group, about one
 rally; each group is left out in turn, the models trained on the others
-and measured on it: the numbers printed, and stored in the model, are on
-rallies the models never saw. Then the models are trained on every group
+and measured on it. With more than one match, each match is also left out
+whole: the models trained on the others, measured on a match they never
+saw — lower, and what a new match should expect; that is the measure
+stored in the model and shown in the app. Then the models are trained on every group
 and written for app/ml/ball_hits.py.
 
 Needs scikit-learn (pip install scikit-learn) on the computer that trains;
@@ -131,28 +133,43 @@ class Data:
         return rows
 
 
-def fit(data: Data, train: np.ndarray, partner_rows):
+def fit(datas: list[Data], keep) -> tuple:
+    """The three models on the groups `keep(data index, group)` lets in."""
     from sklearn.linear_model import LogisticRegression
 
-    hit = gb(150, 3, subsample=0.8).fit(data.F[train], data.y[train])
-    pos = train & (data.y == 1)
-    far = gb(100, 2).fit(data.F[pos], data.far[pos])
-    Xp = np.array([r[0] for r in partner_rows]); yp = np.array([r[1] for r in partner_rows])
-    partner = LogisticRegression(max_iter=2000).fit(Xp, yp)
-    return hit, far, partner
+    F, y, far, Xp, yp = [], [], [], [], []
+    for d, data in enumerate(datas):
+        mask = np.array([keep(d, int(g)) for g in data.g], dtype=bool)
+        F.append(data.F[mask]); y.append(data.y[mask]); far.append(data.far[mask])
+        for features, first, k in data.partner_rows(data.labels):
+            if keep(d, k):
+                Xp.append(features); yp.append(first)
+    F, y, far = np.concatenate(F), np.concatenate(y), np.concatenate(far)
+    hit = gb(150, 3, subsample=0.8).fit(F, y)
+    side = gb(100, 2).fit(F[y == 1], far[y == 1])
+    partner = LogisticRegression(max_iter=2000).fit(np.array(Xp), np.array(yp))
+    return hit, side, partner, F, y
 
 
-def evaluate(data: Data) -> dict:
-    rows = data.partner_rows(data.labels)
-    found = shown = right_half = right_player = 0
-    for k, (a, b) in enumerate(data.spans):
-        train = data.g != k
-        hit, far, partner = fit(data, train, [r for r in rows if r[2] != k])
-        model = bh.HitModel(bh.Trees(export_trees(hit, data.F[train])), bh.Trees(export_trees(far, data.F[train])),
-                            bh.Linear({"coef": partner.coef_[0].tolist(), "intercept": float(partner.intercept_[0])}), {})
+def as_model(hit, side, partner, F, y, measured=None) -> dict:
+    return {"version": 1, "features": bh.N_FEATURES, "measured": measured or {},
+            "hit": export_trees(hit, F), "far": export_trees(side, F[y == 1]),
+            "partner": {"coef": partner.coef_[0].tolist(), "intercept": float(partner.intercept_[0])}}
+
+
+def loaded(model: dict) -> bh.HitModel:
+    return bh.HitModel(bh.Trees(model["hit"]), bh.Trees(model["far"]), bh.Linear(model["partner"]), {})
+
+
+def measure(data: Data, model: bh.HitModel, groups) -> list[int]:
+    """[marked, found, shown, right half, right player] on `groups` of `data`."""
+    marked_n = found = shown = right_half = right_player = 0
+    for k in groups:
+        a, b = data.spans[k]
         hits = bh.find_hits(data.T, data.X, data.Y, data.players, [{"start_s": a + bh.RALLY_LEAD_S, "end_s": b}],
                             data.vp, data.height, model)
         marked = [(t, p) for t, p in data.labels if a <= t <= b]
+        marked_n += len(marked)
         used: set[int] = set()
         shown += len(hits)
         for h in hits:
@@ -166,39 +183,68 @@ def evaluate(data: Data) -> dict:
             if pid in data.by_id and data.by_id[pid].far(marked[j][0]) == h.far:
                 right_half += 1
                 right_player += h.player == pid
-    n = len(data.labels)
-    return {"marked": n, "found": round(found / n, 3), "real": round(found / max(shown, 1), 3),
-            "half": round(right_half / max(found, 1), 3), "player": round(right_player / max(found, 1), 3)}
+    return [marked_n, found, shown, right_half, right_player]
+
+
+def shares(c: list[int]) -> dict:
+    n, found, shown, half, player = c
+    return {"marked": n, "found": round(found / max(n, 1), 3), "real": round(found / max(shown, 1), 3),
+            "half": round(half / max(found, 1), 3), "player": round(player / max(found, 1), 3)}
+
+
+def say(what: str, m: dict) -> None:
+    print(f"{what}: colpi {m['marked']} · trovati {m['found']:.0%} · giusti {m['real']:.0%} · "
+          f"metà campo {m['half']:.0%} · giocatore {m['player']:.0%}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("run")
-    parser.add_argument("labels")
+    parser.add_argument("pairs", nargs="+", metavar="RUN LABELS",
+                        help="una o più coppie: analisi (cartella o .tgz) e colpi segnati di quella partita")
     parser.add_argument("--out", default=str(ROOT / "backend" / "app" / "ml" / "hit_model.json"))
     args = parser.parse_args()
+    if len(args.pairs) % 2:
+        raise SystemExit("Servono coppie: analisi e colpi segnati, per ogni partita.")
 
-    run = Path(args.run)
     with tempfile.TemporaryDirectory() as tmp:
-        if run.is_file():
-            with tarfile.open(run) as archive:
-                archive.extractall(tmp, filter="data")
-            run = Path(tmp)
-        data = Data(run, read_labels(args.labels))
-        print(f"Colpi segnati {len(data.labels)} in {len(data.spans)} gruppi · punti della palla {len(data.idx)}")
-        measured = evaluate(data)
-        print(f"Su scambi esclusi dall'addestramento: colpi trovati {measured['found']:.0%}, "
-              f"giusti {measured['real']:.0%}, metà campo {measured['half']:.0%}, giocatore {measured['player']:.0%}")
-        everything = np.ones(len(data.idx), bool)
-        hit, far, partner = fit(data, everything, data.partner_rows(data.labels))
-        out = {
-            "version": 1,
-            "features": bh.N_FEATURES,
-            "measured": measured,
-            "hit": export_trees(hit, data.F),
-            "far": export_trees(far, data.F[data.y == 1]),
-            "partner": {"coef": partner.coef_[0].tolist(), "intercept": float(partner.intercept_[0])},
-        }
+        datas, names = [], []
+        for n in range(0, len(args.pairs), 2):
+            run = Path(args.pairs[n])
+            if run.is_file():
+                folder = Path(tmp) / str(n)
+                folder.mkdir()
+                with tarfile.open(run) as archive:
+                    archive.extractall(folder, filter="data")
+                run = folder
+            data = Data(run, read_labels(args.pairs[n + 1]))
+            datas.append(data)
+            names.append(Path(args.pairs[n]).name)
+            print(f"{names[-1]}: colpi segnati {len(data.labels)} in {len(data.spans)} gruppi")
+
+        # A match the models never saw: trained on the others, measured on it.
+        unseen = [0] * 5
+        if len(datas) > 1:
+            for d, data in enumerate(datas):
+                model = loaded(as_model(*fit(datas, lambda i, k, d=d: i != d)))
+                counts = measure(data, model, range(len(data.spans)))
+                unseen = [a + b for a, b in zip(unseen, counts)]
+                say(f"Mai vista in addestramento · {names[d]}", shares(counts))
+            say("Mai viste, insieme", shares(unseen))
+
+        # Every group left out in turn, of all the matches together.
+        total = [0] * 5
+        for d, data in enumerate(datas):
+            for k in range(len(data.spans)):
+                model = loaded(as_model(*fit(datas, lambda i, g, d=d, k=k: (i, g) != (d, k))))
+                total = [a + b for a, b in zip(total, measure(data, model, [k]))]
+        measured = shares(total)
+        say("Gruppi esclusi a turno, tutte le partite", measured)
+        if len(datas) > 1:
+            # What the app shows: how the models do on a match they never
+            # saw, the lower and the truer of the two measures.
+            measured = {**shares(unseen), "matches": len(datas), "unseen_match": True}
+
+        out = as_model(*fit(datas, lambda i, k: True), measured=measured)
     Path(args.out).write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
     print(f"Scritto {args.out}")
 
