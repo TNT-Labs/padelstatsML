@@ -298,3 +298,44 @@ async def test_the_marked_hits_follow_the_names_through_a_new_numbering(analysed
     # Other people: nothing is guessed.
     await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["X", "Y", "Z", "W"]})
     assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["hit_labels"] == [[10.0, 1], [11.0, 0], [12.0, 2]]
+
+
+async def test_the_points_seen_in_the_video_are_marked(analysed_match):
+    from conftest import signed_in
+
+    owner, match_id = analysed_match
+    url = f"/api/matches/{match_id}/point-labels"
+    response = await owner.put(url, json={"points": [[30.0, 41.5, [3, 1]], [10.004, 20.0, None]]})
+    assert response.status_code == 200, response.text
+    # In time order, rounded to the hundredth, the winners sorted.
+    assert response.json()["point_labels"] == [[10.0, 20.0, None], [30.0, 41.5, [1, 3]]]
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["point_labels"] == [[10.0, 20.0, None], [30.0, 41.5, [1, 3]]]
+    # Ending before it starts, overlapping, one player twice, a fifth player.
+    for bad in ([[20.0, 10.0, None]], [[10.0, 20.0, None], [19.0, 25.0, None]],
+                [[10.0, 20.0, [1, 1]]], [[10.0, 20.0, [0, 4]]], [[10.0, 20.0, [0]]]):
+        assert (await owner.put(url, json={"points": bad})).status_code == 422, bad
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["point_labels"] == stats["point_labels"]
+    assert (await owner.put(url, json={"points": []})).json()["point_labels"] is None
+    viewer = await signed_in("points-viewer", "visualizzatore")
+    async with viewer:
+        assert (await viewer.put(url, json={"points": [[1.0, 2.0, None]]})).status_code == 403
+
+
+async def test_the_marked_points_follow_the_names_through_a_new_numbering(analysed_match):
+    from app.core.database import sync_session
+    from app.models import Match
+
+    owner, match_id = analysed_match                     # named A, B, C, D
+    await owner.put(f"/api/matches/{match_id}/point-labels",
+                    json={"points": [[10.0, 20.0, [0, 2]], [30.0, 40.0, None]]})
+    await owner.put(f"/api/matches/{match_id}/hit-labels", json={"hits": [[11.0, 2]]})
+    with sync_session() as session:
+        session.get(Match, match_id).player_names = None
+    response = await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["c", "A ", "D", "B"]})
+    assert response.status_code == 200, response.text
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["point_labels"] == [[10.0, 20.0, [0, 1]], [30.0, 40.0, None]]
+    assert stats["hit_labels"] == [[11.0, 0]]
+    await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["X", "Y", "Z", "W"]})
+    assert (await owner.get(f"/api/matches/{match_id}/stats")).json()["point_labels"] == stats["point_labels"]

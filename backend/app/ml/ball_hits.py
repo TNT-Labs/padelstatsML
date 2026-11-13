@@ -349,12 +349,13 @@ class BallInput:
     model: HitModel
 
 
-def ball_input(directory, calibration, identity, height: int) -> BallInput | None:
+def ball_input(directory, calibration, identity, height: int, model: HitModel | None = None) -> BallInput | None:
     """What the hits are read from, when the run followed the ball and a
-    hit model is there; None otherwise."""
+    hit model is there; None otherwise. `model`: other models than the
+    stored ones (to measure models trained without this match)."""
     from app.ml.artifacts import read_ball
 
-    model = load_model()
+    model = model or load_model()
     if model is None or directory is None or not height:
         return None
     found = read_ball(directory)

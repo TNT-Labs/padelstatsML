@@ -15,6 +15,11 @@ frames before it; frames not marked only serve as those. Clips go whole to
 training or to validation (VAL_SHARE), never split, or the score would be
 measured on frames the model has nearly seen.
 
+With --holdout the validation is a whole match instead (a zip is a match):
+training on the others, measured on one it never saw. The random split puts
+clips of the same match on both sides — neighbours of the validation clips
+are in training — and scores higher than a new match will.
+
 Out: <out>.pt (the weights) and <out>.onnx (for the Hailo compiler: frames
 scaled 0-1, the chip scales them, see ball.alls), plus
 the validation score: precision and recall of the ball within 4 px at 512.
@@ -264,6 +269,29 @@ def evaluate(models: list[str], val_clips: dict, images, args) -> None:
                   f"richiamo {r['recall']:.3f} · F1 {r['f1']:.3f} · vicino {r['vicino']:.3f}")
 
 
+def split(keys: list, holdout: str | None, rng: random.Random) -> tuple[list, list]:
+    """(training clips, validation clips) of the clip keys (zip, clip).
+
+    holdout None: VAL_SHARE of the clips at random, from every match.
+    holdout a zip's name (or a part of it naming one zip): all of that
+    match's clips to validation, the other matches' to training."""
+    keys = sorted(keys)
+    if holdout:
+        zips = sorted({k[0] for k in keys})
+        chosen = [z for z in zips if Path(z).name == holdout] or [z for z in zips if holdout in Path(z).name]
+        if len(chosen) != 1:
+            raise SystemExit(f"--holdout {holdout}: " + (
+                "nessuno zip con questo nome." if not chosen else f"più zip corrispondono: {', '.join(chosen)}."))
+        val = [k for k in keys if k[0] == chosen[0]]
+        train = [k for k in keys if k[0] != chosen[0]]
+        if not train:
+            raise SystemExit("--holdout vuole almeno due zip: uno per la validazione, gli altri per l'addestramento.")
+        return train, val
+    rng.shuffle(keys)
+    n_val = max(1, int(round(len(keys) * VAL_SHARE))) if len(keys) > 1 else 0
+    return keys[n_val:], keys[:n_val]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("zips", nargs="+")
@@ -273,6 +301,9 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=32, help="canali del primo livello")
     parser.add_argument("--out", default="ball")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--holdout", metavar="ZIP",
+                        help="valida su tutti gli spezzoni di questo zip (una partita) e addestra sugli altri: "
+                             "la misura che vale per una partita nuova")
     parser.add_argument("--compare", metavar="PT", help="un modello precedente (.pt) da misurare sugli stessi "
                         "spezzoni di validazione: il confronto fra due addestramenti vale solo così")
     parser.add_argument("--evaluate", metavar="PT", nargs="+",
@@ -284,14 +315,14 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     samples, images = load(args.zips)
-    keys = sorted(samples)
-    random.shuffle(keys)
-    n_val = max(1, int(round(len(keys) * VAL_SHARE))) if len(keys) > 1 else 0
-    val = [s for k in keys[:n_val] for s in samples[k]]
-    train = [s for k in keys[n_val:] for s in samples[k]]
-    print(f"Spezzoni {len(keys)} · campioni addestramento {len(train)} · validazione {len(val)}")
+    train_keys, val_keys = split(list(samples), args.holdout, random)
+    val = [s for k in val_keys for s in samples[k]]
+    train = [s for k in train_keys for s in samples[k]]
+    print(f"Spezzoni {len(samples)} · campioni addestramento {len(train)} · validazione {len(val)}"
+          + (f" (tutta la partita {args.holdout}, mai vista in addestramento)" if args.holdout else
+             " (spezzoni a caso delle stesse partite: misura ottimista)"))
     if args.evaluate:
-        evaluate(args.evaluate, {k: samples[k] for k in keys[:n_val]}, images, args)
+        evaluate(args.evaluate, {k: samples[k] for k in val_keys}, images, args)
         return
     if not train:
         raise SystemExit("Nessun fotogramma annotato con i due precedenti: annota spezzoni interi.")

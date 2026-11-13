@@ -335,6 +335,8 @@ export interface MatchStats {
   stroke_labels?: Record<string, StrokeLabel> | null
   /** Hits marked by a person watching the video: [seconds, player id]. */
   hit_labels?: [number, number][] | null
+  /** Points marked by a person watching the video: [serve s, end s, winning pair or null]. */
+  point_labels?: [number, number, [number, number] | null][] | null
   per_player: Record<string, PlayerStats>
   heatmaps: Record<string, [number, number, number][]>
   rallies: Rally[]
@@ -482,6 +484,13 @@ export const api = {
     req<{ hit_labels: [number, number][] | null }>(`/api/matches/${id}/hit-labels`, {
       method: 'PUT',
       body: JSON.stringify({ hits }),
+    }),
+
+  /** All the points marked watching the video: [serve s, end s, winning pair or null]. */
+  labelPoints: (id: string, points: [number, number, [number, number] | null][]) =>
+    req<{ point_labels: [number, number, [number, number] | null][] | null }>(`/api/matches/${id}/point-labels`, {
+      method: 'PUT',
+      body: JSON.stringify({ points }),
     }),
 
   /** Statistics recomputed from the stored detections, in seconds. */

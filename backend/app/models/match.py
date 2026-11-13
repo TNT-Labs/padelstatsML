@@ -129,6 +129,12 @@ class Match(Base):
     # The players' names when the hits were marked: a new analysis may
     # number the people differently, and the marks follow the names.
     hit_label_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # The points seen in the video, marked by a person: [[start s, end s,
+    # winners]], winners the two player ids of the pair that won it or None:
+    # the truth the rallies are measured against (app.ml.point_eval).
+    point_labels: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # The players' names when the points were marked, as for the hits.
+    point_label_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -226,6 +226,10 @@ python scripts/diagnose_identity.py latest
 # Rifà le foto dei giocatori dal video, senza rianalizzare la partita
 python scripts/rethumb.py latest
 
+# Gli scambi contro i punti segnati in app (Segna i punti): persi, uniti,
+# spezzati, scambi falsi, scarto di inizio e fine
+python scripts/eval_points.py latest
+
 # Con l'AI HAT+: la scheda, la sua rete e una prova su un fotogramma
 python scripts/hailo_check.py [video]
 # La rete della palla su 20 s di partita, con video di controllo
@@ -247,6 +251,13 @@ Cosa guardare nell'overlay, in ordine:
    che salta fra due persone è un errore di identità — sulla mini-mappa è
    evidente.
 3. I segmenti verdi sulla timeline coincidono con i punti reali?
+
+Per misurarlo invece di guardarlo: **Segna i punti** (statistiche, sotto il video).
+B sul fotogramma della battuta, F quando il punto è deciso, 1 o 2 per la coppia che
+l'ha vinto. Segnati tutti i punti di un tratto della partita, `scripts/eval_points.py`
+conta i punti persi, spezzati, uniti ad altri, gli scambi che non sono punti e lo
+scarto di inizio e fine; con le analisi copiate dal Pi e i colpi segnati
+(`--hits`) misura anche con modelli dei colpi che non hanno visto la partita.
 
 ### 4. Qualità del dato, sempre visibile
 
@@ -396,7 +407,7 @@ misurare sul Pi; `BALL=off` torna ai tempi senza palla.
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 398 backend + 52 frontend
+make test         # 430 backend + 61 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health

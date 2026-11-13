@@ -42,3 +42,22 @@ sono in `training/hits/labels/`).
 La prima versione, su una sola partita, dava 91% di colpi giusti sugli scambi esclusi: su
 una partita nuova erano il 73%. Colpi di altre partite, con altra luce e altre posizioni
 della camera, sono il modo di avvicinare le due righe.
+
+## Dove si perdono i colpi
+
+```
+python training/hits/diagnose_hits.py palla_run.tgz training/hits/labels/terzo_set.txt \
+                                      secondo_run.tgz training/hits/labels/secondo_set.txt
+```
+
+Ogni partita letta con modelli addestrati sulle altre: per ogni colpo segnato e non trovato la
+causa (palla non vista, palla vista da un lato solo, giocatore senza riquadro, modello, decodifica),
+per metà vicina e lontana; dei trovati quanti hanno metà campo o giocatore sbagliati; dei colpi
+indicati non veri quanti sono vicini a un colpo vero (doppioni) o a uno perso (colpo giusto al tempo
+sbagliato); quanta palla si vede nel mezzo secondo prima e dopo i colpi.
+
+Sui due set del 22/10 (13/11/2026): dei 43 colpi persi su 180, 21 per la palla (17 vista da un lato
+solo, 15 di questi della coppia lontana), 19 per modello e decodifica, 3 per il giocatore senza
+riquadro. Nel mezzo secondo prima di un colpo la palla si vede nel 70-81% dei fotogrammi per la coppia
+vicina, nel 42-59% per quella lontana.
+

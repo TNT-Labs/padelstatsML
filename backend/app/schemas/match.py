@@ -37,6 +37,17 @@ class HitLabelsUpdate(BaseModel):
         max_length=5000)
 
 
+Seconds = Annotated[float, Field(ge=0, le=86400)]
+PlayerId = Annotated[int, Field(ge=0, le=3)]
+
+
+class PointLabelsUpdate(BaseModel):
+    """All the points marked on a match: [start s, end s, winners] each,
+    winners the two player ids of the pair that won the point, or None."""
+    points: list[tuple[Seconds, Seconds, Annotated[list[PlayerId], Field(min_length=2, max_length=2)] | None]] = Field(
+        max_length=2000)
+
+
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     player_names: list[PlayerName] | None = Field(default=None, max_length=4)
@@ -275,6 +286,7 @@ class MatchStatsRead(BaseModel):
     player_hands: list[PlayerHand] | None = None
     stroke_labels: dict[str, str] | None = None
     hit_labels: list[list[float]] | None = None
+    point_labels: list[list] | None = None
     per_player: dict[str, PlayerStats]
     heatmaps: dict[str, list[list[float]]]
     rallies: list[RallyRead]
