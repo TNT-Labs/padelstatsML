@@ -208,6 +208,7 @@ def _run_job(job_id: str) -> None:
                 ball="off" if settings.ball.strip().lower() in ("off", "0", "false", "no") else "auto",
                 hailo_ball_model=settings.hailo_ball_model or None,
                 ball_threshold=min(max(settings.ball_threshold, 0.05), 0.95),
+                ball_far=settings.ball_far.strip().lower() in ("on", "1", "true", "yes", "auto"),
                 sample_hz=settings.sample_hz,
                 max_analysis_minutes=settings.max_analysis_minutes,
                 max_player_speed_ms=settings.max_player_speed_ms,

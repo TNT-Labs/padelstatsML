@@ -65,8 +65,14 @@ async def ball_clips(match_id: str, db: AsyncSession = Depends(get_db), user: Us
             raise HTTPException(status.HTTP_409_CONFLICT, "Nessuno scambio abbastanza lungo da annotare.")
         data.save_clips(clips)
     labels = data.labels()
+    from app.ml.ball import far_crop
+    from app.ml.court import calibration_from_dict
+
+    crop = far_crop(calibration_from_dict(match.calibration)) if match.calibration else None
     return {
         "frame_size": [match.width, match.height],
+        # The far half exported at full resolution (ball.far_crop), or None.
+        "far_crop": list(crop) if crop else None,
         "fps": match.fps,
         "clips": [
             {"id": c.id, "start_frame": c.start_frame, "frames": c.frames, "start_s": c.start_s,
@@ -126,15 +132,27 @@ async def label_ball(
 
 
 @router.get("/{match_id}/ball/export.zip")
-async def ball_export(match_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_editor)):
+async def ball_export(match_id: str, far: bool = False, db: AsyncSession = Depends(get_db),
+                      user: User = Depends(require_editor)):
+    """The marked clips for training; `far`: the far half at full resolution
+    (ball.far_crop), for the network's second look there."""
     match, data = await _data(db, match_id, user)
     if not data.labels():
         raise HTTPException(status.HTTP_409_CONFLICT, "Nessun fotogramma annotato.")
-    target = data.directory / "export.zip"
+    crop = None
+    if far:
+        from app.ml.ball import far_crop
+        from app.ml.court import calibration_from_dict
+
+        crop = far_crop(calibration_from_dict(match.calibration)) if match.calibration else None
+        if crop is None:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Con questa inquadratura la metà lontana non è abbastanza stretta da ingrandirla.")
+    target = data.directory / ("export_far.zip" if far else "export.zip")
     async with _EXTRACT:
-        await run_in_threadpool(data.export_zip, match_id, (match.width or 1920, match.height or 1080), target)
+        await run_in_threadpool(data.export_zip, match_id, (match.width or 1920, match.height or 1080), target, crop)
     return FileResponse(str(target), media_type="application/zip",
-                        filename=f"palla_{match_id[:8]}.zip")
+                        filename=f"{'lontana' if far else 'palla'}_{match_id[:8]}.zip")
 
 
 @router.get("/{match_id}/ball/track")

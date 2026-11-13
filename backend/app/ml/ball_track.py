@@ -277,19 +277,62 @@ def track_gz(directory, width: int, height: int) -> bytes | None:
     import json
     from pathlib import Path
 
-    from app.ml.artifacts import BALL_FILE, BALL_WEAK_FILE, read_ball, read_ball_weak
+    from app.ml.artifacts import BALL_FAR_FILE, BALL_FILE, BALL_WEAK_FILE, read_ball_all, read_ball_weak
 
     directory = Path(directory)
     source = directory / BALL_FILE
     if not source.exists():
         return None
     cache = directory / f"ball-track-v{CACHE_VERSION}.json.gz"
-    sources = [p for p in (source, directory / BALL_WEAK_FILE) if p.exists()]
+    sources = [p for p in (source, directory / BALL_WEAK_FILE, directory / BALL_FAR_FILE) if p.exists()]
     if cache.exists() and all(cache.stat().st_mtime >= p.stat().st_mtime for p in sources):
         return cache.read_bytes()
-    data = gzip.compress(json.dumps(track_payload(read_ball(directory), width, height, read_ball_weak(directory)),
+    data = gzip.compress(json.dumps(track_payload(read_ball_all(directory), width, height, read_ball_weak(directory)),
                                     separators=(",", ":")).encode(), compresslevel=6)
     part = cache.with_name(cache.name + ".part")
     part.write_bytes(data)
     part.replace(cache)
     return data
+
+
+# ── The second look at the far half ─────────────────────────────────────────
+
+@dataclass(frozen=True)
+class FarMerge:
+    """How the far half's ball (ball_far.jsonl) and the whole frame's are
+    made one, frame by frame, where the whole frame's answer is inside the
+    crop: `prefer` "far" (the closer look) or "full"; `drop_unconfirmed`:
+    a whole-frame answer inside the crop that the closer look did not see
+    is left out."""
+    prefer: str = "far"
+    drop_unconfirmed: bool = False
+
+
+FAR_MERGE = FarMerge()
+
+
+def merge_far(found, far, crop, how: FarMerge = FAR_MERGE) -> list[tuple[int, float, float, float, float]]:
+    """One answer per frame (frame, time, x, y, peak), in frame order, from
+    the whole frame's `found` and the far half's `far` (crop: x, y, width,
+    height). Outside the crop the whole frame's answer stands; inside, by
+    `how`; a frame only one of them answered keeps that one."""
+    x0, y0, w, h = crop
+
+    def inside(r) -> bool:
+        return x0 <= r[2] < x0 + w and y0 <= r[3] < y0 + h
+
+    full = {r[0]: r for r in found}
+    closer = {r[0]: r for r in far}
+    out = []
+    for frame in sorted(full.keys() | closer.keys()):
+        a, b = full.get(frame), closer.get(frame)
+        if a is None:
+            out.append(b)
+        elif b is None:
+            if not (how.drop_unconfirmed and inside(a)):
+                out.append(a)
+        elif not inside(a):
+            out.append(a)
+        else:
+            out.append(b if how.prefer == "far" else a)
+    return out

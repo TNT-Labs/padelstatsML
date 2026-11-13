@@ -404,6 +404,9 @@ export interface BallClip {
 
 export interface BallClips {
   frame_size: [number | null, number | null]
+  /** The far half for the network's second look: x, y, width, height in
+   *  video pixels; null when the framing does not allow it. */
+  far_crop?: [number, number, number, number] | null
   fps: number | null
   clips: BallClip[]
   labelled: number
@@ -484,7 +487,7 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ labels }),
     }),
-  ballExportUrl: (id: string) => `${BASE}/api/matches/${id}/ball/export.zip`,
+  ballExportUrl: (id: string, far = false) => `${BASE}/api/matches/${id}/ball/export.zip${far ? '?far=1' : ''}`,
   ballTrack: (id: string) => req<BallTrack>(`/api/matches/${id}/ball/track`),
 
   /** All the hits marked watching the video: [seconds, player id]. */

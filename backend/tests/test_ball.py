@@ -222,3 +222,48 @@ def test_each_part_of_the_recovery_is_chosen_apart():
     assert {20, 21} <= ends and 8 not in ends
     assert 10 not in frames(Recovery(min_peak=0.2, gaps=True, ends=False))   # 0.18: too weak
     assert 8 in frames(Recovery(min_peak=0.2, gaps=True, ends=False))
+
+
+# ── The second look at the far half ─────────────────────────────────────────
+
+def test_the_far_crop_is_the_far_half_and_the_air_above_it():
+    from app.ml.ball import far_crop
+    from app.ml.court import CalibrationSource, build_calibration
+
+    # A camera low behind the baseline, as on the real matches.
+    calibration = build_calibration([[618, 528], [1148, 546], [2910, 1279], [-1527, 1254]], (1920, 1080),
+                                    CalibrationSource.MANUAL)
+    x, y, w, h = far_crop(calibration)
+    assert w * 9 == h * 16 and w % 16 == 0
+    assert 0 <= x and x + w <= 1920 and 0 <= y and y + h <= 1080
+    assert 900 < w < 1300                          # the net is about 1000 px wide here
+    assert y + h > 620                             # down past the net line
+    # A court filling the frame: nothing to enlarge.
+    wide = build_calibration([[100, 300], [1820, 300], [1900, 1000], [20, 1000]], (1920, 1080),
+                             CalibrationSource.MANUAL)
+    assert far_crop(wide) is None
+
+
+def test_the_crop_is_scaled_as_the_network_sees_it():
+    from app.ml.ball import small_crop
+
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    frame[100:200, 500:600] = 255
+    out = small_crop(frame, (400, 50, 1024, 576))
+    assert out.shape == (HEIGHT, WIDTH, 3)
+    assert out[50, 75].max() == 255 and out[10, 10].max() == 0      # video (550, 150): crop (150, 100), halved
+
+
+def test_the_two_looks_are_one_answer_a_frame():
+    from app.ml.ball_track import FarMerge, merge_far
+
+    crop = (100, 100, 200, 100)
+    found = [(1, 0.1, 150, 150, 0.6), (2, 0.2, 500, 500, 0.8), (3, 0.3, 160, 160, 0.6), (5, 0.5, 170, 170, 0.6)]
+    far = [(1, 0.1, 152, 151, 0.7), (2, 0.2, 140, 140, 0.9), (4, 0.4, 180, 180, 0.7)]
+    out = merge_far(found, far, crop)
+    # Inside: the closer look; outside: the whole frame; alone: itself.
+    assert out == [far[0], found[1], found[2], far[2], found[3]]
+    assert merge_far(found, far, crop, FarMerge(prefer="full"))[0] == found[0]
+    strict = merge_far(found, far, crop, FarMerge(drop_unconfirmed=True))
+    assert [r[0] for r in strict] == [1, 2, 4]
+    assert merge_far(found, [], crop) == found

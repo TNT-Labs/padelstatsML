@@ -212,6 +212,16 @@ export const AnnotateBallView: FC<Props> = ({ matchId, title, onBack }) => {
               Scarica i dati annotati
             </a>
           )}
+          {marked > 0 && data?.far_crop && (
+            <a
+              className="btn btn-ghost btn-sm"
+              href={api.ballExportUrl(matchId, true)}
+              download
+              title="Gli stessi fotogrammi annotati, ritagliati sulla metà lontana a piena risoluzione: per addestrare la seconda passata della palla"
+            >
+              Scarica la metà lontana
+            </a>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Statistiche</button>
         </div>
       </div>

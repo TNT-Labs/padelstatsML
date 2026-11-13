@@ -189,7 +189,11 @@ recupero lungo la traiettoria è **spento** finché una regolazione non si
 dimostra utile sui fotogrammi annotati (`training/ball/peaks_check.py`): la
 prima provata aggiungeva più punti sbagliati che giusti. I picchi si salvano
 comunque, così la regolazione scelta arriverà alle partite già analizzate con
-Aggiorna statistiche. Sul video della partita
+Aggiorna statistiche. Con `BALL_FAR=on` e una rete addestrata
+anche sulla metà lontana ritagliata, la rete guarda una seconda volta la metà
+lontana a circa il doppio della scala (`ball_far.jsonl`); le due risposte si
+uniscono in lettura (`ball_track.merge_far`). Costa una inferenza in più a
+fotogramma. Sul video della partita
 l'interruttore **Palla** mostra la palla e la sua scia.
 
 La rete di prova (26 spezzoni annotati) trova 3 palle visibili su 4 entro
@@ -415,7 +419,7 @@ misurare sul Pi; `BALL=off` torna ai tempi senza palla.
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 445 backend + 61 frontend
+make test         # 452 backend + 61 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health

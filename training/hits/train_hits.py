@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.ml import ball_hits as bh  # noqa: E402
-from app.ml.artifacts import load_artifacts, read_ball, read_ball_weak  # noqa: E402
+from app.ml.artifacts import load_artifacts, read_ball_all, read_ball_weak  # noqa: E402
 from app.ml.identity import resolve_players  # noqa: E402
 
 GROUP_GAP_S = 4.0
@@ -99,7 +99,7 @@ class Data:
         self.players = [bh.PlayerTrack.from_player(p) for p in identity.players if p.observations]
         self.by_id = {p.player_id: p for p in self.players}
         self.vp = bh.vanishing_point(artifacts.calibration)
-        self.T, self.X, self.Y = bh.ball_points(read_ball(run), self.height, read_ball_weak(run))
+        self.T, self.X, self.Y = bh.ball_points(read_ball_all(run), self.height, read_ball_weak(run))
         self.labels = labels
         self.spans = groups(labels)
         self.group = np.full(len(self.T), -1)
