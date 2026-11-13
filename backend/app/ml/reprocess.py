@@ -64,11 +64,12 @@ def reproject(tracklet: Tracklet, calibration: CourtCalibration, feet: FootModel
 
 
 def recompute(directory, calibration_data: dict | None, config, max_speed_ms: float | None = None,
-              ball: bool = True, hit_model=None):
+              ball: bool = True, hit_model=None, phase_model=None):
     """The post-detection stages on the stored run, through the match's
     current calibration: (result, identity, rallies, artifacts). `ball`
     False: as without the ball (rallies from movement alone); `hit_model`:
-    other hit models than the stored ones."""
+    other hit models than the stored ones; `phase_model` another model of
+    the points (app.ml.phases), False for none."""
     from app.ml.artifacts import load_artifacts
     from app.ml.pipeline import analyse_tracklets, apply_run_quality
 
@@ -83,6 +84,7 @@ def recompute(directory, calibration_data: dict | None, config, max_speed_ms: fl
         start_s=float(artifacts.meta.get("start_s") or 0.0),
         ball_dir=directory if ball else None,
         hit_model=hit_model,
+        phase_model=phase_model,
         frame_height=int((artifacts.meta.get("video") or {}).get("height") or artifacts.calibration.frame_size[1] or 0),
     )
     apply_run_quality(result, run_quality(artifacts))

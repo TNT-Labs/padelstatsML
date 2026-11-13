@@ -369,7 +369,24 @@ def ball_input(directory, calibration, identity, height: int, model: HitModel | 
     return BallInput(T, X, Y, players, vanishing_point(calibration), height, model)
 
 
-def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[list, list[Hit] | None, int]:
+def zone_hits(rallies: list, ball: BallInput) -> list[Hit]:
+    """Every hit found where the ball is looked for: the rallies from
+    movement, EXTEND_S around each; in time order, one per time."""
+    zones: list[list[float]] = []
+    for r in rallies:
+        a, b = r.start_s - EXTEND_S, r.end_s + EXTEND_S
+        if zones and a <= zones[-1][1]:
+            zones[-1][1] = max(zones[-1][1], b)
+        else:
+            zones.append([a, b])
+    found = find_hits(ball.T, ball.X, ball.Y, ball.players,
+                      [{"start_s": a + RALLY_LEAD_S, "end_s": b} for a, b in zones],
+                      ball.vp, ball.height, ball.model)
+    return sorted({h.t: h for h in found}.values(), key=lambda h: h.t)
+
+
+def refine_rallies(rallies: list, ball: BallInput, net_distance=None, where=None,
+                   phases=None) -> tuple[list, list[Hit] | None, int]:
     """The rallies from movement made to start at the serve and end at the
     last hit, split and merged where the hits say so; the hits in them; and
     how many rallies were left out.
@@ -384,20 +401,15 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
 
     When more than MAX_DROPPED_SHARE of the rallies would be left out, the
     ball is what is wrong (a court or a light its network does not know),
-    not the rallies: they are returned as they came, with None for the hits."""
+    not the rallies: they are returned as they came, with None for the hits.
+
+    With `phases` (app.ml.phases.PhaseModel) and `where` (the players'
+    paths), the points are read from the hits instead — serve, in play,
+    between points — and the split and merge by time above are not used:
+    measured on three sets, they joined a point in four."""
     from app.ml.rallies import Rally
 
-    zones: list[list[float]] = []
-    for r in rallies:
-        a, b = r.start_s - EXTEND_S, r.end_s + EXTEND_S
-        if zones and a <= zones[-1][1]:
-            zones[-1][1] = max(zones[-1][1], b)
-        else:
-            zones.append([a, b])
-    found = find_hits(ball.T, ball.X, ball.Y, ball.players,
-                      [{"start_s": a + RALLY_LEAD_S, "end_s": b} for a, b in zones],
-                      ball.vp, ball.height, ball.model)
-    hits = sorted({h.t: h for h in found}.values(), key=lambda h: h.t)
+    hits = zone_hits(rallies, ball)
 
     spans: list[list] = []         # [start, end, hits, source rally]
     used = 0
@@ -431,6 +443,8 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
                 spans.append([part[0].t, part[-1].t + TAIL_S, part, r])
     if dropped > MAX_DROPPED_SHARE * len(rallies):
         return list(rallies), None, 0
+    if phases is not None and where is not None and rallies:
+        return _phase_rallies(rallies, hits, where, phases, net_distance) + (dropped,)
     spans.sort(key=lambda x: x[0])
     merged: list[list] = []
     for span in spans:
@@ -454,6 +468,26 @@ def refine_rallies(rallies: list, ball: BallInput, net_distance=None) -> tuple[l
         out.append(Rally(index=i, start_s=float(start), end_s=float(end),
                          players_tracked=source.players_tracked, serve=bool(serve)))
     return out, kept, dropped
+
+
+def _phase_rallies(rallies: list, hits: list[Hit], where, phases, net_distance) -> tuple[list, list[Hit]]:
+    """The points read from the hits (app.ml.phases), as rallies; the hits
+    in them."""
+    from app.ml.phases import read_points
+    from app.ml.rallies import Rally
+
+    out, kept = [], []
+    for first, last, part, served in read_points(hits, rallies, where, phases):
+        end = last + TAIL_S
+        # The rally from movement it lies in, for how many players were seen.
+        source = max(rallies, key=lambda r: (min(r.end_s, end) - max(r.start_s, first),
+                                             -abs(r.start_s - first)))
+        d = net_distance(part[0].player, part[0].t) if net_distance is not None else None
+        serve = served or (d is not None and d >= SERVE_BACK_M)
+        out.append(Rally(index=len(out), start_s=float(first), end_s=float(end),
+                         players_tracked=source.players_tracked, serve=bool(serve)))
+        kept += part
+    return out, kept
 
 
 def hit_zone(distance_m: float) -> str:
