@@ -60,11 +60,15 @@ class Recovery:
     tolerance: float = 1.0
 
 
-# Off until a setting is shown, on the marked frames (training/ball/
-# peaks_check.py), to add more ball than noise: as first written (gaps and
-# ends, 0.15, full tolerance) it added 13 wrong points for every 8 right
-# ones. The weaker peaks are stored anyway: the setting chosen then reaches
-# the runs analysed now through Aggiorna statistiche.
+# Off: no setting added ball without adding as much noise. Measured with
+# training/ball/peaks_check.py on 6 validation clips (280 marked frames, the
+# network of 11/2026): flights without the weaker peaks precision 0.90,
+# recall 0.71; past the ends, 6-10 points right for 11-18 wrong at every
+# threshold and tolerance; in the gaps only, at best 7 right for 3 misplaced
+# and 5 on a ball hidden (precision 0.86, recall 0.74, F1 0.799 against
+# 0.794: no difference). The ball is among the weaker peaks in a third of
+# the frames it is missed, but so is much else near its path. The peaks are
+# still stored, to try again with a better network (Tappa 2).
 RECOVERY = Recovery(gaps=False, ends=False)
 
 
