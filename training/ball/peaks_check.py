@@ -35,9 +35,16 @@ import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parents[1] / "backend" / "app" / "ml"))
-import ball as ballmod  # noqa: E402
-import ball_track  # noqa: E402
+# In the repository ball.py and ball_track.py are in backend/app/ml; on
+# Colab, uploaded beside this script (/content has no parent to look in).
+REPO_ML = HERE.parent.parent / "backend" / "app" / "ml"
+if (REPO_ML / "ball_track.py").exists():
+    sys.path.insert(0, str(REPO_ML))
+try:
+    import ball as ballmod  # noqa: E402
+    import ball_track  # noqa: E402
+except ImportError as exc:
+    raise SystemExit(f"Manca {exc.name}.py: caricalo accanto a peaks_check.py (è in backend/app/ml).") from exc
 import train_tracknet as tt  # noqa: E402
 
 LOWS = (0.1, 0.15, 0.2, 0.3)
