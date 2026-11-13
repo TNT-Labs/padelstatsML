@@ -260,10 +260,12 @@ def test_the_two_looks_are_one_answer_a_frame():
     crop = (100, 100, 200, 100)
     found = [(1, 0.1, 150, 150, 0.6), (2, 0.2, 500, 500, 0.8), (3, 0.3, 160, 160, 0.6), (5, 0.5, 170, 170, 0.6)]
     far = [(1, 0.1, 152, 151, 0.7), (2, 0.2, 140, 140, 0.9), (4, 0.4, 180, 180, 0.7)]
-    out = merge_far(found, far, crop)
+    out = merge_far(found, far, crop, FarMerge(prefer="far"))
     # Inside: the closer look; outside: the whole frame; alone: itself.
     assert out == [far[0], found[1], found[2], far[2], found[3]]
     assert merge_far(found, far, crop, FarMerge(prefer="full"))[0] == found[0]
-    strict = merge_far(found, far, crop, FarMerge(drop_unconfirmed=True))
-    assert [r[0] for r in strict] == [1, 2, 4]
+    # The rule in use (measured best): inside the crop, only what the closer
+    # look saw — the whole frame's answers there alone are left out.
+    strict = merge_far(found, far, crop)
+    assert [r[0] for r in strict] == [1, 2, 4] and strict[0] == far[0]
     assert merge_far(found, [], crop) == found
