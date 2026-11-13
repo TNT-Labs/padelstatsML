@@ -3,6 +3,7 @@ video, labels kept, the export for training."""
 from __future__ import annotations
 
 import csv
+import json
 import io
 import zipfile
 from pathlib import Path
@@ -73,3 +74,28 @@ def test_a_clip_past_the_end_of_the_video_is_cut_short(tmp_path):
     video = _video(tmp_path / "short.mp4", frames=40)
     data = BallData(tmp_path / "ball")
     assert data.extract(Clip(0, 30, CLIP_FRAMES, 1.0), video) == 10
+
+
+def test_the_far_half_is_exported_at_full_resolution(tmp_path):
+    video = _video(tmp_path / "match.mp4")
+    data = BallData(tmp_path / "ball")
+    clip = Clip(0, 30, 20, 1.0)
+    data.save_clips([clip])
+    data.extract(clip, video)
+    # A ball in the crop, one outside it, one not in sight, one not marked.
+    data.update_labels({"30": [100.0, 50.0], "31": [300.0, 170.0], "32": NOT_VISIBLE})
+    target = data.export_zip("abcdef1234", (320, 180), tmp_path / "far.zip", crop=(64, 20, 160, 90))
+    with zipfile.ZipFile(target) as archive:
+        meta = json.loads(archive.read("meta.json"))
+        assert meta["size"] == [160, 90] and meta["offset"] == [64, 20] and meta["kind"] == "far"
+        rows = list(csv.DictReader(io.StringIO(archive.read("labels.csv").decode())))
+        image = cv2.imdecode(np.frombuffer(archive.read(rows[0]["file"]), np.uint8), cv2.IMREAD_COLOR)
+    assert image.shape == (90, 160, 3)                                   # the crop, not scaled
+    assert (rows[0]["visible"], float(rows[0]["x"]), float(rows[0]["y"])) == ("1", 36.0, 30.0)
+    assert rows[1]["visible"] == "0"                                     # outside the crop: not in it
+    assert rows[2]["visible"] == "0" and rows[3]["visible"] == ""
+    # The same clips and frames as the whole-frame export.
+    whole = data.export_zip("abcdef1234", (320, 180), tmp_path / "whole.zip")
+    with zipfile.ZipFile(whole) as archive:
+        assert [r["frame"] for r in csv.DictReader(io.StringIO(archive.read("labels.csv").decode()))] == \
+            [r["frame"] for r in rows]

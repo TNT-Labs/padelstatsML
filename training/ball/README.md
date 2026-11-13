@@ -76,6 +76,39 @@ senza togliere precisione. Senza `--holdout` gli spezzoni di validazione sono de
 partite dell'addestramento (misura ottimista); con `--holdout palla_X.zip` vale solo per un `ball.pt`
 addestrato anch'esso con `--holdout palla_X.zip`.
 
+### La metà lontana, ingrandita (seconda passata)
+
+Lontano la palla è circa 2 pixel per la rete: confusa col pavimento. L'analisi può guardare una
+seconda volta la sola metà lontana con l'aria sopra (pallonetti), a circa il doppio della scala:
+stessa rete, addestrata anche su quei ritagli.
+
+1. In **Annota palla**, per ogni partita annotata: **Scarica i dati annotati** e **Scarica la metà
+   lontana**. Il secondo zip (`lontana_<id>.zip`) ha gli stessi fotogrammi e gli stessi segni,
+   ritagliati sul Pi a piena risoluzione: nessun clic nuovo.
+2. Prima la misura, su una partita esclusa (qui `3628b11c`; usa l'id di una delle tue):
+
+```
+!python train_tracknet.py palla_*.zip lontana_*.zip --epochs 30 --holdout 3628b11c --out holdout
+!python far_check.py holdout.pt palla_*.zip lontana_*.zip --match 3628b11c
+```
+
+   `train_tracknet.py` stampa alla fine il punteggio zip per zip; `far_check.py` (carica anche
+   `ball.py` e `ball_track.py` da `backend/app/ml`) confronta sulla partita esclusa la palla dell'immagine
+   intera con quella della seconda passata, fotogramma per fotogramma e come traiettorie, metà lontana e
+   resto separati, con tre regole per unire le due risposte.
+3. Se la metà lontana migliora senza peggiorare il resto, la rete per il Raspberry su tutto:
+
+```
+!python train_tracknet.py palla_*.zip lontana_*.zip --epochs 30
+!python make_calib.py palla_*.zip lontana_*.zip
+```
+
+   e poi la conversione come sotto. Sul Raspberry `BALL_FAR=on` nel `.env` accende la seconda passata:
+   costa una inferenza in più a fotogramma (circa +0,5 volte la durata del video).
+
+Di serie l'addestramento ora usa variazioni più forti degli esempi (`--augment strong`: anche zoom,
+spostamento, sfocatura, rumore e colore); `--augment base` torna a quelle delle prime reti.
+
 ## 3. Convertire per l'Hailo-8L (Windows, WSL2 con Ubuntu 22.04)
 
 1. Registrati su hailo.ai, nella Developer Zone.

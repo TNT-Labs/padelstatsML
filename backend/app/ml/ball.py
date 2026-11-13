@@ -15,6 +15,14 @@ there, a weaker peak. The weaker peaks (weak_peaks: local maxima over
 WEAK_THRESHOLD, at most WEAK_MAX) are kept apart, in ball_weak.jsonl:
 alone they are mostly noise, but one where a flight of the ball was heading
 is the ball (ball_track.recover).
+
+The far half is a band across the middle of the picture: from far away the
+ball is about 8 pixels of a 1080p video, 2 once the whole frame is scaled to
+512 x 288 — averaged into the floor. far_crop is that half and the air above
+it (lobs) at a fixed 16:9 size, scaled by about half: the same network,
+looking a second time there, sees the far ball twice as large
+(ball_far.jsonl, merged with the whole frame's ball when read:
+ball_track.merge_far).
 """
 from __future__ import annotations
 
@@ -33,6 +41,43 @@ WEAK_MAX = 3
 WEAK_APART = 6.0
 # Where the compiled network is looked for: weights/ on the Pi.
 BALL_MODELS = ("/srv/weights/ball_h8l.hef", "/srv/weights/ball_h8.hef")
+
+
+# The far crop: the far half between the net posts, MARGIN_M aside, and up
+# from just below the net to the top of the lobs. Worth it only when it is
+# much narrower than the frame (FAR_MAX_SHARE): otherwise it enlarges little.
+FAR_MARGIN_M = 0.5
+FAR_BELOW_NET_PX = 0.02          # of the frame's height, below the net line
+FAR_MAX_SHARE = 0.7
+
+
+def far_crop(calibration) -> tuple[int, int, int, int] | None:
+    """(x, y, width, height) in video pixels of the far crop, 16:9, inside
+    the frame; None when the far half is not much narrower than the frame."""
+    from app.ml.court import COURT_WIDTH_M, NET_Y_M
+
+    width, height = calibration.frame_size
+    net = calibration.court_to_pixels(np.array(
+        [[-FAR_MARGIN_M, NET_Y_M], [COURT_WIDTH_M + FAR_MARGIN_M, NET_Y_M]], dtype=np.float32))
+    if not np.isfinite(net).all():
+        return None
+    x1, x2 = float(net[:, 0].min()), float(net[:, 0].max())
+    w = int(np.ceil((x2 - x1) / 16.0)) * 16
+    h = w * 9 // 16
+    if w > FAR_MAX_SHARE * width or w < 64:
+        return None
+    bottom = min(float(net[:, 1].max()) + FAR_BELOW_NET_PX * height, height)
+    x = int(round((x1 + x2) / 2 - w / 2))
+    y = int(round(bottom - h))
+    x = min(max(x, 0), width - w)
+    y = min(max(y, 0), height - h)
+    return x, y, w, h
+
+
+def small_crop(frame: np.ndarray, crop: tuple[int, int, int, int]) -> np.ndarray:
+    """The far crop of a frame as the network sees it: 512 x 288."""
+    x, y, w, h = crop
+    return cv2.resize(frame[y:y + h, x:x + w], (WIDTH, HEIGHT), interpolation=cv2.INTER_AREA)
 
 
 def find_model(configured: str | None = None) -> str | None:
@@ -145,16 +190,21 @@ class HailoBallDetector:
         width, height = frame_size
         return found[0] * width / WIDTH, found[1] * height / HEIGHT, found[2]
 
-    def find_all(self, frames: list[np.ndarray], frame_size: tuple[int, int]):
+    def find_all(self, frames: list[np.ndarray], frame_size: tuple[int, int],
+                 crop: tuple[int, int, int, int] | None = None):
         """As find, and the weaker peaks (weak_peaks) in video pixels:
-        (ball or None, [(x, y, peak)])."""
+        (ball or None, [(x, y, peak)]). With `crop` (far_crop) the frames
+        are that crop of the video (small_crop), and so are the answers."""
         heat = self.heat(stack(frames))
         found = locate(heat, self.threshold)
         weak = weak_peaks(heat, found[:2] if found else None)
-        width, height = frame_size
-        sx, sy = width / WIDTH, height / HEIGHT
-        ball = (found[0] * sx, found[1] * sy, found[2]) if found else None
-        return ball, [(x * sx, y * sy, p) for x, y, p in weak]
+        if crop is None:
+            x0, y0, (w, h) = 0, 0, frame_size
+        else:
+            x0, y0, w, h = crop
+        sx, sy = w / WIDTH, h / HEIGHT
+        ball = (x0 + found[0] * sx, y0 + found[1] * sy, found[2]) if found else None
+        return ball, [(x0 + x * sx, y0 + y * sy, p) for x, y, p in weak]
 
     def close(self) -> None:
         self._stack.close()

@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     # finds more balls and more that are not: the flights drop the strays.
     # train_tracknet.py prints precision and recall at several values.
     ball_threshold: float = 0.5
+    # A second look of the ball network at the far half, at about twice the
+    # scale (app/ml/ball.far_crop): "on" only with a network trained on far
+    # crops too (training/ball, "Scarica la metà lontana"); one more inference
+    # a frame, about +0.5x the video's length on the Pi.
+    ball_far: str = "off"
 
     # ── Re-identification ───────────────────────────────────────────────────
     # OSNet exported with scripts/export_reid_onnx.py. Optional: without it,

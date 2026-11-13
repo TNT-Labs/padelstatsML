@@ -162,15 +162,24 @@ class BallData:
         return labels
 
     # ── Export ───────────────────────────────────────────────────────────────
-    def export_zip(self, match_id: str, frame_size: tuple[int, int], target: Path) -> Path:
+    def export_zip(self, match_id: str, frame_size: tuple[int, int], target: Path,
+                   crop: tuple[int, int, int, int] | None = None) -> Path:
         """The labelled frames for training: each labelled clip's frames
         scaled to EXPORT_WIDTH, and labels.csv with one row per frame —
         clip, frame number, file, visible, x, y (scaled pixels; empty when
-        not visible or not marked)."""
+        not visible or not marked).
+
+        With `crop` (ball.far_crop: x, y, width, height in video pixels) the
+        frames are that crop at full resolution instead, the marks in its
+        pixels, and a ball marked outside it not in sight: the same clips
+        and marks, for the network's second look at the far half."""
         labels = self.labels()
         width, height = frame_size
         scale = EXPORT_WIDTH / float(width)
         out_h = int(round(height * scale))
+        if crop is not None:
+            cx, cy, cw, ch = crop
+            scale, out_h = 1.0, ch
         rows = io.StringIO()
         writer = csv.writer(rows)
         writer.writerow(["clip", "frame", "file", "visible", "x", "y"])
@@ -188,11 +197,19 @@ class BallData:
                     image = cv2.imread(str(self.frame_path(clip, offset)))
                     if image is None:
                         continue
-                    small = cv2.resize(image, (EXPORT_WIDTH, out_h), interpolation=cv2.INTER_AREA)
+                    if crop is None:
+                        small = cv2.resize(image, (EXPORT_WIDTH, out_h), interpolation=cv2.INTER_AREA)
+                    else:
+                        if image.shape[1] != width or image.shape[0] != height:
+                            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+                        small = image[cy:cy + ch, cx:cx + cw]
                     ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
                     name = f"frames/{match_id[:8]}_{clip.id:03d}/{offset:03d}.jpg"
                     archive.writestr(name, jpeg.tobytes())
                     label = labels.get(str(frame))
+                    if isinstance(label, list) and crop is not None:
+                        inside = cx <= label[0] < cx + cw and cy <= label[1] < cy + ch
+                        label = [label[0] - cx, label[1] - cy] if inside else NOT_VISIBLE
                     if isinstance(label, list):
                         writer.writerow([f"{match_id[:8]}_{clip.id:03d}", frame, name, 1,
                                          round(label[0] * scale, 1), round(label[1] * scale, 1)])
@@ -202,9 +219,10 @@ class BallData:
                         writer.writerow([f"{match_id[:8]}_{clip.id:03d}", frame, name,
                                          0 if label == NOT_VISIBLE else "", "", ""])
             archive.writestr("labels.csv", rows.getvalue())
-            archive.writestr("meta.json", json.dumps({
-                "match": match_id, "source_size": [width, height], "size": [EXPORT_WIDTH, out_h],
-                "clip_frames": CLIP_FRAMES,
-            }))
+            meta = {"match": match_id, "source_size": [width, height], "size": [EXPORT_WIDTH, out_h],
+                    "clip_frames": CLIP_FRAMES}
+            if crop is not None:
+                meta.update(size=[cw, ch], kind="far", offset=[cx, cy])
+            archive.writestr("meta.json", json.dumps(meta))
         part.replace(target)
         return target

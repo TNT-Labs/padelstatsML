@@ -34,6 +34,7 @@ from app.ml.ball_hits import ball_input as hits_input
 from app.ml.ball_hits import hit_statistics, refine_rallies
 from app.ml.phases import load_phase_model
 from app.ml.ball import find_model as find_ball_model
+from app.ml.ball import far_crop, small_crop
 from app.ml.ball import small as ball_input
 from app.ml.court import NET_Y_M, CourtCalibration
 from app.ml.detect import DetectorError, PersonDetector, merge_detections, within_crop
@@ -109,6 +110,8 @@ class PipelineConfig:
     ball: str = "off"
     hailo_ball_model: str | None = None
     ball_threshold: float = 0.5
+    # The ball network's second look at the far half (ball.far_crop).
+    ball_far: bool = False
 
 
 @dataclass
@@ -161,6 +164,9 @@ class AnalysisPipeline:
         ball_model = baller.name if baller is not None else None
         ball_frames = ball_found = 0
         recent: deque = deque(maxlen=3)        # the last frames, small, for the ball
+        far = far_crop(calibration) if baller is not None and self.config.ball_far else None
+        recent_far: deque = deque(maxlen=3)    # the same, the far half closer
+        far_found = 0
         last_index = -2
         embedder = self._embedder()
 
@@ -219,17 +225,24 @@ class AnalysisPipeline:
 
             # With the ball every frame is read: a thread decodes and scales
             # them ahead while this one runs the networks (video.ahead).
-            reading = ahead(sampler, lambda f: ball_input(f.image)) if baller is not None else (
-                (f, None) for f in sampler)
-            for frame, small in reading:
+            def prepare(f):
+                return ball_input(f.image), (small_crop(f.image, far) if far is not None else None)
+            reading = ahead(sampler, prepare) if baller is not None else ((f, None) for f in sampler)
+            for frame, smalls in reading:
                 if baller is not None:
                     if frame.index != last_index + 1:
                         recent.clear()
+                        recent_far.clear()
                     last_index = frame.index
-                    recent.append(small if small is not None else ball_input(frame.image))
+                    small, small_far = smalls if smalls is not None else (ball_input(frame.image), None)
+                    recent.append(small)
+                    if far is not None:
+                        recent_far.append(small_far if small_far is not None else small_crop(frame.image, far))
                     if len(recent) == 3:
                         try:
                             ball, weak = baller.find_all(list(recent), (info.width, info.height))
+                            ball_far = (baller.find_all(list(recent_far), (info.width, info.height), far)[0]
+                                        if far is not None else None)
                         except Exception as exc:      # noqa: BLE001 - the players matter more
                             logger.error("Palla: %s · proseguo senza", exc)
                             _close(baller)
@@ -244,6 +257,10 @@ class AnalysisPipeline:
                                     writer.write_ball(frame.index, frame.timestamp_s, *ball)
                             if weak and writer is not None:
                                 writer.write_ball_weak(frame.index, frame.timestamp_s, weak)
+                            if ball_far is not None:
+                                far_found += 1
+                                if writer is not None:
+                                    writer.write_ball_far(frame.index, frame.timestamp_s, *ball_far)
                 if not frame.main:
                     if frame.pose and poser is not None:
                         boxes = tracker.current_boxes(frame.timestamp_s)
@@ -329,7 +346,9 @@ class AnalysisPipeline:
                 "pose_note": pose_note,
                 # The ball: the network, the frames it looked at, those it
                 # found the ball in (before the flights are made of them).
-                "ball": ({"model": ball_model, "frames": ball_frames, "found": ball_found}
+                "ball": ({"model": ball_model, "frames": ball_frames, "found": ball_found,
+                          # The second look at the far half: where, and how often it found one.
+                          **({"far_crop": list(far), "far_found": far_found} if far is not None else {})}
                          if ball_model else None),
                 "ball_note": ball_note,
                 "variable_frame_rate": sampler.variable_frame_rate,

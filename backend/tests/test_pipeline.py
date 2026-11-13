@@ -948,8 +948,14 @@ class _BallEverywhere:
             raise RuntimeError("la scheda non ha scritto il risultato")
         return (float(self.calls % frame_size[0]), 300.0, 0.8)
 
-    def find_all(self, frames, frame_size):
-        """As the real one: the ball and, every tenth frame, a weaker peak."""
+    def find_all(self, frames, frame_size, crop=None):
+        """As the real one: the ball and, every tenth frame, a weaker peak;
+        on the far crop, a ball in its middle every other frame."""
+        if crop is not None:
+            assert len(frames) == 3 and frames[0].shape == (288, 512, 3)
+            self.far_calls = getattr(self, "far_calls", 0) + 1
+            x, y, w, h = crop
+            return ((x + w / 2, y + h / 2, 0.7) if self.far_calls % 2 else None), []
         ball = self.find(frames, frame_size)
         return ball, ([(5.0, 7.0, 0.2)] if self.calls % 10 == 0 else [])
 
@@ -958,7 +964,7 @@ class _BallEverywhere:
 
 
 def _run_with_ball(monkeypatch, synthetic_match, calibration, artifacts, baller=_BallEverywhere,
-                   model="/x/ball_h8l.hef"):
+                   model="/x/ball_h8l.hef", far=False):
     from dataclasses import replace
 
     import app.ml.pipeline as pipeline_module
@@ -969,7 +975,7 @@ def _run_with_ball(monkeypatch, synthetic_match, calibration, artifacts, baller=
     monkeypatch.setattr(pipeline_module, "find_ball_model", lambda *_a: model)
     monkeypatch.setattr(pipeline_module, "hailo_status", lambda *_a, **_k: _usable())
     monkeypatch.setattr(pipeline_module, "_ACCELERATOR_FAILED", None)
-    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", ball="auto"))
+    pipeline = AnalysisPipeline(replace(PIPELINE_CONFIG, accelerator="auto", ball="auto", ball_far=far))
     return pipeline.run(synthetic_match, calibration=calibration, artifacts_dir=artifacts)
 
 
@@ -998,6 +1004,29 @@ def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calib
     plain = _run_with(monkeypatch, synthetic_match, calibration, _usable())
     assert result["summary"] == plain["summary"]
     assert result["rallies"] == plain["rallies"]
+
+
+def test_the_far_half_is_looked_at_again_when_asked(monkeypatch, synthetic_match, calibration, tmp_path):
+    import json
+
+    from app.ml.artifacts import BALL_FAR_FILE, read_ball, read_ball_all
+    from app.ml.ball import far_crop
+
+    result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path / "far", far=True)
+    crop = far_crop(calibration)
+    quality = result["data_quality"]["ball"]
+    assert quality["far_crop"] == list(crop) and quality["far_found"] == (quality["frames"] + 1) // 2
+    far = read_ball(tmp_path / "far", BALL_FAR_FILE)
+    assert len(far) == quality["far_found"]
+    meta = json.loads((tmp_path / "far" / "meta.json").read_text())
+    assert meta["run_quality"]["ball"]["far_crop"] == list(crop)
+    # Read together: one answer a frame, the closer look's where both answered inside the crop.
+    merged = read_ball_all(tmp_path / "far")
+    assert len(merged) == len({r[0] for r in read_ball(tmp_path / "far")} | {r[0] for r in far})
+    # Off (the default), nothing of it.
+    plain = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path / "plain")
+    assert "far_crop" not in plain["data_quality"]["ball"]
+    assert not (tmp_path / "plain" / BALL_FAR_FILE).exists()
 
 
 def test_a_ball_network_failing_leaves_the_players_analysed(monkeypatch, synthetic_match, calibration, tmp_path):

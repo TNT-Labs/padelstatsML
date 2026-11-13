@@ -201,6 +201,16 @@ async def test_the_marked_frames_are_exported_for_training(analysed_match):
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         assert {"labels.csv", "meta.json"} <= set(archive.namelist())
+    # The far half at full resolution, where the framing allows it.
+    crop = (await owner.get(f"/api/matches/{match_id}/ball/clips")).json()["far_crop"]
+    far = await owner.get(f"/api/matches/{match_id}/ball/export.zip?far=1")
+    if crop is None:
+        assert far.status_code == 409
+    else:
+        assert far.status_code == 200 and "lontana_" in far.headers["content-disposition"]
+        with zipfile.ZipFile(io.BytesIO(far.content)) as archive:
+            import json
+            assert json.loads(archive.read("meta.json"))["offset"] == crop[:2]
 
 
 async def test_the_ball_found_by_the_analysis_is_served_as_flights(analysed_match):

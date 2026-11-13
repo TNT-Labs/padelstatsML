@@ -54,6 +54,10 @@ BALL_FILE = "ball.jsonl"
 # Only runs analysed since they were kept have it; without it the ball's
 # flights are made from ball.jsonl alone, as before.
 BALL_WEAK_FILE = "ball_weak.jsonl"
+# The ball as the second look at the far half found it (app/ml/ball.far_crop),
+# one line per frame where it did, as ball.jsonl; the crop is in meta.json
+# (run_quality.ball.far_crop). Merged with ball.jsonl when read: read_ball_all.
+BALL_FAR_FILE = "ball_far.jsonl"
 
 
 class ArtifactWriter:
@@ -88,6 +92,8 @@ class ArtifactWriter:
         self._ball: IO[str] | None = None
         (self.directory / BALL_WEAK_FILE).unlink(missing_ok=True)
         self._ball_weak: IO[str] | None = None
+        (self.directory / BALL_FAR_FILE).unlink(missing_ok=True)
+        self._ball_far: IO[str] | None = None
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -103,11 +109,19 @@ class ArtifactWriter:
         if self._ball_weak is not None:
             self._ball_weak.close()
             self._ball_weak = None
+        if self._ball_far is not None:
+            self._ball_far.close()
+            self._ball_far = None
 
     def write_ball(self, frame_index: int, timestamp_s: float, x: float, y: float, peak: float) -> None:
         if self._ball is None:
             self._ball = (self.directory / BALL_FILE).open("w", encoding="utf-8")
         self._ball.write(f"[{frame_index},{timestamp_s:.3f},{x:.1f},{y:.1f},{peak:.2f}]\n")
+
+    def write_ball_far(self, frame_index: int, timestamp_s: float, x: float, y: float, peak: float) -> None:
+        if self._ball_far is None:
+            self._ball_far = (self.directory / BALL_FAR_FILE).open("w", encoding="utf-8")
+        self._ball_far.write(f"[{frame_index},{timestamp_s:.3f},{x:.1f},{y:.1f},{peak:.2f}]\n")
 
     def write_ball_weak(self, frame_index: int, timestamp_s: float, peaks) -> None:
         """The weaker peaks of a frame: (x, y, peak) each, in video pixels."""
@@ -413,10 +427,25 @@ def read_poses(directory: str | Path) -> list[tuple[float, int, np.ndarray]]:
     return out
 
 
-def read_ball(directory: str | Path) -> list[tuple[int, float, float, float, float]]:
+def read_ball_all(directory: str | Path) -> list[tuple[int, float, float, float, float]]:
+    """The ball as the analysis uses it: read_ball, merged with the second
+    look at the far half where the run had one (ball_track.merge_far)."""
+    from app.ml.ball_track import merge_far
+
+    found = read_ball(directory)
+    far = read_ball(directory, BALL_FAR_FILE)
+    if not far:
+        return found
+    meta = json.loads((Path(directory) / "meta.json").read_text(encoding="utf-8"))
+    crop = ((meta.get("run_quality") or {}).get("ball") or {}).get("far_crop")
+    return merge_far(found, far, tuple(crop)) if crop else found
+
+
+def read_ball(directory: str | Path, name: str = BALL_FILE) -> list[tuple[int, float, float, float, float]]:
     """The ball as found on each frame: (frame, time, x, y, peak), in frame
-    order; none for runs without it."""
-    path = Path(directory) / BALL_FILE
+    order; none for runs without it. `name`: BALL_FAR_FILE for the second
+    look at the far half."""
+    path = Path(directory) / name
     if not path.exists():
         return []
     out = []

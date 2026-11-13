@@ -56,7 +56,7 @@ THRESHOLD = 0.5
 class Frames(torch.utils.data.Dataset):
     """(9 x 288 x 512 frames 0-255, 288 x 512 heat map, visible, x, y)."""
 
-    def __init__(self, samples, images, augment: bool) -> None:
+    def __init__(self, samples, images, augment: bool | str) -> None:
         self.samples, self.images, self.augment = samples, images, augment
 
     def __len__(self) -> int:
@@ -68,12 +68,38 @@ class Frames(torch.utils.data.Dataset):
         if self.augment and random.random() < 0.5:
             stack = [im[:, ::-1] for im in stack]
             x = WIDTH - 1 - x if visible else x
+        if self.augment == "strong":
+            stack, visible, x, y = _strong(stack, visible, x, y)
         frames = np.concatenate(stack, axis=2).astype(np.float32)   # H x W x 9
         if self.augment:
             frames = np.clip(frames * random.uniform(0.8, 1.2) + random.uniform(-15, 15), 0, 255)
+        if self.augment == "strong" and random.random() < 0.3:
+            frames = np.clip(frames + np.random.normal(0, 4, frames.shape).astype(np.float32), 0, 255)
         heat = _heat(x, y) if visible else np.zeros((HEIGHT, WIDTH), np.float32)
         return (torch.from_numpy(np.ascontiguousarray(frames.transpose(2, 0, 1))),
                 torch.from_numpy(heat), torch.tensor(float(visible)), torch.tensor([x, y], dtype=torch.float32))
+
+
+def _strong(stack, visible, x, y):
+    """The same random change to the three frames, and to the mark: zoom
+    (0.85-1.25) and shift (up to a tenth), as a ball nearer or further and
+    elsewhere in the picture; at times a blur, and each colour channel's
+    gain apart. A mark pushed out of the picture is a ball not in sight."""
+    if random.random() < 0.6:
+        zoom = random.uniform(0.85, 1.25)
+        tx, ty = random.uniform(-0.1, 0.1) * WIDTH, random.uniform(-0.1, 0.1) * HEIGHT
+        m = np.array([[zoom, 0, (1 - zoom) * WIDTH / 2 + tx], [0, zoom, (1 - zoom) * HEIGHT / 2 + ty]], np.float32)
+        stack = [cv2.warpAffine(np.ascontiguousarray(im), m, (WIDTH, HEIGHT), flags=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT, borderValue=0) for im in stack]
+        if visible:
+            x, y = float(m[0, 0] * x + m[0, 2]), float(m[1, 1] * y + m[1, 2])
+            if not (0 <= x < WIDTH and 0 <= y < HEIGHT):
+                visible, x, y = False, 0.0, 0.0
+    if random.random() < 0.2:
+        stack = [cv2.GaussianBlur(np.ascontiguousarray(im), (3, 3), 0) for im in stack]
+    gain = np.array([random.uniform(0.9, 1.1) for _ in range(3)], np.float32)
+    stack = [np.clip(np.ascontiguousarray(im).astype(np.float32) * gain, 0, 255).astype(np.uint8) for im in stack]
+    return stack, visible, x, y
 
 
 def _heat(x: float, y: float) -> np.ndarray:
@@ -273,19 +299,20 @@ def split(keys: list, holdout: str | None, rng: random.Random) -> tuple[list, li
     """(training clips, validation clips) of the clip keys (zip, clip).
 
     holdout None: VAL_SHARE of the clips at random, from every match.
-    holdout a zip's name (or a part of it naming one zip): all of that
-    match's clips to validation, the other matches' to training."""
+    holdout a zip's name, or a part of the names (the match's id: its
+    whole-frame zip and its far-half zip): all of those zips' clips to
+    validation, the others' to training."""
     keys = sorted(keys)
     if holdout:
         zips = sorted({k[0] for k in keys})
         chosen = [z for z in zips if Path(z).name == holdout] or [z for z in zips if holdout in Path(z).name]
-        if len(chosen) != 1:
-            raise SystemExit(f"--holdout {holdout}: " + (
-                "nessuno zip con questo nome." if not chosen else f"più zip corrispondono: {', '.join(chosen)}."))
-        val = [k for k in keys if k[0] == chosen[0]]
-        train = [k for k in keys if k[0] != chosen[0]]
+        if not chosen:
+            raise SystemExit(f"--holdout {holdout}: nessuno zip con questo nome.")
+        val = [k for k in keys if k[0] in chosen]
+        train = [k for k in keys if k[0] not in chosen]
         if not train:
-            raise SystemExit("--holdout vuole almeno due zip: uno per la validazione, gli altri per l'addestramento.")
+            raise SystemExit(f"--holdout {holdout}: tutti gli zip ({', '.join(chosen)}) andrebbero in validazione, "
+                             "nessuno resta per l'addestramento.")
         return train, val
     rng.shuffle(keys)
     n_val = max(1, int(round(len(keys) * VAL_SHARE))) if len(keys) > 1 else 0
@@ -301,6 +328,9 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=32, help="canali del primo livello")
     parser.add_argument("--out", default="ball")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--augment", choices=("base", "strong"), default="strong",
+                        help="variazioni degli esempi: base (specchio e luce, come le prime reti) o strong "
+                             "(anche zoom, spostamento, sfocatura, rumore, colore)")
     parser.add_argument("--holdout", metavar="ZIP",
                         help="valida su tutti gli spezzoni di questo zip (una partita) e addestra sugli altri: "
                              "la misura che vale per una partita nuova")
@@ -332,7 +362,7 @@ def main() -> None:
     model = TrackNetLite(args.width).to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, args.epochs)
-    train_loader = torch.utils.data.DataLoader(Frames(train, images, True), batch_size=args.batch, shuffle=True)
+    train_loader = torch.utils.data.DataLoader(Frames(train, images, args.augment), batch_size=args.batch, shuffle=True)
     val_loader = torch.utils.data.DataLoader(Frames(val, images, False), batch_size=args.batch) if val else None
     best = -1.0
     for epoch in range(args.epochs):
@@ -367,6 +397,15 @@ def main() -> None:
             r = score(old, val_loader, device)
             print(f"Modello precedente ({args.compare}) sugli stessi spezzoni, soglia 0.5: "
                   f"precisione {r['precision']:.3f} · richiamo {r['recall']:.3f} · F1 {r['f1']:.3f}")
+        # Match by match and whole frame / far half apart: a zip each.
+        if len({k[0] for k in val_keys}) > 1:
+            print("Per zip (modello migliore, soglia 0.5):")
+            by_zip: dict = defaultdict(list)
+            for k in val_keys:
+                by_zip[Path(k[0]).name].extend(samples[k])
+            for name, rows in sorted(by_zip.items()):
+                r = score(model, torch.utils.data.DataLoader(Frames(rows, images, False), batch_size=args.batch), device)
+                print(f"  {name}: precisione {r['precision']:.3f} · richiamo {r['recall']:.3f} · F1 {r['f1']:.3f}")
     export_onnx(model.eval().cpu(), f"{args.out}.onnx")
     print(f"Salvati {args.out}.pt e {args.out}.onnx · miglior F1 in validazione {best}")
 

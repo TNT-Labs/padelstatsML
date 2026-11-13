@@ -354,12 +354,12 @@ def ball_input(directory, calibration, identity, height: int, model: HitModel | 
     """What the hits are read from, when the run followed the ball and a
     hit model is there; None otherwise. `model`: other models than the
     stored ones (to measure models trained without this match)."""
-    from app.ml.artifacts import read_ball, read_ball_weak
+    from app.ml.artifacts import read_ball_all, read_ball_weak
 
     model = model or load_model()
     if model is None or directory is None or not height:
         return None
-    found = read_ball(directory)
+    found = read_ball_all(directory)
     if not found:
         return None
     T, X, Y = ball_points(found, height, read_ball_weak(directory))
