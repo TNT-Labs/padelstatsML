@@ -16,7 +16,14 @@ video (smash 21, bandeja 13, lob 8, other strokes 7, nothing 9):
   one. The result holds from -0.2 to -0.35 and from 6 to 7 m: a gesture,
   not thresholds fitted to the set.
 - lob: the racket wrist up further back, the player nearly still
-  (LOB_MAX_SPEED_MS): 7 of the 8 so called, on few cases.
+  (LOB_MAX_SPEED_MS): 7 of the 8 so called on the first set checked, 1 of
+  7 on the second (a left-hander's backhands from the back of the court,
+  the racket arm ending high). Not a gesture the posture tells apart:
+  the candidates are still stored, but no longer called lobs (SHOW_LOBS).
+- checked on a second set, smash and bandeja held less well than on the
+  first: 25 of the 30 so called were one (a volley, two lobs, two
+  nothings among them). Asking for a hit of the ball beside them would
+  have removed the two nothings and five true smashes: not done.
 - anything else is left out.
 
 The racket hand is known only once the players are named with it, after
@@ -40,6 +47,7 @@ OVERHEAD_MAX_NET_M = 6.5
 # The free arm's height, torsos above the shoulders, at least.
 FREE_ARM_MIN = -0.3
 LOB_MAX_SPEED_MS = 2.0
+SHOW_LOBS = False
 SPEED_WINDOW_S = 0.6
 # Strokes count around a rally, not while players fool about between points.
 RALLY_MARGIN_S = 0.5
@@ -93,7 +101,7 @@ def classify(stroke: dict, hand: str | None) -> str | None:
             free = stroke["high"]["R" if side == "L" else "L"]
             kinds.append("overhead" if free is not None and free >= FREE_ARM_MIN else None)
         else:
-            kinds.append("lob" if stroke["speed"] <= LOB_MAX_SPEED_MS else None)
+            kinds.append("lob" if SHOW_LOBS and stroke["speed"] <= LOB_MAX_SPEED_MS else None)
     return next((k for k in kinds if k), None)
 
 
