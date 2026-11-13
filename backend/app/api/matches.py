@@ -83,6 +83,7 @@ from app.schemas.match import (
     MatchStatsRead,
     MatchUpdate,
     HitLabelsUpdate,
+    PointLabelsUpdate,
     StrokeLabelsUpdate,
     UploadInitResponse,
     UploadStatus,
@@ -714,9 +715,9 @@ async def start_analysis(
     match.player_names = None
     match.player_hands = None
     match.stroke_labels = None
-    # The hits marked in the video stay: they are half an hour of someone's
-    # work, at times of a video that does not change. They follow the
-    # players' names when these are given again (_follow_names).
+    # The hits and the points marked in the video stay: they are half an
+    # hour of someone's work, at times of a video that does not change. They
+    # follow the players' names when these are given again (_follow_names).
     await db.flush()
     return await _read(db, match, user)
 
@@ -794,19 +795,34 @@ async def label_strokes(
 
 
 def _follow_names(match: Match) -> None:
-    """After the players were named: the marked hits moved to the numbers
-    the same names have now. Only when the names then and now are the same
-    people, each said once; otherwise the marks stay as they are."""
-    then, now = match.hit_label_names, match.player_names
-    if not match.hit_labels or not then or not now:
-        return
+    """After the players were named: the marked hits and the winners of the
+    marked points moved to the numbers the same names have now. Only when
+    the names then and now are the same people, each said once; otherwise
+    the marks stay as they are."""
+    now = match.player_names
+    moved = _renumbering(match.hit_label_names, now)
+    if moved is not None and match.hit_labels:
+        match.hit_labels = sorted([t, moved.get(int(p), int(p))] for t, p in match.hit_labels)
+        match.hit_label_names = list(now)
+    moved = _renumbering(match.point_label_names, now)
+    if moved is not None and match.point_labels:
+        match.point_labels = [
+            [a, b, sorted(moved.get(int(p), int(p)) for p in w) if w else None]
+            for a, b, w in match.point_labels
+        ]
+        match.point_label_names = list(now)
+
+
+def _renumbering(then: list | None, now: list | None) -> dict[int, int] | None:
+    """Old player id -> new, when `then` and `now` name the same people,
+    each once; None otherwise."""
+    if not then or not now:
+        return None
     key = lambda name: (name or "").strip().casefold()          # noqa: E731
     old, new = [key(n) for n in then], [key(n) for n in now]
     if "" in old or len(set(old)) != len(old) or sorted(old) != sorted(new):
-        return
-    moved = {i: new.index(name) for i, name in enumerate(old)}
-    match.hit_labels = sorted([t, moved.get(int(p), int(p))] for t, p in match.hit_labels)
-    match.hit_label_names = list(now)
+        return None
+    return {i: new.index(name) for i, name in enumerate(old)}
 
 
 @router.put("/{match_id}/hit-labels")
@@ -821,6 +837,31 @@ async def label_hits(
     match.hit_label_names = list(match.player_names) if hits and match.player_names else None
     await db.flush()
     return {"hit_labels": match.hit_labels}
+
+
+@router.put("/{match_id}/point-labels")
+async def label_points(
+    match_id: str, payload: PointLabelsUpdate,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_editor),
+) -> dict:
+    """The points a person marked watching the video, all of them: from the
+    serve to the moment the point is decided, and who won it."""
+    match = await _get_match(db, match_id, user)
+    points = []
+    for start, end, winners in payload.points:
+        if end <= start:
+            raise HTTPException(HTTP_UNPROCESSABLE, "Un punto finisce dopo essere cominciato.")
+        if winners is not None and winners[0] == winners[1]:
+            raise HTTPException(HTTP_UNPROCESSABLE, "Un punto lo vince una coppia: due giocatori diversi.")
+        points.append([round(start, 2), round(end, 2), sorted(winners) if winners else None])
+    points.sort(key=lambda p: p[0])
+    for before, after in zip(points, points[1:]):
+        if after[0] < before[1]:
+            raise HTTPException(HTTP_UNPROCESSABLE, "Due punti segnati si sovrappongono.")
+    match.point_labels = points or None
+    match.point_label_names = list(match.player_names) if points and match.player_names else None
+    await db.flush()
+    return {"point_labels": match.point_labels}
 
 
 @router.get("/{match_id}/stats", response_model=MatchStatsRead)
@@ -867,6 +908,7 @@ async def get_stats(
         player_hands=match.player_hands,
         stroke_labels=match.stroke_labels,
         hit_labels=match.hit_labels,
+        point_labels=match.point_labels,
         per_player=per_player,
         heatmaps=stats.heatmaps,
         rallies=stats.rallies,

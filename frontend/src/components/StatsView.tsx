@@ -4,6 +4,7 @@ import { CourtHeatmap } from './CourtHeatmap'
 import { DataQualityPanel } from './DataQualityPanel'
 import { InfoHeading } from './InfoHeading'
 import { HitMarker } from './HitMarker'
+import { PointMarker } from './PointMarker'
 import { HitMap } from './HitMap'
 import { MatchVideo } from './MatchVideo'
 import { ZoneChart } from './ZoneChart'
@@ -12,6 +13,7 @@ import { StrokesCard } from './StrokesCard'
 import { analysisTimeText, handLabel, kmh, playerPlace } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
+import { pairsOf, type MarkedPoint } from '../lib/points'
 
 const RALLY_LEAD_S = 2
 
@@ -85,6 +87,24 @@ export const StatsView: FC<Props> = ({
       })
     },
     [hitLabels, stats.match_id],
+  )
+  // The points marked in the video, from the serve to the end: the truth
+  // the rallies are measured against (backend/scripts/eval_points.py).
+  const [pointLabels, setPointLabels] = useState<MarkedPoint[]>(stats.point_labels ?? [])
+  const [markingPoints, setMarkingPoints] = useState(false)
+  const [pointError, setPointError] = useState<string | null>(null)
+  const pairs = useMemo(() => pairsOf(stats.per_player), [stats.per_player])
+  const savePoints = useCallback(
+    (next: MarkedPoint[]) => {
+      const before = pointLabels
+      setPointLabels(next)
+      setPointError(null)
+      api.labelPoints(stats.match_id, next).catch(e => {
+        setPointLabels(before)
+        setPointError((e as Error).message)
+      })
+    },
+    [pointLabels, stats.match_id],
   )
   const videoRef = useRef<HTMLVideoElement>(null)
   const [asking, setAsking] = useState(false)
@@ -265,7 +285,11 @@ export const StatsView: FC<Props> = ({
               type="button"
               className={`btn btn-sm ${markingHits ? 'btn-primary' : 'btn-ghost'}`}
               aria-pressed={markingHits}
-              onClick={() => setMarkingHits(m => !m)}
+              onClick={() => {
+                // One marker at a time: both read the keys 1 and 2.
+                setMarkingPoints(false)
+                setMarkingHits(m => !m)
+              }}
             >
               {markingHits ? 'Chiudi' : 'Segna i colpi'}
               {!markingHits && hitLabels.length > 0 && ` (${hitLabels.length})`}
@@ -280,6 +304,36 @@ export const StatsView: FC<Props> = ({
               hits={hitLabels}
               onChange={saveHits}
               error={hitError}
+            />
+          )}
+        </div>
+      )}
+      {!readOnly && (
+        <div className="card" style={{ marginBottom: '1.25rem' }}>
+          <div className="card-head">
+            <h2 style={{ margin: 0 }}>Punti visti nel video</h2>
+            <button
+              type="button"
+              className={`btn btn-sm ${markingPoints ? 'btn-primary' : 'btn-ghost'}`}
+              aria-pressed={markingPoints}
+              onClick={() => {
+                setMarkingHits(false)
+                setMarkingPoints(m => !m)
+              }}
+            >
+              {markingPoints ? 'Chiudi' : 'Segna i punti'}
+              {!markingPoints && pointLabels.length > 0 && ` (${pointLabels.length})`}
+            </button>
+          </div>
+          {markingPoints && (
+            <PointMarker
+              title={stats.title}
+              pairs={pairs}
+              names={names}
+              videoRef={videoRef}
+              points={pointLabels}
+              onChange={savePoints}
+              error={pointError}
             />
           )}
         </div>

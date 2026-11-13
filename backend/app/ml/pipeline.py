@@ -613,6 +613,7 @@ def analyse_tracklets(
     start_s: float = 0.0,
     ball_dir: str | Path | None = None,
     frame_height: int | None = None,
+    hit_model=None,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -647,7 +648,7 @@ def analyse_tracklets(
     # With the ball followed: rallies from the serve to the last hit, and
     # the hits (app.ml.ball_hits).
     where = _where_players(paths)
-    ball = hits_input(ball_dir, calibration, identity, int(frame_height or 0)) if ball_dir else None
+    ball = hits_input(ball_dir, calibration, identity, int(frame_height or 0), hit_model) if ball_dir else None
     hits = None
     if ball is not None:
         rallies, hits, rallies_dropped = refine_rallies(rallies, ball, where.net_distance)

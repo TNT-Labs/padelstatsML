@@ -36,6 +36,19 @@ Ad ogni epoca lo script stampa precisione e richiamo sulla validazione. Questi v
 - Un F1 sopra 0,8 è buono.
 - Se è basso, servono più spezzoni annotati.
 
+Attenzione: di serie la validazione prende spezzoni a caso **delle stesse partite** dell'addestramento,
+e gli spezzoni vicini a quelli di validazione sono in addestramento: il numero è ottimista. Con
+`--holdout` la validazione è invece una partita intera, mai vista in addestramento (uno zip è una
+partita):
+
+```
+!python train_tracknet.py palla_*.zip --epochs 30 --holdout palla_terzo.zip
+```
+
+È la misura che vale per una partita nuova: usala per confrontare due addestramenti, sullo stesso
+zip escluso. Il modello così addestrato non ha visto quella partita: per quello da mettere sul
+Raspberry si addestra di nuovo su tutto, senza `--holdout`.
+
 Alla fine scarica `ball.onnx` e `ball.pt`. Prepara anche l'insieme di calibrazione per la conversione e scarica `calib.npy`:
 
 ```
