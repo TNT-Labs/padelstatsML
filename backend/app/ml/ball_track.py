@@ -21,7 +21,7 @@ flight was heading — by the rule that chains the flight itself. The ball
 coming to the far pair is two pixels and often the second brightest thing
 in the map: it was missing in the half second before more than half of
 their hits. Without ball_weak.jsonl nothing is recovered: the flights are
-those of before.
+those of before. How far to trust the weaker peaks is RECOVERY.
 
 All in image pixels, as fractions of the picture's height: the same rules
 for any resolution.
@@ -47,6 +47,25 @@ ON_COURSE = 0.03
 # (0.5 s at 30 fps) — a weak track followed further drifts onto noise.
 IN_GAP = 0.015
 RECOVER_MAX = 15
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """How the flights are followed with the weaker peaks: peaks at least
+    `min_peak` (the answers no flight took count as 1), into the gaps
+    and/or past the ends, the distances allowed scaled by `tolerance`."""
+    min_peak: float = 0.15
+    gaps: bool = True
+    ends: bool = True
+    tolerance: float = 1.0
+
+
+# Off until a setting is shown, on the marked frames (training/ball/
+# peaks_check.py), to add more ball than noise: as first written (gaps and
+# ends, 0.15, full tolerance) it added 13 wrong points for every 8 right
+# ones. The weaker peaks are stored anyway: the setting chosen then reaches
+# the runs analysed now through Aggiorna statistiche.
+RECOVERY = Recovery(gaps=False, ends=False)
 
 
 @dataclass
@@ -83,7 +102,8 @@ class Flight:
         return math.hypot(max(self.xs) - min(self.xs), max(self.ys) - min(self.ys))
 
 
-def flights(found: list[tuple[int, float, float, float, float]], height: int, weak=None) -> list[Flight]:
+def flights(found: list[tuple[int, float, float, float, float]], height: int, weak=None,
+            recovery: Recovery | None = None) -> list[Flight]:
     """The ball's flights from the raw answers (frame, time, x, y, peak),
     in frame order, `height` the picture's height in pixels; with `weak`
     (artifacts.read_ball_weak) followed further (recover)."""
@@ -114,14 +134,14 @@ def flights(found: list[tuple[int, float, float, float, float]], height: int, we
     keep = [f for f in done if len(f.frames) >= MIN_POINTS and f.travel() >= MIN_TRAVEL * height]
     keep.sort(key=lambda f: f.frames[0])
     if weak is not None:
-        recover(keep, found, weak, height)
+        recover(keep, found, weak, height, recovery or RECOVERY)
     return keep
 
 
 Candidates = dict[int, list[tuple[float, float, float]]]   # frame -> [(time, x, y)]
 
 
-def recover(kept: list[Flight], found, weak, height: int) -> int:
+def recover(kept: list[Flight], found, weak, height: int, how: Recovery = RECOVERY) -> int:
     """Extend the flights `kept` (in place) with the weaker peaks `weak`
     (frame -> (time, [(x, y, peak)])) and the answers in `found` no flight
     took. Returns how many points were added."""
@@ -132,12 +152,14 @@ def recover(kept: list[Flight], found, weak, height: int) -> int:
             pool.setdefault(frame, []).append((t, x, y))
     for frame, (t, peaks) in weak.items():
         if frame not in taken:
-            pool.setdefault(frame, []).extend((t, x, y) for x, y, _p in peaks)
+            pool.setdefault(frame, []).extend((t, x, y) for x, y, p in peaks if p >= how.min_peak)
     added = 0
     for flight in kept:
-        added += _fill_gaps(flight, pool, taken, height)
-        added += _extend(flight, pool, taken, height, forward=True)
-        added += _extend(flight, pool, taken, height, forward=False)
+        if how.gaps:
+            added += _fill_gaps(flight, pool, taken, height, how.tolerance)
+        if how.ends:
+            added += _extend(flight, pool, taken, height, True, how.tolerance)
+            added += _extend(flight, pool, taken, height, False, how.tolerance)
     return added
 
 
@@ -156,7 +178,7 @@ def _take(flight: Flight, pool: Candidates, taken: set[int], frame: int, c) -> N
     pool.pop(frame, None)
 
 
-def _fill_gaps(flight: Flight, pool: Candidates, taken: set[int], height: int) -> int:
+def _fill_gaps(flight: Flight, pool: Candidates, taken: set[int], height: int, tolerance: float = 1.0) -> int:
     added = 0
     points = list(zip(flight.frames, flight.xs, flight.ys))
     for (f0, x0, y0), (f1, x1, y1) in zip(points, points[1:]):
@@ -164,7 +186,8 @@ def _fill_gaps(flight: Flight, pool: Candidates, taken: set[int], height: int) -
             if frame in taken:
                 continue
             k = (frame - f0) / (f1 - f0)
-            c = _nearest(pool, frame, x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, IN_GAP * height)
+            c = _nearest(pool, frame, x0 + (x1 - x0) * k, y0 + (y1 - y0) * k,
+                         IN_GAP * height * tolerance)
             if c is not None:
                 _take(flight, pool, taken, frame, c)
                 added += 1
@@ -173,7 +196,8 @@ def _fill_gaps(flight: Flight, pool: Candidates, taken: set[int], height: int) -
     return added
 
 
-def _extend(flight: Flight, pool: Candidates, taken: set[int], height: int, forward: bool) -> int:
+def _extend(flight: Flight, pool: Candidates, taken: set[int], height: int, forward: bool,
+            tolerance: float = 1.0) -> int:
     """Past one end, by the rule the chaining uses: near enough the last
     point for the gap, where the flight was heading."""
     step = MAX_STEP * height
@@ -194,7 +218,7 @@ def _extend(flight: Flight, pool: Candidates, taken: set[int], height: int, forw
             if frame in taken or abs(frame - end) > RECOVER_MAX:
                 break
             ex, ey = xb + vx * gap, yb + vy * gap
-            c = _nearest(pool, frame, ex, ey, ON_COURSE * height + 0.5 * speed * gap)
+            c = _nearest(pool, frame, ex, ey, (ON_COURSE * height + 0.5 * speed * gap) * tolerance)
             if c is not None and math.hypot(c[1] - xb, c[2] - yb) <= step * gap:
                 found = (frame, c)
                 break

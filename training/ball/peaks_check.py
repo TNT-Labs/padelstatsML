@@ -78,6 +78,34 @@ def clips(zips: list[str]):
     return out, archives
 
 
+def flights_score(runs_seen, how, near) -> dict:
+    """The flights of every run against the marks: with `how` (a
+    ball_track.Recovery) the weaker peaks followed, None without them; and
+    the points the recovery added, right, misplaced or on a hidden ball."""
+    c = {"tp": 0, "fp": 0, "fn": 0, "added_ok": 0, "added_wrong": 0, "added_hidden": 0}
+    for found, weak, marks in runs_seen:
+        def points(flights):
+            out = {}
+            for f in flights:
+                out.update({fr: (x, y) for fr, x, y in zip(f.frames, f.xs, f.ys)})
+            return out
+        plain = points(ball_track.flights(found, tt.HEIGHT))
+        mine = plain if how is None else points(ball_track.flights(found, tt.HEIGHT, weak, how))
+        for n, (visible, bx, by) in marks.items():
+            p = mine.get(n)
+            if visible and near(p, bx, by):
+                c["tp"] += 1
+            elif p is not None:
+                c["fp"] += 1
+                c["fn"] += bool(visible)
+            elif visible:
+                c["fn"] += 1
+            if p is not None and n not in plain:
+                key = "added_hidden" if not visible else "added_ok" if near(p, bx, by) else "added_wrong"
+                c[key] += 1
+    return c
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", help="ball.pt")
@@ -109,7 +137,7 @@ def main() -> None:
     among = {low: 0 for low in LOWS}
     weak_count = {low: 0 for low in LOWS}
     missed = frames_seen = 0
-    tracked = {"senza": {"tp": 0, "fp": 0, "fn": 0}, "con": {"tp": 0, "fp": 0, "fn": 0}}
+    runs_seen = []                  # per run: (found, weak, marks), for the flights after
 
     def near(point, x, y):
         return point is not None and np.hypot(point[0] - x, point[1] - y) <= tt.HIT_PX
@@ -148,20 +176,7 @@ def main() -> None:
                             among[low] += any(near(p, bx, by) for p in peaks[:ballmod.WEAK_MAX] if p[2] >= low)
                 elif top is not None:
                     frame["fp"] += 1
-            for how, w in (("senza", None), ("con", weak)):
-                points = {}
-                for f in ball_track.flights(found, tt.HEIGHT, w):
-                    points.update({fr: (x, y) for fr, x, y in zip(f.frames, f.xs, f.ys)})
-                c = tracked[how]
-                for n, (visible, bx, by) in marks.items():
-                    p = points.get(n)
-                    if visible and near(p, bx, by):
-                        c["tp"] += 1
-                    elif p is not None:
-                        c["fp"] += 1
-                        c["fn"] += bool(visible)
-                    elif visible:
-                        c["fn"] += 1
+            runs_seen.append((found, weak, marks))
 
     def prf(c):
         p = c["tp"] / max(1, c["tp"] + c["fp"])
@@ -176,8 +191,17 @@ def main() -> None:
     for low in LOWS:
         print(f"   sopra {low:.2f}: {among[low]} ({among[low] / max(1, missed):.0%}) · "
               f"picchi deboli per fotogramma {weak_count[low] / max(1, frames_seen):.2f}")
-    print(f"3. traiettorie, senza picchi deboli:  {prf(tracked['senza'])}")
-    print(f"   traiettorie, con picchi deboli:    {prf(tracked['con'])}  (sopra {ballmod.WEAK_THRESHOLD})")
+    base = flights_score(runs_seen, None, near)
+    print(f"3. traiettorie, senza picchi deboli: {prf(base)}")
+    print("   con i picchi deboli: dove · soglia · tolleranza → traiettorie · punti aggiunti giusti / "
+          "nel posto sbagliato / dove la palla era coperta")
+    for where, gaps, ends in (("buchi", True, False), ("capi", False, True), ("buchi+capi", True, True)):
+        for low in (0.15, 0.2, 0.3):
+            for tol in (1.0, 0.5):
+                how = ball_track.Recovery(min_peak=low, gaps=gaps, ends=ends, tolerance=tol)
+                c = flights_score(runs_seen, how, near)
+                print(f"   {where:10s} · {low:.2f} · {tol:.1f} → {prf(c)} · "
+                      f"{c['added_ok']} / {c['added_wrong']} / {c['added_hidden']}")
 
 
 if __name__ == "__main__":
