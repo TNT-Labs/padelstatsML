@@ -181,7 +181,12 @@ Da lì ogni analisi la segue su **ogni** fotogramma (`BALL=auto`, `off` per
 spegnerla): tre fotogrammi consecutivi in, la posizione della palla out,
 17 ms sulla Hailo-8L. Le risposte grezze finiscono in `ball.jsonl`, e
 `ball_track.py` le unisce in traiettorie: scarta i punti isolati, i salti e
-le cose ferme come luci o palle a terra. Sul video della partita
+le cose ferme come luci o palle a terra. Accanto alla palla l'analisi tiene i
+picchi più deboli della mappa (`ball_weak.jsonl`): da soli sono quasi tutti
+rumore, ma uno dove una traiettoria stava andando è la palla, e la traiettoria
+prosegue (fino a mezzo secondo per lato, e nei buchi). Serve soprattutto alla
+palla lontana, due pixel, spesso il secondo punto più acceso. Vale per le
+partite analizzate da questa versione; le altre restano come prima. Sul video della partita
 l'interruttore **Palla** mostra la palla e la sua scia.
 
 La rete di prova (26 spezzoni annotati) trova 3 palle visibili su 4 entro
@@ -407,7 +412,7 @@ misurare sul Pi; `BALL=off` torna ai tempi senza palla.
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 430 backend + 61 frontend
+make test         # 437 backend + 61 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health

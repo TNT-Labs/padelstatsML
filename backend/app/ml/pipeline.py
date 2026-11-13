@@ -228,7 +228,7 @@ class AnalysisPipeline:
                     recent.append(small if small is not None else ball_input(frame.image))
                     if len(recent) == 3:
                         try:
-                            ball = baller.find(list(recent), (info.width, info.height))
+                            ball, weak = baller.find_all(list(recent), (info.width, info.height))
                         except Exception as exc:      # noqa: BLE001 - the players matter more
                             logger.error("Palla: %s · proseguo senza", exc)
                             _close(baller)
@@ -241,6 +241,8 @@ class AnalysisPipeline:
                                 ball_found += 1
                                 if writer is not None:
                                     writer.write_ball(frame.index, frame.timestamp_s, *ball)
+                            if weak and writer is not None:
+                                writer.write_ball_weak(frame.index, frame.timestamp_s, weak)
                 if not frame.main:
                     if frame.pose and poser is not None:
                         boxes = tracker.current_boxes(frame.timestamp_s)

@@ -948,6 +948,11 @@ class _BallEverywhere:
             raise RuntimeError("la scheda non ha scritto il risultato")
         return (float(self.calls % frame_size[0]), 300.0, 0.8)
 
+    def find_all(self, frames, frame_size):
+        """As the real one: the ball and, every tenth frame, a weaker peak."""
+        ball = self.find(frames, frame_size)
+        return ball, ([(5.0, 7.0, 0.2)] if self.calls % 10 == 0 else [])
+
     def close(self) -> None:
         pass
 
@@ -969,7 +974,7 @@ def _run_with_ball(monkeypatch, synthetic_match, calibration, artifacts, baller=
 
 
 def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calibration, tmp_path):
-    from app.ml.artifacts import read_ball
+    from app.ml.artifacts import read_ball, read_ball_weak
     from app.ml.video import probe
 
     result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path / "a")
@@ -978,6 +983,9 @@ def test_the_ball_is_followed_on_every_frame(monkeypatch, synthetic_match, calib
     # Every frame but the first two (three in a row are the input), in order.
     assert len(ball) == frames - 2
     assert [b[0] for b in ball] == list(range(2, frames))
+    # The weaker peaks beside it, on the frames that had any.
+    weak = read_ball_weak(tmp_path / "a")
+    assert len(weak) == (frames - 2) // 10 and all(p == [(5.0, 7.0, 0.2)] for _, p in weak.values())
     ball_quality = result["data_quality"]["ball"]
     assert {k: ball_quality[k] for k in ("model", "frames", "found")} == {
         "model": "ball_h8l.hef", "frames": frames - 2, "found": frames - 2}
@@ -1006,3 +1014,4 @@ def test_without_the_ball_network_nothing_changes(monkeypatch, synthetic_match, 
     result = _run_with_ball(monkeypatch, synthetic_match, calibration, tmp_path, model=None)
     assert result["data_quality"].get("ball") is None
     assert not (tmp_path / "ball.jsonl").exists()
+    assert not (tmp_path / "ball_weak.jsonl").exists()

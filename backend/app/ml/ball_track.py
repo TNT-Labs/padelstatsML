@@ -13,6 +13,16 @@ nearest to where that tracklet was heading. Tracklets too short (MIN_POINTS)
 are noise; tracklets that never move (MIN_TRAVEL) are something still —
 a light, a ball lying on the floor — and both are dropped.
 
+Then, for runs that kept the heat map's weaker peaks (ball_weak.jsonl),
+each flight is followed further (recover): into its gaps, where a peak lies
+on the line between the points around it, and past its ends, frame by
+frame, where a peak (or an answer the chaining left out) lies where the
+flight was heading — by the rule that chains the flight itself. The ball
+coming to the far pair is two pixels and often the second brightest thing
+in the map: it was missing in the half second before more than half of
+their hits. Without ball_weak.jsonl nothing is recovered: the flights are
+those of before.
+
 All in image pixels, as fractions of the picture's height: the same rules
 for any resolution.
 """
@@ -32,6 +42,11 @@ MIN_TRAVEL = 0.02            # of the height, end to end of the tracklet's exten
 # A hit or a bounce turns it more than that: there a new flight starts,
 # and a stray answer a few frames on is not taken for the ball.
 ON_COURSE = 0.03
+# Recovering: in a gap, within this much of the height of the straight line
+# between the points around it; past an end, at most this many frames on
+# (0.5 s at 30 fps) — a weak track followed further drifts onto noise.
+IN_GAP = 0.015
+RECOVER_MAX = 15
 
 
 @dataclass
@@ -68,9 +83,10 @@ class Flight:
         return math.hypot(max(self.xs) - min(self.xs), max(self.ys) - min(self.ys))
 
 
-def flights(found: list[tuple[int, float, float, float, float]], height: int) -> list[Flight]:
+def flights(found: list[tuple[int, float, float, float, float]], height: int, weak=None) -> list[Flight]:
     """The ball's flights from the raw answers (frame, time, x, y, peak),
-    in frame order, `height` the picture's height in pixels."""
+    in frame order, `height` the picture's height in pixels; with `weak`
+    (artifacts.read_ball_weak) followed further (recover)."""
     step = MAX_STEP * height
     active: list[Flight] = []
     done: list[Flight] = []
@@ -96,13 +112,119 @@ def flights(found: list[tuple[int, float, float, float, float]], height: int) ->
         best.add(frame, t, x, y)
     done += active
     keep = [f for f in done if len(f.frames) >= MIN_POINTS and f.travel() >= MIN_TRAVEL * height]
-    return sorted(keep, key=lambda f: f.frames[0])
+    keep.sort(key=lambda f: f.frames[0])
+    if weak is not None:
+        recover(keep, found, weak, height)
+    return keep
 
 
-def track_payload(found: list[tuple[int, float, float, float, float]], width: int, height: int) -> dict:
+Candidates = dict[int, list[tuple[float, float, float]]]   # frame -> [(time, x, y)]
+
+
+def recover(kept: list[Flight], found, weak, height: int) -> int:
+    """Extend the flights `kept` (in place) with the weaker peaks `weak`
+    (frame -> (time, [(x, y, peak)])) and the answers in `found` no flight
+    took. Returns how many points were added."""
+    taken = {fr for f in kept for fr in f.frames}
+    pool: Candidates = {}
+    for frame, t, x, y, _peak in found:
+        if frame not in taken:
+            pool.setdefault(frame, []).append((t, x, y))
+    for frame, (t, peaks) in weak.items():
+        if frame not in taken:
+            pool.setdefault(frame, []).extend((t, x, y) for x, y, _p in peaks)
+    added = 0
+    for flight in kept:
+        added += _fill_gaps(flight, pool, taken, height)
+        added += _extend(flight, pool, taken, height, forward=True)
+        added += _extend(flight, pool, taken, height, forward=False)
+    return added
+
+
+def _nearest(pool: Candidates, frame: int, ex: float, ey: float, limit: float):
+    best, best_d = None, limit
+    for c in pool.get(frame, ()):
+        d = math.hypot(c[1] - ex, c[2] - ey)
+        if d <= best_d:
+            best, best_d = c, d
+    return best
+
+
+def _take(flight: Flight, pool: Candidates, taken: set[int], frame: int, c) -> None:
+    flight.add(frame, *c)
+    taken.add(frame)
+    pool.pop(frame, None)
+
+
+def _fill_gaps(flight: Flight, pool: Candidates, taken: set[int], height: int) -> int:
+    added = 0
+    points = list(zip(flight.frames, flight.xs, flight.ys))
+    for (f0, x0, y0), (f1, x1, y1) in zip(points, points[1:]):
+        for frame in range(f0 + 1, f1):
+            if frame in taken:
+                continue
+            k = (frame - f0) / (f1 - f0)
+            c = _nearest(pool, frame, x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, IN_GAP * height)
+            if c is not None:
+                _take(flight, pool, taken, frame, c)
+                added += 1
+    if added:
+        _sort(flight)
+    return added
+
+
+def _extend(flight: Flight, pool: Candidates, taken: set[int], height: int, forward: bool) -> int:
+    """Past one end, by the rule the chaining uses: near enough the last
+    point for the gap, where the flight was heading."""
+    step = MAX_STEP * height
+    sign = 1 if forward else -1
+    pts = list(zip(flight.frames, flight.times, flight.xs, flight.ys))
+    if not forward:
+        pts.reverse()
+    end = pts[-1][0]
+    added = []
+    while abs(pts[-1][0] - end) < RECOVER_MAX:
+        (fa, _, xa, ya), (fb, _, xb, yb) = pts[-2], pts[-1]
+        span = max(abs(fb - fa), 1)
+        vx, vy = (xb - xa) / span, (yb - ya) / span
+        speed = math.hypot(vx, vy)
+        found = None
+        for gap in range(1, MAX_GAP + 1):
+            frame = fb + sign * gap
+            if frame in taken or abs(frame - end) > RECOVER_MAX:
+                break
+            ex, ey = xb + vx * gap, yb + vy * gap
+            c = _nearest(pool, frame, ex, ey, ON_COURSE * height + 0.5 * speed * gap)
+            if c is not None and math.hypot(c[1] - xb, c[2] - yb) <= step * gap:
+                found = (frame, c)
+                break
+        if found is None:
+            break
+        frame, c = found
+        taken.add(frame)
+        pool.pop(frame, None)
+        pts.append((frame, *c))
+        added.append((frame, *c))
+    for frame, t, x, y in added:
+        flight.add(frame, t, x, y)
+    if added:
+        _sort(flight)
+    return len(added)
+
+
+def _sort(flight: Flight) -> None:
+    order = sorted(range(len(flight.frames)), key=lambda i: flight.frames[i])
+    flight.frames = [flight.frames[i] for i in order]
+    flight.times = [flight.times[i] for i in order]
+    flight.xs = [flight.xs[i] for i in order]
+    flight.ys = [flight.ys[i] for i in order]
+
+
+def track_payload(found: list[tuple[int, float, float, float, float]], width: int, height: int,
+                  weak=None) -> dict:
     """The ball for the web player: per flight its times and points, in
     video pixels rounded to the pixel."""
-    out = flights(found, height)
+    out = flights(found, height, weak)
     return {
         "frame": [width, height],
         "seen": sum(len(f.frames) for f in out),
@@ -117,7 +239,7 @@ def track_payload(found: list[tuple[int, float, float, float, float]], width: in
 
 
 # Bump when the flights are made differently: older cached files are rebuilt.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def track_gz(directory, width: int, height: int) -> bytes | None:
@@ -127,16 +249,17 @@ def track_gz(directory, width: int, height: int) -> bytes | None:
     import json
     from pathlib import Path
 
-    from app.ml.artifacts import BALL_FILE, read_ball
+    from app.ml.artifacts import BALL_FILE, BALL_WEAK_FILE, read_ball, read_ball_weak
 
     directory = Path(directory)
     source = directory / BALL_FILE
     if not source.exists():
         return None
     cache = directory / f"ball-track-v{CACHE_VERSION}.json.gz"
-    if cache.exists() and cache.stat().st_mtime >= source.stat().st_mtime:
+    sources = [p for p in (source, directory / BALL_WEAK_FILE) if p.exists()]
+    if cache.exists() and all(cache.stat().st_mtime >= p.stat().st_mtime for p in sources):
         return cache.read_bytes()
-    data = gzip.compress(json.dumps(track_payload(read_ball(directory), width, height),
+    data = gzip.compress(json.dumps(track_payload(read_ball(directory), width, height, read_ball_weak(directory)),
                                     separators=(",", ":")).encode(), compresslevel=6)
     part = cache.with_name(cache.name + ".part")
     part.write_bytes(data)
