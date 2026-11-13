@@ -8,6 +8,13 @@ bytes as they are.
 
 The ball is where the heat map is over THRESHOLD: the centre of the largest
 such blob, in the video's pixels.
+
+On a quarter of the frames with the ball in sight the brightest point of the
+map is not the ball (validation, training/ball/README.md): it is often still
+there, a weaker peak. The weaker peaks (weak_peaks: local maxima over
+WEAK_THRESHOLD, at most WEAK_MAX) are kept apart, in ball_weak.jsonl:
+alone they are mostly noise, but one where a flight of the ball was heading
+is the ball (ball_track.recover).
 """
 from __future__ import annotations
 
@@ -19,6 +26,11 @@ import numpy as np
 
 WIDTH, HEIGHT = 512, 288
 THRESHOLD = 0.5
+# The weaker peaks kept beside the ball: over this, at most this many a frame,
+# and not within WEAK_APART pixels of the map of the ball or of each other.
+WEAK_THRESHOLD = 0.15
+WEAK_MAX = 3
+WEAK_APART = 6.0
 # Where the compiled network is looked for: weights/ on the Pi.
 BALL_MODELS = ("/srv/weights/ball_h8l.hef", "/srv/weights/ball_h8.hef")
 
@@ -51,6 +63,33 @@ def locate(heat: np.ndarray, threshold: float = THRESHOLD) -> tuple[float, float
         return None
     best = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     return float(centres[best][0]), float(centres[best][1]), peak
+
+
+def weak_peaks(heat: np.ndarray, ball: tuple[float, float] | None,
+               threshold: float = WEAK_THRESHOLD, count: int = WEAK_MAX) -> list[tuple[float, float, float]]:
+    """Local maxima of the heat map over `threshold`, brightest first, away
+    from `ball` (the blob taken for the ball): (x, y, peak) in heat-map
+    pixels, at most `count`."""
+    if count <= 0 or float(heat.max()) < threshold:
+        return []
+    heat = np.asarray(heat, dtype=np.float32)
+    top = (heat >= cv2.dilate(heat, np.ones((5, 5), np.uint8))) & (heat >= threshold)
+    ys, xs = np.nonzero(top)
+    if len(xs) > 64:                       # a flat bright patch: its brightest pixels
+        keep = np.argpartition(-heat[ys, xs], 64)[:64]
+        ys, xs = ys[keep], xs[keep]
+    values = heat[ys, xs]
+    out: list[tuple[float, float, float]] = []
+    for i in np.argsort(-values, kind="stable"):
+        x, y = float(xs[i]), float(ys[i])
+        if ball is not None and np.hypot(x - ball[0], y - ball[1]) <= WEAK_APART:
+            continue
+        if any(np.hypot(x - o[0], y - o[1]) <= WEAK_APART for o in out):
+            continue                       # the same peak: a plateau
+        out.append((x, y, round(float(values[i]), 3)))
+        if len(out) == count:
+            break
+    return out
 
 
 class HailoBallDetector:
@@ -105,6 +144,17 @@ class HailoBallDetector:
             return None
         width, height = frame_size
         return found[0] * width / WIDTH, found[1] * height / HEIGHT, found[2]
+
+    def find_all(self, frames: list[np.ndarray], frame_size: tuple[int, int]):
+        """As find, and the weaker peaks (weak_peaks) in video pixels:
+        (ball or None, [(x, y, peak)])."""
+        heat = self.heat(stack(frames))
+        found = locate(heat, self.threshold)
+        weak = weak_peaks(heat, found[:2] if found else None)
+        width, height = frame_size
+        sx, sy = width / WIDTH, height / HEIGHT
+        ball = (found[0] * sx, found[1] * sy, found[2]) if found else None
+        return ball, [(x * sx, y * sy, p) for x, y, p in weak]
 
     def close(self) -> None:
         self._stack.close()

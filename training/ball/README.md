@@ -55,6 +55,24 @@ Alla fine scarica `ball.onnx` e `ball.pt`. Prepara anche l'insieme di calibrazio
 !python make_calib.py palla_*.zip
 ```
 
+### Quanto rendono i picchi deboli (senza addestrare)
+
+L'analisi tiene, oltre alla palla, i picchi più deboli della mappa (fino a 3 per fotogramma, sopra
+0,15) e li usa solo dove una traiettoria della palla stava andando. Per misurarlo sugli spezzoni
+annotati, con la rete che hai già, carica anche `peaks_check.py`, `ball.py` e `ball_track.py` (da
+`backend/app/ml`) ed esegui:
+
+```
+!python peaks_check.py ball.pt palla_*.zip
+```
+
+Stampa tre cose sugli spezzoni di validazione: la misura di sempre fotogramma per fotogramma; quante
+volte la palla non presa è fra i picchi deboli e quanti picchi deboli ha in media un fotogramma; e
+precisione e richiamo delle traiettorie (quelle che usano le statistiche) senza e con i picchi deboli.
+La terza riga è quella che conta. Senza `--holdout` gli spezzoni di validazione sono delle stesse
+partite dell'addestramento (misura ottimista); con `--holdout palla_X.zip` vale solo per un `ball.pt`
+addestrato anch'esso con `--holdout palla_X.zip`.
+
 ## 3. Convertire per l'Hailo-8L (Windows, WSL2 con Ubuntu 22.04)
 
 1. Registrati su hailo.ai, nella Developer Zone.

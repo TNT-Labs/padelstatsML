@@ -300,11 +300,12 @@ def pair_at(players: list[PlayerTrack], t: float, far: bool) -> list[PlayerTrack
     return sorted([p for p in players if p.team == team], key=lambda p: p.player_id)
 
 
-def ball_points(found, height: int):
-    """Every point of the ball's flights, in time order: T, X, Y."""
+def ball_points(found, height: int, weak=None):
+    """Every point of the ball's flights, in time order: T, X, Y; with the
+    weaker peaks (artifacts.read_ball_weak) the flights followed further."""
     from app.ml.ball_track import flights
 
-    pts = sorted((t, x, y) for f in flights(found, height) for t, x, y in zip(f.times, f.xs, f.ys))
+    pts = sorted((t, x, y) for f in flights(found, height, weak) for t, x, y in zip(f.times, f.xs, f.ys))
     return (np.array([p[0] for p in pts]), np.array([p[1] for p in pts]), np.array([p[2] for p in pts]))
 
 
@@ -353,7 +354,7 @@ def ball_input(directory, calibration, identity, height: int, model: HitModel | 
     """What the hits are read from, when the run followed the ball and a
     hit model is there; None otherwise. `model`: other models than the
     stored ones (to measure models trained without this match)."""
-    from app.ml.artifacts import read_ball
+    from app.ml.artifacts import read_ball, read_ball_weak
 
     model = model or load_model()
     if model is None or directory is None or not height:
@@ -361,7 +362,7 @@ def ball_input(directory, calibration, identity, height: int, model: HitModel | 
     found = read_ball(directory)
     if not found:
         return None
-    T, X, Y = ball_points(found, height)
+    T, X, Y = ball_points(found, height, read_ball_weak(directory))
     if len(T) < 3:
         return None
     players = [PlayerTrack.from_player(p) for p in identity.players if p.observations]

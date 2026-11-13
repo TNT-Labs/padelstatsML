@@ -49,6 +49,11 @@ POSES_FILE = "poses.jsonl"
 # it found one, [frame, time, x, y, peak] in video pixels. Raw: what is noise
 # and what a flight is, app/ml/ball_track.py decides when read.
 BALL_FILE = "ball.jsonl"
+# The weaker peaks of the ball's heat map, on the frames that have any:
+# [frame, time, [[x, y, peak], ...]] in video pixels (app/ml/ball.weak_peaks).
+# Only runs analysed since they were kept have it; without it the ball's
+# flights are made from ball.jsonl alone, as before.
+BALL_WEAK_FILE = "ball_weak.jsonl"
 
 
 class ArtifactWriter:
@@ -81,6 +86,8 @@ class ArtifactWriter:
         self._poses: IO[str] | None = None
         (self.directory / BALL_FILE).unlink(missing_ok=True)
         self._ball: IO[str] | None = None
+        (self.directory / BALL_WEAK_FILE).unlink(missing_ok=True)
+        self._ball_weak: IO[str] | None = None
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -93,11 +100,23 @@ class ArtifactWriter:
         if self._ball is not None:
             self._ball.close()
             self._ball = None
+        if self._ball_weak is not None:
+            self._ball_weak.close()
+            self._ball_weak = None
 
     def write_ball(self, frame_index: int, timestamp_s: float, x: float, y: float, peak: float) -> None:
         if self._ball is None:
             self._ball = (self.directory / BALL_FILE).open("w", encoding="utf-8")
         self._ball.write(f"[{frame_index},{timestamp_s:.3f},{x:.1f},{y:.1f},{peak:.2f}]\n")
+
+    def write_ball_weak(self, frame_index: int, timestamp_s: float, peaks) -> None:
+        """The weaker peaks of a frame: (x, y, peak) each, in video pixels."""
+        if not peaks:
+            return
+        if self._ball_weak is None:
+            self._ball_weak = (self.directory / BALL_WEAK_FILE).open("w", encoding="utf-8")
+        inner = ",".join(f"[{x:.1f},{y:.1f},{p:.2f}]" for x, y, p in peaks)
+        self._ball_weak.write(f"[{frame_index},{timestamp_s:.3f},[{inner}]]\n")
 
     def write_poses(self, frame_index: int, timestamp_s: float, poses) -> None:
         """The posture in a frame between two samples: [(track id, 17 x 3)]."""
@@ -408,6 +427,23 @@ def read_ball(directory: str | Path) -> list[tuple[int, float, float, float, flo
             except ValueError:
                 break                       # a run cut short: its last line
             out.append((int(f), float(t), float(x), float(y), float(p)))
+    return out
+
+
+def read_ball_weak(directory: str | Path) -> dict[int, tuple[float, list[tuple[float, float, float]]]] | None:
+    """The weaker peaks per frame: frame -> (time, [(x, y, peak)]); None
+    for runs that did not keep them (then they are not to be looked for)."""
+    path = Path(directory) / BALL_WEAK_FILE
+    if not path.exists():
+        return None
+    out: dict[int, tuple[float, list[tuple[float, float, float]]]] = {}
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                f, t, peaks = json.loads(line)
+            except ValueError:
+                break                       # a run cut short: its last line
+            out[int(f)] = (float(t), [(float(x), float(y), float(p)) for x, y, p in peaks])
     return out
 
 
