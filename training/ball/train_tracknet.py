@@ -243,6 +243,27 @@ def export_onnx(model: TrackNetLite, path: str) -> None:
                       output_names=["heat"], opset_version=13, dynamo=False)
 
 
+def evaluate(models: list[str], val_clips: dict, images, args) -> None:
+    """Each model on the validation clips, match by match (a zip is a
+    match). A model trained on a match has seen clips like these of it —
+    with another split, these very ones: only a match it never saw tells
+    how it does on a new one."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    groups: dict[str, list] = {"tutte": []}
+    for (zip_name, _clip), rows in sorted(val_clips.items()):
+        groups.setdefault(Path(zip_name).name, []).extend(rows)
+        groups["tutte"].extend(rows)
+    for path in models:
+        model = TrackNetLite(args.width).to(device)
+        model.load_state_dict(torch.load(path, map_location=device))
+        print(f"{path}")
+        for name, rows in groups.items():
+            loader = torch.utils.data.DataLoader(Frames(rows, images, False), batch_size=args.batch)
+            r = score(model, loader, device)
+            print(f"  {name}: campioni {r['samples']} · precisione {r['precision']:.3f} · "
+                  f"richiamo {r['recall']:.3f} · F1 {r['f1']:.3f} · vicino {r['vicino']:.3f}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("zips", nargs="+")
@@ -254,6 +275,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--compare", metavar="PT", help="un modello precedente (.pt) da misurare sugli stessi "
                         "spezzoni di validazione: il confronto fra due addestramenti vale solo così")
+    parser.add_argument("--evaluate", metavar="PT", nargs="+",
+                        help="non addestra: misura questi modelli (.pt) sugli spezzoni di validazione, "
+                             "partita per partita. Un modello è misurato onestamente solo sulle partite "
+                             "che non ha visto in addestramento")
     args = parser.parse_args()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -265,6 +290,9 @@ def main() -> None:
     val = [s for k in keys[:n_val] for s in samples[k]]
     train = [s for k in keys[n_val:] for s in samples[k]]
     print(f"Spezzoni {len(keys)} · campioni addestramento {len(train)} · validazione {len(val)}")
+    if args.evaluate:
+        evaluate(args.evaluate, {k: samples[k] for k in keys[:n_val]}, images, args)
+        return
     if not train:
         raise SystemExit("Nessun fotogramma annotato con i due precedenti: annota spezzoni interi.")
 
