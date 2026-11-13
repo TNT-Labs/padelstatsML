@@ -146,6 +146,10 @@ export interface ZoneShare {
   back: number
 }
 
+export interface PointsMeasure {
+  points: number; one_to_one: number; lost: number; split: number; joined: number; false_rallies: number
+}
+
 export interface PlayerStats {
   team: number
   samples: number
@@ -240,6 +244,10 @@ export interface DataQuality {
       /** Measured on matches left out of training whole, and how many. */
       unseen_match?: boolean; matches?: number
     }
+    /** How the points read from the hits (serve, in play, between points)
+     *  measured against points marked by hand, each set with a model that
+     *  never saw it; `before`: the same, as rallies were made before. */
+    points_measured?: PointsMeasure & { sets: number; unseen_set?: boolean; before?: PointsMeasure }
   } | null
   /** Weak detections that kept a track alive; boxes cut by the net whose
    *  feet were placed from the rest of the box. */

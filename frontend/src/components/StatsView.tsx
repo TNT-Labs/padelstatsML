@@ -69,6 +69,7 @@ export const StatsView: FC<Props> = ({
     [stats.rallies],
   )
   const hitsMeasured = stats.data_quality.ball?.hits_measured
+  const pointsMeasured = stats.data_quality.ball?.points_measured
   const hitsByZone = Object.values(stats.per_player).some(p => p.hit_zones)
   const pct = (v: number) => `${Math.round(v * 100)}%`
   // The hits a person marked in the video: the truth the found ones are
@@ -552,7 +553,19 @@ export const StatsView: FC<Props> = ({
                 Dal movimento dei giocatori: durante un punto tutti si muovono, fra un punto e l'altro
                 no. Un nuovo scambio inizia anche dalla battuta, riconosciuta dai giocatori fermi in
                 posizione e dal gioco che riparte.
-                {hitsPerRally != null &&
+                {hitsPerRally != null && pointsMeasured &&
+                  ' Con la palla seguita, ogni colpo trovato è letto come battuta, colpo in gioco o colpo ' +
+                    'fra un punto e l\'altro (la palla ripassata a chi batte, i palleggi prima della battuta): ' +
+                    'uno scambio va dalla battuta all\'ultimo colpo in gioco, più un secondo. ' +
+                    `Misurato su ${pointsMeasured.points} punti segnati a mano in ${pointsMeasured.sets} set, ` +
+                    'ogni set con modelli che non l\'avevano mai visto: ' +
+                    `${pointsMeasured.one_to_one} scambi su ${pointsMeasured.points} corrispondono esattamente a un punto` +
+                    (pointsMeasured.before ? ` (erano ${pointsMeasured.before.one_to_one} prima di questa lettura)` : '') +
+                    `; ${pointsMeasured.joined} punti restano uniti al precedente o al successivo, ` +
+                    `${pointsMeasured.split} spezzati in due, ${pointsMeasured.lost} non trovati, e ` +
+                    `${pointsMeasured.false_rallies} scambi non sono punti. Il numero di scambi e la durata ` +
+                    'media sono quindi vicini al vero, non esatti.'}
+                {hitsPerRally != null && !pointsMeasured &&
                   ' Con la palla seguita, lo scambio va dalla battuta all\'ultimo colpo (più un secondo): ' +
                     'senza, finiva quando i giocatori smettevano di muoversi, in media 8 s dopo il punto. ' +
                     'Dove la palla resta ferma a lungo lo scambio si divide; dove i colpi continuano, ' +

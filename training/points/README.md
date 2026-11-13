@@ -7,11 +7,38 @@ deciso, 1/2 per la coppia vincente), copiati con "Copia i punti segnati":
 |---|---|---|---|
 | `primo_set.txt` | 22/10, primo set (`primo_run.tgz`) | min 6–18 | 32 |
 | `secondo_set.txt` | 22/10, secondo set (`secondo_run.tgz`) | min 1–10 | 24 |
+| `terzo_set.txt` | 22/10, terzo set (`palla_run.tgz`) | min 1–15 | 33 |
 
 La misura: `backend/scripts/eval_points.py RUN PUNTI [...]` (scambi giusti uno a uno, persi,
 spezzati, uniti ad altri, falsi, scarto di inizio e fine).
 
-## Stato al 13/11/2026 (modelli dei colpi che non hanno visto il set)
+## Lettura dei punti dai colpi (in uso)
+
+Ogni colpo trovato è letto come **battuta**, **in gioco** o **fra due punti** da due piccoli modelli
+(`backend/app/ml/phase_model.json`, codice in `backend/app/ml/phases.py`): dai giocatori (velocità
+prima e dopo, chi sta in fondo, chi colpisce e da dove, formazione di battuta vista dal movimento) e
+dai colpi attorno. Uno scambio va dalla battuta all'ultimo colpo in gioco; i colpi fra due punti non
+contano (neanche nelle statistiche dei colpi).
+
+```
+python training/points/train_phases.py \
+    --set primo   primo_run.tgz   training/points/labels/primo_set.txt \
+    --set secondo secondo_run.tgz training/points/labels/secondo_set.txt training/hits/labels/secondo_set.txt \
+    --set terzo   palla_run.tgz   training/points/labels/terzo_set.txt   training/hits/labels/terzo_set.txt
+```
+
+Ogni set misurato con modelli (e soglie) addestrati sugli altri due, e con colpi trovati da modelli
+dei colpi che non l'hanno visto:
+
+| | Giusti | Uniti ad altri | Scambi falsi | Persi | Spezzati |
+|---|---|---|---|---|---|
+| Prima | 56/89 | 24 | 11 | 7 | 2 |
+| Con la lettura dei punti | 69/89 | 11 | 14 | 7 | 2 |
+
+Per set: primo 17 → 23 su 32, secondo 13 → 18 su 24, terzo 26 → 28 su 33. Tutti i set sono della
+stessa serata e dello stesso campo: punti di un'altra serata sono il modo di sapere se tiene.
+
+## Stato prima della lettura dei punti (modelli dei colpi che non hanno visto il set)
 
 | Set | Giusti | Persi | Spezzati | Uniti ad altri | Falsi | Battuta riconosciuta |
 |---|---|---|---|---|---|---|
@@ -24,7 +51,7 @@ pause (la palla ripassata a chi batte, i palleggi prima della battuta: 56–58 p
 segnato), che tengono uniti i punti. Il modello dei colpi è addestrato su ±1 s attorno ai colpi
 segnati: delle pause ne ha visti 4,5 s su 349.
 
-## Provato, senza un miglioramento che regga su entrambi i set
+## Provato con due set, prima del terzo
 
 Sempre addestrato su un set e misurato sull'altro, nei due sensi.
 
@@ -32,11 +59,8 @@ Sempre addestrato su un set e misurato sull'altro, nei due sensi.
   13 a 21 su 24, uniti da 10 a 0, ma colpi segnati trovati dall'80% al 62%. Primo set: giusti da
   19 a 17. Usandone una parte (un punto della palla su 3 o su 10) il secondo resta meglio (18, 14),
   il primo peggio (17, 17). Segno opposto sui due set: non adottato.
-- **Ogni colpo trovato classificato battuta / in gioco / pausa** (`phase_exp.py`), dai giocatori
-  (velocità prima e dopo, chi è in fondo, formazione di battuta), dal tempo fra i colpi. Separa
-  (AUC battuta 0,91 e 0,84, pausa 0,80), ma con soglie scelte sull'altro set: primo 19 → 23 giusti
-  con 9 scambi falsi invece di 4, secondo 13 → 13. Con le etichette giuste sugli stessi colpi si
-  arriverebbe a 30/32 e 22/24: i colpi trovati bastano, mancano esempi per riconoscerli (21–28
-  battute per set).
+- **Ogni colpo trovato classificato battuta / in gioco / pausa** (`phase_exp.py`), addestrato su un
+  set solo: separava (AUC battuta 0,91 e 0,84, pausa 0,80) ma le soglie non tenevano sull'altro set.
+  Con il terzo set (addestramento su due) è diventata la lettura dei punti in uso, sopra.
 
 Gli script sono in `experiments/`: girano sui run estratti (secondo in `runs/b`, primo in `runs/c`) e sulla cache dei dati dei colpi di train_hits (`datas.pkl`: terzo e secondo); i percorsi sono in testa ai file.

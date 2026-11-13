@@ -44,6 +44,7 @@ Nulla viene stimato di nascosto.
 | Smash e bandeja *(con Hailo)* | braccio della racchetta sopra la spalla durante lo scambio, dalla postura; si distinguono dal braccio libero e dalla distanza dalla rete, secondo la mano di ciascuno (destro/mancino). Verificabili colpo per colpo nell'app: 29 su 30 giusti sulla partita di prova |
 | Palla *(con Hailo)* | rete addestrata sui fotogrammi annotati nell'app, su ogni fotogramma; visibile sul video della partita |
 | Scambi dalla battuta all'ultimo colpo *(con Hailo)* | i colpi correggono gli scambi trovati dal movimento: prima finivano in media 8 s dopo l'ultimo colpo (i giocatori si muovono ancora), ora sull'ultimo colpo; uno scambio dove la palla resta ferma a lungo si divide, due pezzi con colpi continui si uniscono |
+| Scambi letti dai colpi *(con Hailo)* | ogni colpo trovato è battuta, in gioco o fra due punti (la palla ripassata a chi batte): misurato su 89 punti segnati in tre set, ogni set con modelli che non l'avevano visto, 69 scambi corrispondono esattamente a un punto (56 prima), 11 punti restano uniti ad altri (24 prima) |
 | Da dove colpisce ogni giocatore *(con Hailo)* | per ogni colpo la posizione di chi lo fa: colpi da rete, metà campo e fondo, mappa dei punti, chi chiude lo scambio (ultimo colpo) |
 | Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); misurati su 180 colpi di due partite, ciascuna con modelli che non l'avevano vista: trovati 76%, giusti 74%, giocatore giusto 85% |
 
@@ -414,7 +415,7 @@ misurare sul Pi; `BALL=off` torna ai tempi senza palla.
 
 ```bash
 make install      # venv, dipendenze, build della UI
-make test         # 439 backend + 61 frontend
+make test         # 445 backend + 61 frontend
 make run          # API con reload
 make worker       # worker, in un altro terminale
 make check        # interroga /api/health

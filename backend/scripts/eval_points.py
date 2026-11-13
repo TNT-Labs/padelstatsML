@@ -10,13 +10,14 @@ training/hits) and the text "Copia i punti segnati" gives:
 
     python backend/scripts/eval_points.py RUN PUNTI [RUN PUNTI ...] [--hits COLPI COLPI ...]
 
-Each match is measured three ways: rallies from the players' movement
-alone; corrected by the hits with the hit models in use (hit_model.json —
-trained on the matches in training/hits/labels: on those the measure is
-optimistic); and, with --hits (the hits marked on each match, in the same
-order) and two matches or more, with hit models trained on the other
-matches only: the measure for a match never seen. That one needs
-scikit-learn and the repository's training/hits.
+Each match is measured: rallies from the players' movement alone;
+corrected by the hits as before the points were read from them; with the
+points read from the hits (phase_model.json), the models in use — on the
+matches they were trained on the measure is optimistic; and, with --hits
+(the hits marked on each match, in the same order) and two matches or
+more, with hit models trained on the other matches only. That one needs
+scikit-learn and the repository's training/hits. The measure of the
+points read on matches never seen is training/points/train_phases.py's.
 
 Mark *every* point of a stretch of the match, one after the other: a rally
 between two marked points that is not marked counts as a false rally.
@@ -39,13 +40,15 @@ def _clock(t: float) -> str:
     return f"{int(t // 60)}:{t % 60:05.2f}"
 
 
-def rallies_of(directory: Path, calibration: dict | None, ball: bool, hit_model=None) -> list[Span]:
+def rallies_of(directory: Path, calibration: dict | None, ball: bool, hit_model=None,
+               phase_model=None) -> list[Span]:
     from app.core.config import get_settings
     from app.ml.artifacts import load_artifacts
     from app.ml.reprocess import pipeline_config, recompute
 
     config = pipeline_config(get_settings(), load_artifacts(directory).meta)
-    _, _, rallies, _ = recompute(directory, calibration, config, ball=ball, hit_model=hit_model)
+    _, _, rallies, _ = recompute(directory, calibration, config, ball=ball, hit_model=hit_model,
+                                 phase_model=phase_model)
     return [Span(r.start_s, r.end_s, bool(r.serve)) for r in rallies]
 
 
@@ -137,12 +140,15 @@ def main() -> int:
         for k, (name, directory, points, calibration) in enumerate(matches):
             print(f"\n{name}: {len(points)} punti segnati, dal minuto {_clock(points[0].start_s)} "
                   f"al {_clock(points[-1].end_s)}")
-            ways = [("movimento dei giocatori", False, None),
-                    ("con i colpi, modelli in uso (ottimista se la partita era nell'addestramento)", True, None)]
+            ways = [("movimento dei giocatori", False, None, False),
+                    ("con i colpi, senza la lettura dei punti (com'era prima)", True, None, False),
+                    ("con i colpi e la lettura dei punti, modelli in uso (ottimista se la partita "
+                     "era nell'addestramento)", True, None, None)]
             if unseen is not None:
-                ways.append(("con i colpi, modelli addestrati senza questa partita", True, unseen[k]))
-            for how, ball, model in ways:
-                spans = rallies_of(directory, calibration, ball, model)
+                ways.append(("con i colpi, modelli dei colpi addestrati senza questa partita, "
+                             "senza la lettura dei punti", True, unseen[k], False))
+            for how, ball, model, phases in ways:
+                spans = rallies_of(directory, calibration, ball, model, phases)
                 show(name, how, compare(points, spans), points, args.verbose)
     return 0
 

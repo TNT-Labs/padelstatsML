@@ -32,6 +32,7 @@ from app.ml.artifacts import ArtifactWriter
 from app.ml.ball import HailoBallDetector
 from app.ml.ball_hits import ball_input as hits_input
 from app.ml.ball_hits import hit_statistics, refine_rallies
+from app.ml.phases import load_phase_model
 from app.ml.ball import find_model as find_ball_model
 from app.ml.ball import small as ball_input
 from app.ml.court import NET_Y_M, CourtCalibration
@@ -616,6 +617,7 @@ def analyse_tracklets(
     ball_dir: str | Path | None = None,
     frame_height: int | None = None,
     hit_model=None,
+    phase_model=None,
 ) -> tuple[dict, IdentityResult, list[Rally]]:
     """Everything after tracking: identity, rallies, metrics.
 
@@ -652,8 +654,12 @@ def analyse_tracklets(
     where = _where_players(paths)
     ball = hits_input(ball_dir, calibration, identity, int(frame_height or 0), hit_model) if ball_dir else None
     hits = None
+    phases = None
     if ball is not None:
-        rallies, hits, rallies_dropped = refine_rallies(rallies, ball, where.net_distance)
+        # The points read from the hits, when the model for it is there
+        # (app.ml.phases); `phase_model` False: without it.
+        phases = load_phase_model() if phase_model is None else (phase_model or None)
+        rallies, hits, rallies_dropped = refine_rallies(rallies, ball, where.net_distance, where, phases)
         hits_note = None if hits is not None else (
             "La palla è stata seguita, ma in più di metà degli scambi non si vedono colpi: scambi e colpi "
             "non sono stati ricavati dalla palla. La rete della palla va addestrata anche su questo campo.")
@@ -681,6 +687,9 @@ def analyse_tracklets(
         hit_statistics(result, hits, where.net_distance, where.position, ball.model.measured)
         # Stretches of movement without two hits of the ball: not points.
         result["data_quality"].setdefault("ball", {})["rallies_dropped"] = rallies_dropped
+        if phases is not None:
+            # Read from the hits (app.ml.phases): how that was measured.
+            result["data_quality"]["ball"]["points_measured"] = phases.measured
     elif ball is not None:
         result["data_quality"]["warnings"].append(hits_note)
     result["data_quality"]["analysis_start_s"] = round(start_s, 1)
