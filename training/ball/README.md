@@ -106,6 +106,11 @@ stessa rete, addestrata anche su quei ritagli.
    e poi la conversione come sotto. Sul Raspberry `BALL_FAR=on` nel `.env` accende la seconda passata:
    costa una inferenza in più a fotogramma (circa +0,5 volte la durata del video).
 
+Misura del 14/11/2026, partita `3628b11c` esclusa (rete addestrata sull'altra, 857 fotogrammi segnati),
+traiettorie: nella metà lontana F1 da 0,749 (precisione 0,848, richiamo 0,671) con la sola immagine
+intera a 0,845 (0,898, 0,798) con la seconda passata, tenendo nel ritaglio solo ciò che la seconda
+passata conferma (la regola in uso, `FAR_MERGE` in `ball_track.py`); nel resto del campo 0,828 → 0,817.
+
 Di serie l'addestramento ora usa variazioni più forti degli esempi (`--augment strong`: anche zoom,
 spostamento, sfocatura, rumore e colore); `--augment base` torna a quelle delle prime reti.
 

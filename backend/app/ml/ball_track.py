@@ -308,7 +308,13 @@ class FarMerge:
     drop_unconfirmed: bool = False
 
 
-FAR_MERGE = FarMerge()
+# Measured with training/ball/far_check.py on a match the network never saw
+# (3628b11c, 857 marked frames; network trained on the other with
+# --holdout): in the far crop, flights from F1 0.749 (precision 0.848,
+# recall 0.671) with the whole frame alone to 0.845 (0.898, 0.798) keeping
+# only what the closer look confirms; 0.839 letting it win, 0.801 letting
+# the whole frame win. Elsewhere 0.828 -> 0.817.
+FAR_MERGE = FarMerge(prefer="far", drop_unconfirmed=True)
 
 
 def merge_far(found, far, crop, how: FarMerge = FAR_MERGE) -> list[tuple[int, float, float, float, float]]:
@@ -323,13 +329,17 @@ def merge_far(found, far, crop, how: FarMerge = FAR_MERGE) -> list[tuple[int, fl
 
     full = {r[0]: r for r in found}
     closer = {r[0]: r for r in far}
+    if not closer:
+        return list(found)
+    # Only where the closer look was running can its silence count.
+    first, last = min(closer), max(closer)
     out = []
     for frame in sorted(full.keys() | closer.keys()):
         a, b = full.get(frame), closer.get(frame)
         if a is None:
             out.append(b)
         elif b is None:
-            if not (how.drop_unconfirmed and inside(a)):
+            if not (how.drop_unconfirmed and inside(a) and first <= frame <= last):
                 out.append(a)
         elif not inside(a):
             out.append(a)
