@@ -31,9 +31,17 @@ class StrokeLabelsUpdate(BaseModel):
     labels: dict[Annotated[str, Field(max_length=32, pattern=r"^\d+:\d+(\.\d+)?$")], StrokeLabel | None] = Field(
         max_length=500)
 
+# What a hit was, seen in the video (Segna i colpi): the truth a model of
+# the kinds of stroke is trained and measured on.
+HitType = Literal["battuta", "dritto", "rovescio", "volee_dritto", "volee_rovescio",
+                  "smash", "bandeja", "lob", "parete", "altro"]
+
+
 class HitLabelsUpdate(BaseModel):
-    """All the hits marked on a match: [seconds, player id] each."""
-    hits: list[tuple[Annotated[float, Field(ge=0, le=86400)], Annotated[int, Field(ge=0, le=3)]]] = Field(
+    """All the hits marked on a match: [seconds, player id] each, or
+    [seconds, player id, kind] once the kind of stroke is said."""
+    hits: list[tuple[Annotated[float, Field(ge=0, le=86400)], Annotated[int, Field(ge=0, le=3)]]
+               | tuple[Annotated[float, Field(ge=0, le=86400)], Annotated[int, Field(ge=0, le=3)], HitType]] = Field(
         max_length=5000)
 
 
@@ -285,7 +293,7 @@ class MatchStatsRead(BaseModel):
     player_names: list[str] | None
     player_hands: list[PlayerHand] | None = None
     stroke_labels: dict[str, str] | None = None
-    hit_labels: list[list[float]] | None = None
+    hit_labels: list[list[float | str]] | None = None
     point_labels: list[list] | None = None
     per_player: dict[str, PlayerStats]
     heatmaps: dict[str, list[list[float]]]

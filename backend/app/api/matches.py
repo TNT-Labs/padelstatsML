@@ -802,7 +802,7 @@ def _follow_names(match: Match) -> None:
     now = match.player_names
     moved = _renumbering(match.hit_label_names, now)
     if moved is not None and match.hit_labels:
-        match.hit_labels = sorted([t, moved.get(int(p), int(p))] for t, p in match.hit_labels)
+        match.hit_labels = sorted([h[0], moved.get(int(h[1]), int(h[1])), *h[2:]] for h in match.hit_labels)
         match.hit_label_names = list(now)
     moved = _renumbering(match.point_label_names, now)
     if moved is not None and match.point_labels:
@@ -832,7 +832,7 @@ async def label_hits(
 ) -> dict:
     """The hits a person marked watching the video, all of them."""
     match = await _get_match(db, match_id, user)
-    hits = sorted([round(t, 2), p] for t, p in payload.hits)
+    hits = sorted([round(h[0], 2), h[1], *h[2:]] for h in payload.hits)
     match.hit_labels = hits or None
     match.hit_label_names = list(match.player_names) if hits and match.player_names else None
     await db.flush()

@@ -43,7 +43,14 @@ POSITIVE_S = 0.1          # ball points this close to a marked hit are hits
 MATCH_S = 0.45            # a hit found this close to a marked one is it
 
 
-def read_labels(path: str) -> list[tuple[float, int]]:
+HIT_TYPES = ("battuta", "dritto", "rovescio", "volee_dritto", "volee_rovescio",
+             "smash", "bandeja", "lob", "parete", "altro")
+
+
+def read_typed_labels(path: str) -> list[tuple[float, int, str | None]]:
+    """The text "Copia i colpi segnati" gives: per hit minutes:seconds, the
+    player's name, their id and, once said, the kind of stroke (HIT_TYPES);
+    older copies have no kind, the oldest no name. (time, id, kind or None)."""
     out = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         parts = line.split()
@@ -51,10 +58,19 @@ def read_labels(path: str) -> list[tuple[float, int]]:
             continue
         try:
             minutes, seconds = parts[0].split(":")
-            out.append((int(minutes) * 60 + float(seconds), int(parts[-1])))
+            t = int(minutes) * 60 + float(seconds)
         except ValueError:
             continue
-    return sorted(out)
+        kind = parts[-1] if parts[-1] in HIT_TYPES else None
+        ids = [p for p in parts[1:] if p.isdigit()]
+        if not ids:
+            continue
+        out.append((t, int(ids[-1]), kind))
+    return sorted(out, key=lambda r: r[0])
+
+
+def read_labels(path: str) -> list[tuple[float, int]]:
+    return [(t, pid) for t, pid, _ in read_typed_labels(path)]
 
 
 def groups(labels):

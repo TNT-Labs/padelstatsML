@@ -431,4 +431,5 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .hit-chip button { background: none; border: 0; color: inherit; cursor: pointer; padding: .2rem .5rem; font: inherit; }
 .hit-chip-x { border-left: 1px solid var(--border) !important; font-weight: 700; }
+.hit-chip-chosen { box-shadow: 0 0 0 2px var(--green); font-weight: 600; }
 @media (max-width: 600px) { .hit-speed { margin-left: 0; } }

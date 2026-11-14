@@ -14,6 +14,7 @@ import { analysisTimeText, handLabel, kmh, playerPlace } from '../lib/format'
 import { clock } from '../lib/videoOverlay'
 import { PLAYER_COLORS } from '../lib/players'
 import { pairsOf, type MarkedPoint } from '../lib/points'
+import type { MarkedHit } from '../lib/hitTypes'
 
 const RALLY_LEAD_S = 2
 
@@ -74,11 +75,11 @@ export const StatsView: FC<Props> = ({
   const pct = (v: number) => `${Math.round(v * 100)}%`
   // The hits a person marked in the video: the truth the found ones are
   // measured against, and the models trained on.
-  const [hitLabels, setHitLabels] = useState<[number, number][]>(stats.hit_labels ?? [])
+  const [hitLabels, setHitLabels] = useState<MarkedHit[]>(stats.hit_labels ?? [])
   const [markingHits, setMarkingHits] = useState(false)
   const [hitError, setHitError] = useState<string | null>(null)
   const saveHits = useCallback(
-    (next: [number, number][]) => {
+    (next: MarkedHit[]) => {
       const before = hitLabels
       setHitLabels(next)
       setHitError(null)

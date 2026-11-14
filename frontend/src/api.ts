@@ -1,3 +1,4 @@
+import type { MarkedHit } from './lib/hitTypes'
 /**
  * Where the API is. Empty VITE_API_URL (the normal case) means "the server
  * this page came from", under whatever path it is mounted at: '' on a Pi
@@ -341,8 +342,9 @@ export interface MatchStats {
   player_hands?: Hand[] | null
   /** What each high stroke really was, as seen in the video: "<player id>:<seconds>" -> label. */
   stroke_labels?: Record<string, StrokeLabel> | null
-  /** Hits marked by a person watching the video: [seconds, player id]. */
-  hit_labels?: [number, number][] | null
+  /** Hits marked by a person watching the video: [seconds, player id], and
+   *  the kind of stroke once said. */
+  hit_labels?: MarkedHit[] | null
   /** Points marked by a person watching the video: [serve s, end s, winning pair or null]. */
   point_labels?: [number, number, [number, number] | null][] | null
   per_player: Record<string, PlayerStats>
@@ -491,8 +493,8 @@ export const api = {
   ballTrack: (id: string) => req<BallTrack>(`/api/matches/${id}/ball/track`),
 
   /** All the hits marked watching the video: [seconds, player id]. */
-  labelHits: (id: string, hits: [number, number][]) =>
-    req<{ hit_labels: [number, number][] | null }>(`/api/matches/${id}/hit-labels`, {
+  labelHits: (id: string, hits: MarkedHit[]) =>
+    req<{ hit_labels: MarkedHit[] | null }>(`/api/matches/${id}/hit-labels`, {
       method: 'PUT',
       body: JSON.stringify({ hits }),
     }),

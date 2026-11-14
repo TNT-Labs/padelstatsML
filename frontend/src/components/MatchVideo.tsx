@@ -11,7 +11,7 @@ interface Props {
   onSeek: (seconds: number) => void
   /** [seconds, player id] of hits, in time order: found from the ball
    *  (shown with the ball), or marked by hand (`marked`, always shown). */
-  hits?: [number, number][]
+  hits?: readonly (readonly [number, number, ...unknown[]])[]
   marked?: boolean
 }
 

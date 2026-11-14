@@ -288,6 +288,27 @@ async def test_the_hits_seen_in_the_video_are_marked(analysed_match):
         assert (await viewer.put(url, json={"hits": [[1.0, 1]]})).status_code == 403
 
 
+async def test_the_kind_of_each_marked_hit_is_kept(analysed_match):
+    owner, match_id = analysed_match
+    url = f"/api/matches/{match_id}/hit-labels"
+    response = await owner.put(url, json={"hits": [[12.0, 2, "volee_rovescio"], [10.0, 0], [11.0, 1, "battuta"]]})
+    assert response.status_code == 200, response.text
+    # Hits with and without a kind together, in time order.
+    assert response.json()["hit_labels"] == [[10.0, 0], [11.0, 1, "battuta"], [12.0, 2, "volee_rovescio"]]
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["hit_labels"] == [[10.0, 0], [11.0, 1, "battuta"], [12.0, 2, "volee_rovescio"]]
+    assert (await owner.put(url, json={"hits": [[10.0, 0, "veronica"]]})).status_code == 422
+    # The kind follows its hit when the names move it to another number.
+    from app.core.database import sync_session
+    from app.models import Match
+
+    with sync_session() as session:
+        session.get(Match, match_id).player_names = None
+    await owner.patch(f"/api/matches/{match_id}", json={"player_names": ["c", "A ", "D", "B"]})
+    stats = (await owner.get(f"/api/matches/{match_id}/stats")).json()
+    assert stats["hit_labels"] == [[10.0, 1], [11.0, 3, "battuta"], [12.0, 0, "volee_rovescio"]]
+
+
 async def test_the_marked_hits_follow_the_names_through_a_new_numbering(analysed_match):
     from app.core.database import sync_session
     from app.models import Match
