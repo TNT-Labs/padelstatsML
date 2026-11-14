@@ -103,7 +103,9 @@ stessa rete, addestrata anche su quei ritagli.
 !python make_calib.py palla_*.zip lontana_*.zip
 ```
 
-   e poi la conversione come sotto. Sul Raspberry `BALL_FAR=on` nel `.env` accende la seconda passata:
+   e poi la conversione come sotto. Se l'esportazione finale fallisce (`onnx` mancante: la sessione
+   Colab si è riavviata e ha perso il `pip install`), non serve riaddestrare:
+   `!pip install -q onnx` e poi `!python train_tracknet.py --export ball.pt --out ball`. Sul Raspberry `BALL_FAR=on` nel `.env` accende la seconda passata:
    costa una inferenza in più a fotogramma (circa +0,5 volte la durata del video).
 
 Misura del 14/11/2026, partita `3628b11c` esclusa (rete addestrata sull'altra, 857 fotogrammi segnati),

@@ -321,7 +321,7 @@ def split(keys: list, holdout: str | None, rng: random.Random) -> tuple[list, li
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("zips", nargs="+")
+    parser.add_argument("zips", nargs="*")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -340,7 +340,21 @@ def main() -> None:
                         help="non addestra: misura questi modelli (.pt) sugli spezzoni di validazione, "
                              "partita per partita. Un modello è misurato onestamente solo sulle partite "
                              "che non ha visto in addestramento")
+    parser.add_argument("--export", metavar="PT",
+                        help="non addestra: converte una rete già addestrata (.pt) in <out>.onnx")
     args = parser.parse_args()
+    if not args.evaluate:
+        try:
+            import onnx  # noqa: F401  (needed at the very end: better to know now)
+        except ImportError:
+            raise SystemExit("Manca il pacchetto onnx, che serve a salvare la rete alla fine: "
+                             "esegui prima  !pip install -q onnx") from None
+    if args.export:
+        model = TrackNetLite(args.width)
+        model.load_state_dict(torch.load(args.export, map_location="cpu"))
+        export_onnx(model.eval(), f"{args.out}.onnx")
+        print(f"Salvato {args.out}.onnx da {args.export}")
+        return
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
