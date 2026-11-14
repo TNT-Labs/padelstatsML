@@ -22,9 +22,9 @@ contano (neanche nelle statistiche dei colpi).
 
 ```
 python training/points/train_phases.py \
-    --set primo   primo_run.tgz   training/points/labels/primo_set.txt \
-    --set secondo secondo_run.tgz training/points/labels/secondo_set.txt training/hits/labels/secondo_set.txt \
-    --set terzo   palla_run.tgz   training/points/labels/terzo_set.txt   training/hits/labels/terzo_set.txt
+    --set primo   primo_far.tgz   training/points/labels/primo_set.txt \
+    --set secondo secondo_far.tgz training/points/labels/secondo_set.txt training/hits/labels/secondo_set.txt \
+    --set terzo   terzo_far.tgz   training/points/labels/terzo_set.txt   training/hits/labels/terzo_set.txt
 ```
 
 Ogni set misurato con modelli (e soglie) addestrati sugli altri due, e con colpi trovati da modelli
@@ -32,10 +32,16 @@ dei colpi che non l'hanno visto:
 
 | | Giusti | Uniti ad altri | Scambi falsi | Persi | Spezzati |
 |---|---|---|---|---|---|
-| Prima | 56/89 | 24 | 11 | 7 | 2 |
-| Con la lettura dei punti | 69/89 | 11 | 14 | 7 | 2 |
+| Senza la lettura dei punti | 62/89 | 26 | 10 | 1 | 0 |
+| Con la lettura dei punti | 71/89 | 7 | 20 | 4 | 7 |
 
-Per set: primo 17 → 23 su 32, secondo 13 → 18 su 24, terzo 26 → 28 su 33. Tutti i set sono della
+Analisi del 14/11/2026 con la seconda passata sulla metà lontana (`BALL_FAR=on`) e modelli dei colpi
+riaddestrati su quella palla. Con la palla di prima: 56 → 69 giusti. Gli errori in totale restano
+simili (37 senza, 38 con): la lettura scambia punti uniti con spezzoni falsi e punti spezzati, ma porta
+più scambi a corrispondere esattamente a un punto, che è la misura scelta. Pesare di più i falsi nella
+scelta delle soglie (`--false-cost 1` o `2`) non abbassa il totale degli errori (38 e 38).
+
+Per set, con la palla di prima: primo 17 → 23 su 32, secondo 13 → 18 su 24, terzo 26 → 28 su 33; con la seconda passata: primo 24, secondo 21, terzo 26. Tutti i set sono della
 stessa serata e dello stesso campo: punti di un'altra serata sono il modo di sapere se tiene.
 
 ## Stato prima della lettura dei punti (modelli dei colpi che non hanno visto il set)

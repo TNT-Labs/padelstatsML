@@ -117,10 +117,14 @@ def predict(models, s: SetData):
     return pause.predict_proba(s.F)[:, 1], serve.predict_proba(s.F)[:, 1]
 
 
+FALSE_COST = 0.5
+
+
 def worth(summary: dict) -> float:
-    """What a setting is chosen for: points right one to one; a false rally
-    costs half of one."""
-    return summary["one_to_one"] - 0.5 * summary["false_rallies"]
+    """What a setting is chosen for: points right one to one, less
+    FALSE_COST for each false rally (a split point already counts as not
+    right)."""
+    return summary["one_to_one"] - FALSE_COST * summary["false_rallies"]
 
 
 def choose(sets: list[SetData]) -> tuple:
@@ -140,7 +144,10 @@ def main() -> None:
     parser.add_argument("--set", dest="sets", action="append", nargs="+", required=True,
                         metavar="NOME RUN PUNTI [COLPI]")
     parser.add_argument("--out", default=str(ph.PHASE_MODEL_PATH))
+    parser.add_argument("--false-cost", type=float, default=FALSE_COST,
+                        help="quanto pesa uno scambio falso rispetto a un punto giusto, nella scelta delle soglie")
     args = parser.parse_args()
+    globals()["FALSE_COST"] = args.false_cost
     if len(args.sets) < 3 or any(len(s) not in (3, 4) for s in args.sets):
         raise SystemExit("Servono almeno tre --set, ognuno: nome, analisi, punti segnati [, colpi segnati].")
 

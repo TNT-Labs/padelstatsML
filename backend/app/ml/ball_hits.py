@@ -21,8 +21,10 @@ hit_model.json:
 The candidates of a rally are then read as a sequence that alternates
 between the halves — the ball crosses the net between two hits — at least
 MIN_GAP_S apart (decode). Measured on two matches, each with models trained
-on the other alone (training/hits/README.md): 76% of the hits found, 74% of
-those found real, the half right 89% of the time and the player 85%. A far
+on the other alone (training/hits/README.md), the ball with the second look
+at the far half (ball.far_crop): 87% of the hits found, 84% of those found
+real, the half right 92% of the time and the player 86% (76, 74, 89, 85
+with the whole frame alone). A far
 hit is found up to 0.45 s late: the ball turns visibly a few frames after it.
 
 All image measures are fractions of the picture's height.

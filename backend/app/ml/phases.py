@@ -20,10 +20,12 @@ The points are then the runs of hits that are not pauses, a new one at each
 serve or after a gap of more than `gap_s`; a run of one hit is a point only
 when a serve is sure (`lone_serve`): an ace, or a return that never came.
 Measured on each set with models and thresholds chosen on the other two
-(and hits found by hit models that never saw it): 69 of 89 points right one
-to one against 56 before, joined to another 11 against 24, rallies that are
-no point 14 against 11, lost 7 and split 2 as before. The hits read as
-between points are left out of the hits' statistics too.
+(and hits found by hit models that never saw it), on the analyses with the
+second look at the far half: 71 of 89 points right one to one against 62
+with the split and merge by time; joined to another 7 against 26; split 7
+against 0; rallies that are no point 20 against 10; lost 4 against 1. (On
+the earlier ball: 69 against 56.) The hits read as between points are left
+out of the hits' statistics too.
 """
 from __future__ import annotations
 
