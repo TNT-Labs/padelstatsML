@@ -13,6 +13,17 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 
 # Each step kept on disk: rerun after a stop (memory, power) and the steps
 # already done are skipped. Delete the .har files to start over.
+# A step left from another network is not one already done: a .har older
+# than the ONNX (or the optimized one older than the calibration set) is of
+# a previous compilation, and would compile the old network again.
+if [ -f "$NAME.har" ] && [ "$ONNX" -nt "$NAME.har" ]; then
+    echo "ONNX più recente dei file intermedi: ricomincio da capo."
+    rm -f "$NAME.har" "${NAME}_optimized.har" "${NAME}_optimized_tmp.har" "${NAME}_compiled.har"
+fi
+if [ -f "${NAME}_optimized.har" ] && { [ "$CALIB" -nt "${NAME}_optimized.har" ] || [ "$NAME.har" -nt "${NAME}_optimized.har" ]; }; then
+    echo "Calibrazione o rete più recenti della quantizzazione: la rifaccio."
+    rm -f "${NAME}_optimized.har" "${NAME}_optimized_tmp.har"
+fi
 [ -f "$NAME.har" ] || hailo parser onnx "$ONNX" --hw-arch "$ARCH" --net-name "$NAME" -y
 # The quantization holds activations of the whole calibration set: with
 # little memory (WSL takes half of the PC's) a large swap is what lets it end.
