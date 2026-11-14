@@ -113,6 +113,13 @@ traiettorie: nella metà lontana F1 da 0,749 (precisione 0,848, richiamo 0,671) 
 intera a 0,845 (0,898, 0,798) con la seconda passata, tenendo nel ritaglio solo ciò che la seconda
 passata conferma (la regola in uso, `FAR_MERGE` in `ball_track.py`); nel resto del campo 0,828 → 0,817.
 
+Sul Raspberry (14/11/2026, secondo set, rete addestrata su entrambi i set: la rete ha visto 2 minuti
+di quella partita, la misura è un po' ottimista; modelli dei colpi addestrati solo sul terzo set):
+analisi da 1,82 a 2,10 volte la durata del video; colpi segnati trovati da 52 a 56 su 65, colpi indicati
+non veri da 19 a 13, colpi persi per la palla da 4 a 1; palla vista nel mezzo secondo prima dei colpi
+della coppia lontana dal 59% al 64% dei fotogrammi (dopo: dal 63% al 70%). Scambi giusti sui 24 punti
+segnati, con la lettura dei punti addestrata sugli altri due set: 18 prima e dopo.
+
 Di serie l'addestramento ora usa variazioni più forti degli esempi (`--augment strong`: anche zoom,
 spostamento, sfocatura, rumore e colore); `--augment base` torna a quelle delle prime reti.
 
