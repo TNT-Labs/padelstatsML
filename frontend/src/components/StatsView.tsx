@@ -369,9 +369,14 @@ export const StatsView: FC<Props> = ({
               <p style={{ margin: 0 }}>
                 Ogni colpo trovato dalla palla, con il punto del campo in cui si trovava chi l'ha
                 colpito: entro 3 m dalla rete, fra 3 e 6 m, oltre 6 m, come per la posizione in
-                campo. Circa un colpo su quattro sfugge (soprattutto con la palla coperta) e circa
-                uno su quattro di quelli indicati non è un colpo: le quote fra le zone sono più
-                affidabili dei conteggi.
+                campo.{' '}
+                {hitsMeasured
+                  ? `Su una partita mai vista sfuggono circa ${Math.round(100 * (1 - hitsMeasured.found))} colpi ` +
+                    `su 100 (soprattutto con la palla coperta) e circa ${Math.round(100 * (1 - hitsMeasured.real))} ` +
+                    'su 100 di quelli indicati non sono colpi'
+                  : 'Una parte dei colpi sfugge (soprattutto con la palla coperta) e una parte di quelli ' +
+                    'indicati non sono colpi'}
+                : le quote fra le zone sono più affidabili dei conteggi.
               </p>
             </InfoHeading>
             <ZoneChart perPlayer={stats.per_player} playerNames={names} shares={hitShares} />

@@ -27,8 +27,8 @@ addestrati solo sulle altre: è la misura che vale per una partita nuova, ed è 
 mostrata nell'app.
 
 ```
-python training/hits/train_hits.py palla_run.tgz training/hits/labels/terzo_set.txt \
-                                   secondo_run.tgz training/hits/labels/secondo_set.txt
+python training/hits/train_hits.py terzo_far.tgz training/hits/labels/terzo_set.txt \
+                                   secondo_far.tgz training/hits/labels/secondo_set.txt
 ```
 
 Stato attuale: 180 colpi di due partite (22/10/2026, secondo e terzo set; i colpi segnati
@@ -36,8 +36,13 @@ sono in `training/hits/labels/`).
 
 | Misura | Trovati | Giusti | Metà campo | Giocatore |
 |---|---|---|---|---|
-| Partita mai vista in addestramento | 76% | 74% | 89% | 85% |
-| Scambi esclusi a turno, stesse partite | 77% | 83% | 97% | 92% |
+| Partita mai vista in addestramento | 87% | 84% | 92% | 86% |
+| Scambi esclusi a turno, stesse partite | 92% | 90% | 98% | 91% |
+
+Misure del 14/11/2026, con le analisi rifatte con la seconda passata sulla metà lontana
+(`BALL_FAR=on`, training/ball/README.md). Con la palla di prima erano: partita mai vista 76% · 74% ·
+89% · 85%. La rete della palla ha visto circa 2 minuti di spezzoni annotati di ciascuna partita: una
+parte dei colpi segnati può cadere in quegli spezzoni, quindi la misura è un po' ottimista.
 
 La prima versione, su una sola partita, dava 91% di colpi giusti sugli scambi esclusi: su
 una partita nuova erano il 73%. Colpi di altre partite, con altra luce e altre posizioni

@@ -44,9 +44,9 @@ Nulla viene stimato di nascosto.
 | Smash e bandeja *(con Hailo)* | braccio della racchetta sopra la spalla durante lo scambio, dalla postura; si distinguono dal braccio libero e dalla distanza dalla rete, secondo la mano di ciascuno (destro/mancino). Verificabili colpo per colpo nell'app: 29 su 30 giusti sulla partita di prova |
 | Palla *(con Hailo)* | rete addestrata sui fotogrammi annotati nell'app, su ogni fotogramma; visibile sul video della partita |
 | Scambi dalla battuta all'ultimo colpo *(con Hailo)* | i colpi correggono gli scambi trovati dal movimento: prima finivano in media 8 s dopo l'ultimo colpo (i giocatori si muovono ancora), ora sull'ultimo colpo; uno scambio dove la palla resta ferma a lungo si divide, due pezzi con colpi continui si uniscono |
-| Scambi letti dai colpi *(con Hailo)* | ogni colpo trovato è battuta, in gioco o fra due punti (la palla ripassata a chi batte): misurato su 89 punti segnati in tre set, ogni set con modelli che non l'avevano visto, 69 scambi corrispondono esattamente a un punto (56 prima), 11 punti restano uniti ad altri (24 prima) |
+| Scambi letti dai colpi *(con Hailo)* | ogni colpo trovato è battuta, in gioco o fra due punti (la palla ripassata a chi batte): misurato su 89 punti segnati in tre set, ogni set con modelli che non l'avevano visto, 71 scambi corrispondono esattamente a un punto (62 senza questa lettura), 7 punti restano uniti ad altri (26), 20 scambi non sono punti (10) |
 | Da dove colpisce ogni giocatore *(con Hailo)* | per ogni colpo la posizione di chi lo fa: colpi da rete, metà campo e fondo, mappa dei punti, chi chiude lo scambio (ultimo colpo) |
-| Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); misurati su 180 colpi di due partite, ciascuna con modelli che non l'avevano vista: trovati 76%, giusti 74%, giocatore giusto 85% |
+| Colpi per scambio e per giocatore *(con Hailo)* | dalla palla e dai giocatori, con modelli addestrati sui colpi segnati a mano (`training/hits`); misurati su 180 colpi di due partite, ciascuna con modelli che non l'avevano vista: trovati 87%, giusti 84%, giocatore giusto 86% (con la seconda passata sulla metà lontana; prima 76%, 74%, 85%) |
 
 ### Non misurato — e perché
 
